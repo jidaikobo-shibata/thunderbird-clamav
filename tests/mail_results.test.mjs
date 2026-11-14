@@ -34,3 +34,10 @@ test("selection excludes pending/deleted mail and deletion requires a detection 
   assert.deepEqual(records.filter(canDelete).map(record => record.status), ["detected"]);
   assert.equal(canDelete({ status: "detected" }), false);
 });
+
+test("folder job filter combines with account and state without mixing other runs", () => {
+  const tagged = records.map((record, i) => ({ ...record, folderJobId: i < 3 ? "job-a" : "job-b" }));
+  assert.equal(filterRecords(tagged, { folderJobId: "job-a" }).length, 3);
+  assert.deepEqual(filterRecords(tagged, { folderJobId: "job-a", status: "detected", account: "a" }).map(record => record.key), ["1"]);
+  assert.equal(filterRecords(tagged, { folderJobId: "unknown" }).length, 0);
+});

@@ -65,14 +65,15 @@ python3 -m unittest discover -s tests -v
 node tests/mail_core.test.mjs
 node tests/mail_background.test.mjs
 node tests/mail_results.test.mjs
+node tests/mail_folder.test.mjs
 node --check thunderbird/background.js
 node --check thunderbird/dashboard.js
 python3 scripts/build_mail_check.py
 ```
 
-`dist/clam-mail-check-0.3.0.xpi` と、確認用の補助プログラム・登録JSONを
+`dist/clam-mail-check-0.4.0.xpi` と、確認用の補助プログラム・登録JSONを
 `dist/native/` に生成します。GUIセットアップ一式は
-`dist/clam-mail-check-setup-0.3.0-linux-<architecture>.tar.gz` に生成します。
+`dist/clam-mail-check-setup-0.4.0-linux-<architecture>.tar.gz` に生成します。
 XPI・補助プログラム・GUIを同梱しており、ソースのチェックアウトは不要です。
 生成しただけではインストールされません。起動用実行ファイルはビルドした
 アーキテクチャ向けです。今回の確認対象はUbuntu 26.04 / x86_64です。
@@ -174,7 +175,7 @@ python3 scripts/register_mail_host.py --install
 ユーザーのホーム配下に、次の2ファイルを新規作成します。
 
 ```text
-$HOME/.local/lib/clam-mail-check/0.3.0/host.py
+$HOME/.local/lib/clam-mail-check/0.4.0/host.py
 $HOME/.mozilla/native-messaging-hosts/local.clam_mail_check.json
 ```
 
@@ -217,7 +218,50 @@ GUI方式と混在させず、新規導入にはGUIセットアップを使っ�
   処理したうえで、成功/未削除の件数と失敗理由を表示します。
 - 一括処理を開始した後の取り消しはありません。画面を閉じても、確認済みの処理は
   拡張のバックグラウンドで続きます。Thunderbird終了で中断された処理は自動再開しません。
-- メールフォルダー全体を検査する専用機能は、今回の変更には含めていません。
+- 0.4.0では以下のフォルダー検査と進捗表示にも対応しています。
+
+## フォルダー検査と進捗（0.4.0）
+
+既存環境ではXPIだけを更新します。補助プログラム・GUIセットアップの再登録は不要です。
+追加の権限・依存ライブラリはありません。
+
+1. Thunderbirdの受信・同期を完了させ、フォルダー一覧で通常のメールフォルダーを
+   1つ右クリックし、「ClamAVでフォルダーを検査」を選びます。
+   結果画面の「表示中のフォルダーを検査」からも開始できます。
+2. アカウント・フォルダーパスを確認し、必要な場合だけ「サブフォルダーも含める」を選びます。
+   初期状態は選択したフォルダーだけです。
+3. 「検査を開始」を押します。検査結果タブの上部で対象確認中の状態を表示し、
+   一覧取得後は確定した対象件数に対する進捗バーと割合を表示します。
+4. 結果が1通ずつ追加されます。「この検査の結果を表示」で、同じ実行の結果に
+   絞り込みます。状態・アカウント・文字列の絞り込みや一括処理も併用できます。
+
+進捗には処理済み/対象件数、検査中/未処理件数、未検出・検出・未検査・失敗の内訳、
+経過時間を表示します。処理済みには検査不能と失敗も含み、安全の保証にはしません。
+読み上げ用の進捗通知は状態変化と10件ごとの節目にまとめ、経過時間を毎回読み上げません。
+
+- フォルダー検査は同時に1件。対象のヘッダー情報を一覧取得し、実際の履歴への
+  登録とClamAV検査は1通ずつ行います。新着と手動検査を優先します。
+- 対象はThunderbirdが列挙したメールです。対象確定後の新着はこの実行には追加せず、
+  通常の新着検査に任せます。IMAP本文の取得には通信・待ち時間が発生し得ます。
+- 統合受信トレイ・検索・タグなどの仮想フォルダーとアカウント直下のルートは対象外。
+  子フォルダーの取得にはAPIの階層情報を使い、仮想の子フォルダーは除外数を表示します。
+- 対象一覧の取得に失敗した場合は停止します。空のフォルダーは0件で完了します。
+  メモリ上の対象は最大10万通、走査するフォルダーは最大5000件に制限し、超過時は
+  検査を開始せず停止理由を表示します。範囲を分けて検査してください。
+- 「中止」は、実行中の一覧取得または1通の検査が終了してから停止します。
+  未処理件数は残し、完了とは表示しません。途中からの再開は未対応です。
+- 画面を閉じても検査は続きます。Thunderbird終了・拡張更新などで中断した場合は、
+  再起動後に中断状態を表示し、自動再開しません。処理中だったメールは結果未確認として残します。
+- 実行中の対象一覧やThunderbirdの一時的な数値IDは保存せず、進捗の集計だけを
+  履歴と別に保存します。メール本文・添付は進捗データにも保存しません。
+- 履歴上限は1000件のままです。古い未検出結果が置き換わっても進捗の集計は保持します。
+  検出・未検査・失敗などで履歴が埋まり、新しい結果を残せない場合は、その時点で停止します。
+- 集計は検査時の結果です。履歴消去、完全削除、手動再検査後の状態とは区別します。
+  手動再検査で更新した結果は、元のフォルダー検査だけの絞り込みから外れます。
+- フォルダー検査のエラーは集計を安定させるため自動再試行しません。必要なら結果一覧から再検査します。
+- 通知設定が有効なら、最初の検出・最初の未検査/失敗を通知し、終了時に合計を通知します。
+  フォルダーパス・件名・差出人はデスクトップ通知に含めません。
+- フォルダー検査はメールを削除・移動しません。削除には従来どおり利用者の確認が必要です。
 
 ## 検出時の通知と完全削除
 
@@ -297,6 +341,7 @@ SHA-256を照合します。複数候補・Message-IDなし・消失したメー
 ## 公式資料
 
 - [Thunderbird messages API](https://webextension-api.thunderbird.net/en/esr-mv2/messages.html)
+- [Thunderbird folders API](https://webextension-api.thunderbird.net/en/esr-mv2/folders.html)
 - [Thunderbird runtime API](https://webextension-api.thunderbird.net/en/esr-mv2/runtime.html)
 - [Mozilla Native Messaging](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Native_messaging)
 - [Mozilla Native manifests](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Native_manifests)

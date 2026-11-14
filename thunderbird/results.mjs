@@ -3,9 +3,10 @@ import { needsAttention } from "./core.mjs";
 export const selectable = record => ["clean", "detected", "incomplete", "error"].includes(record.status);
 export const canDelete = record => record.status === "detected" && Boolean(record.sha256);
 
-export function filterRecords(records, { status = "all", account = "all", search = "" } = {}) {
+export function filterRecords(records, { status = "all", account = "all", search = "", folderJobId = null } = {}) {
   const query = search.trim().toLocaleLowerCase();
   return records.filter(record => {
+    if (folderJobId && record.folderJobId !== folderJobId) return false;
     if (status === "attention" && !needsAttention(record)) return false;
     if (status === "pending" && !["queued", "scanning"].includes(record.status)) return false;
     if (!["all", "attention", "pending"].includes(status) && record.status !== status) return false;

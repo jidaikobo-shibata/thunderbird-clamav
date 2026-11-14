@@ -12,7 +12,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const profile = await mkdtemp(path.join(tmpdir(), "clam-mail-ui-"));
 const server = createServer(async (request, response) => {
   const name = new URL(request.url, "http://localhost").pathname.slice(1);
-  if (!["dashboard.html", "dashboard.css", "dashboard.js", "core.mjs", "results.mjs", "icon.svg"].includes(name)) {
+  if (!["dashboard.html", "dashboard.css", "dashboard.js", "core.mjs", "results.mjs", "folder-scan.mjs", "icon.svg"].includes(name)) {
     response.writeHead(404).end(); return;
   }
   const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript", ".svg": "image/svg+xml" };
@@ -76,7 +76,7 @@ try {
       detail: status === "detected" ? "脅威候補を検出しました。" : "検査結果",
       locator: { accountId, author: key === "r0" ? '<img src=x onerror="window.bad=true">' : "送信者",
         subject: key === "r0" ? "テスト添付メール" : "メール " + key, folder: { path: "/Inbox" } } });
-    window.testState = { ok: true, issue: "", batch: null,
+    window.testState = { ok: true, issue: "", batch: null, folderJob: null, folderRequest: null,
       settings: { enabled: false, accountIds: [], notifications: true },
       accounts: [{ id: "test", name: "テストアカウント", type: "imap" }, { id: "other", name: "別アカウント", type: "imap" }],
       records: [makeRecord("r0", "detected"), makeRecord("r1", "detected", "other"),
@@ -90,6 +90,22 @@ try {
     window.messenger = { runtime: { sendMessage: async request => {
       testCalls.push(request);
       if (request.type === "state") return structuredClone(testState);
+      if (request.type === "folderContext") {
+        testState.folderRequest = { token: "folder-token", folder: { accountId: "test", path: "/Inbox", name: "受信トレイ" } };
+        return { ok: true, ...testState.folderRequest };
+      }
+      if (request.type === "folderCancel") testState.folderRequest = null;
+      if (request.type === "folderStart") {
+        testState.folderRequest = null;
+        testState.folderJob = { id: "folder-job", status: "collecting", folder: { accountId: "test", path: "/Inbox" },
+          includeSubfolders: request.includeSubfolders, total: null, discovered: 10, completed: 0, scanning: 0,
+          counts: { clean: 0, detected: 0, incomplete: 0, error: 0 }, detail: "対象メールを確認しています。",
+          startedAt: new Date().toISOString(), finishedAt: null, ignored: 0, skippedFolders: 0 };
+        return { ok: true, job: testState.folderJob };
+      }
+      if (request.type === "folderStop") { testState.folderJob.status = "stopped"; testState.folderJob.scanning = 0;
+        testState.folderJob.finishedAt = new Date().toISOString(); testState.folderJob.detail = "中止しました。"; }
+
       if (request.type === "health") return { ok: true, health: { status: "ready", engine: "ClamAV test", detail: "接続可能" } };
       if (request.type === "clear") testState.records = testState.records.filter(record => ["queued", "scanning"].includes(record.status));
       if (request.type === "prepareDelete") return { ok: true, token: "test-ticket", ...target(request.key) };
@@ -177,7 +193,43 @@ try {
   await writeFile(path.join(root, "dist/ui-mobile.png"), Buffer.from(mobile.data, "base64"));
   await evaluate("document.getElementById('tab-settings').click(); document.getElementById('clear').click()");
   await until("testCalls.some(call => call.type === 'clear') && !document.getElementById('clear').disabled");
-  console.log("UI smoke: passed (tabs, keyboard, filters, pagination, selection reset, permission, bulk cancel/delete/retry, partial failures, literal text, desktop/mobile)");
+  await evaluate("document.getElementById('tab-results').click(); document.getElementById('scan-folder').click()");
+  await until("document.getElementById('folder-dialog').open");
+  assert.equal(await evaluate("document.getElementById('folder-subfolders').checked"), false);
+  assert.equal(await evaluate("document.activeElement.id"), "folder-cancel");
+  await evaluate("document.getElementById('folder-cancel').click()");
+  await until("testCalls.some(call => call.type === 'folderCancel')");
+  assert.equal(await evaluate("testCalls.some(call => call.type === 'folderStart')"), false);
+  await evaluate("document.getElementById('scan-folder').click()");
+  await until("document.getElementById('folder-dialog').open");
+  await evaluate("document.getElementById('folder-subfolders').click(); document.getElementById('folder-confirm').click()");
+  await until("!document.getElementById('folder-progress').hidden && !document.getElementById('folder-stop').disabled");
+  assert.equal(await evaluate("document.getElementById('folder-bar').hasAttribute('value')"), false);
+  assert.match(await evaluate("document.getElementById('folder-status').textContent"), /対象10件/);
+  assert.equal(await evaluate("testCalls.find(call => call.type === 'folderStart').includeSubfolders"), true);
+  await evaluate(`testState.folderJob = { ...testState.folderJob, status: 'running', total: 100, completed: 25, scanning: 1,
+    counts: { clean: 20, detected: 2, incomplete: 1, error: 2 }, detail: '1通ずつ検査しています。' };
+    testState.records.push({ key: 'folder-result', status: 'clean', sha256: 'hash', folderJobId: 'folder-job',
+      updatedAt: new Date().toISOString(), locator: { accountId: 'test', author: '送信者', subject: 'フォルダー検査結果' },
+      signatures: [], detail: '未検出' }); document.getElementById('health').click();`);
+  await until("document.getElementById('folder-status').textContent.includes('25 / 100') && !document.getElementById('folder-results').disabled");
+  assert.equal(await evaluate("document.getElementById('folder-bar').value"), 25);
+  assert.equal(await evaluate("document.getElementById('folder-bar').max"), 100);
+  assert.match(await evaluate("document.getElementById('folder-counts').textContent"), /検出2件/);
+  await evaluate("document.getElementById('folder-results').click()");
+  assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 1);
+  assert.match(await evaluate("document.getElementById('results').textContent"), /フォルダー検査結果/);
+  await call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
+  const folderImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
+  await writeFile(path.join(root, "dist/ui-folder-progress.png"), Buffer.from(folderImage.data, "base64"));
+  await evaluate("document.getElementById('folder-stop').click()");
+  await until("document.getElementById('folder-status').textContent.includes('中止') && document.getElementById('folder-stop').disabled");
+  assert.match(await evaluate("document.getElementById('folder-status').textContent"), /未処理75件/);
+  await evaluate("testState.folderJob.status = 'interrupted'; document.getElementById('health').click()");
+  await until("document.getElementById('folder-status').textContent.includes('中断')");
+  await call("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  assert.equal(await evaluate("document.documentElement.scrollWidth <= window.innerWidth"), true);
+  console.log("UI smoke: passed (tabs, filters, bulk actions, folder start/cancel/subfolders, progress counters, run filter, stop/interruption, desktop/mobile)");
 } finally {
   for (const waiter of pending.values()) clearTimeout(waiter.timer);
   chrome.kill();

@@ -8,7 +8,8 @@ function event() {
 }
 
 let caseId = 0;
-async function harness({ saved = {}, mails = [], nativeFailure = false, oversized = false, deleteAllowed = false, deleteFailure = false, deleteFailureIds = [], scanResult = {} } = {}) {
+async function harness({ saved = {}, mails = [], nativeFailure = false, oversized = false, deleteAllowed = false, deleteFailure = false, deleteFailureIds = [], scanResult = {}, scanGate = null,
+  folderRefs = [{ id: "inbox", accountId: "one", path: "/Inbox", name: "受信トレイ" }] } = {}) {
   let stored = structuredClone(saved);
   const notifications = [], opened = [], rawReads = [], timers = [], deleted = [];
   const events = { newMail: event(), selected: event(), message: event() };
@@ -22,10 +23,12 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
       connectNative() {
         const port = { onMessage: event(), onDisconnect: event(), disconnect() {},
           postMessage(request) {
-            queueMicrotask(() => {
+            queueMicrotask(async () => {
+              if (request.op === "end" && scanGate) await scanGate(rawReads.at(-1));
               if (nativeFailure) { port.onDisconnect.listeners[0](); return; }
               const result = request.op === "health" ? { status: "ready", protocol: 1, engine: "test" } :
-                request.op === "end" ? { status: "clean", detail: "未検出", sha256: request.sha256, signatures: [], ...scanResult } :
+                request.op === "end" ? { status: "clean", detail: "未検出", sha256: request.sha256, signatures: [],
+                  ...(typeof scanResult === "function" ? scanResult(rawReads.at(-1)) : scanResult) } :
                   { status: "accepted", seq: request.seq + 1 };
               port.onMessage.listeners[0]({ id: request.id, ...result });
             });
@@ -48,11 +51,18 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
         return new File([byId.get(id).raw || "Subject: example\r\n\r\nhello"], "mail.eml");
       },
       query: async query => ({ messages: mails.filter(mail => mail.headerMessageId === query.headerMessageId) }),
+      list: async ref => {
+        const folder = typeof ref === "string" ? folderRefs.find(folder => folder.id === ref) : ref;
+        return { messages: mails.filter(mail => mail.folder?.accountId === folder.accountId && mail.folder?.path === folder.path) };
+      },
       continueList: async () => ({ messages: [] })
     },
     accounts: { list: async () => [{ id: "one", name: "one", type: "imap" }, { id: "two", name: "two", type: "imap" }] },
+    folders: { get: async id => folderRefs.find(folder => folder.id === id),
+      getSubFolders: async ref => folderRefs.filter(folder => folder.parentId === (typeof ref === "string" ? ref : ref.id)) },
     menus: { onClicked: event(), create() {}, removeAll: async () => {} },
     mailTabs: { onSelectedMessagesChanged: events.selected, query: async () => [{ id: 7, active: true }],
+      get: async () => ({ displayedFolder: folderRefs[0] }),
       getSelectedMessages: async () => ({ messages: mails }) },
     browserAction: { onClicked: event(), setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
     notifications: { onClicked: event(), create: async (...args) => notifications.push(args) },
@@ -366,4 +376,146 @@ test("concurrent batch submissions cannot delete the same confirmation twice", a
   ]);
   assert.equal(responses.filter(response => response.ok).length, 1);
   assert.deepEqual(h.deleted.map(item => item.ids[0]), [1, 2]);
+});
+
+async function startFolder(h, includeSubfolders = false) {
+  const context = await h.send("folderContext");
+  assert.equal(context.ok, true, context.error);
+  const response = await h.send("folderStart", { token: context.token, includeSubfolders });
+  assert.equal(response.ok, true, response.error);
+  return response.job.id;
+}
+async function settledFolder(h, status) {
+  for (let i = 0; i < 3000; i++) {
+    const state = await h.send("state");
+    if (state.folderJob?.status === status) return state;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  throw new Error("Folder scan did not reach " + status);
+}
+
+test("folder scan creates incremental results and persists a separate summary without runtime targets", async () => {
+  const h = await harness({ mails: [mail(1), mail(2), mail(3)], scanResult: id => ({ status: id === 2 ? "detected" : id === 3 ? "incomplete" : "clean" }) });
+  const jobId = await startFolder(h);
+  const state = await settledFolder(h, "completed");
+  assert.equal(state.folderJob.total, 3);
+  assert.equal(state.folderJob.completed, 3);
+  assert.deepEqual(state.folderJob.counts, { clean: 1, detected: 1, incomplete: 1, error: 0 });
+  assert.equal(state.records.filter(record => record.folderJobId === jobId).length, 3);
+  assert.equal(state.records.every(record => record.source === "folder"), true);
+  assert.equal(Object.hasOwn(h.stored().folderJob, "targets"), false);
+  assert.equal(h.notifications.length, 3);
+  assert.match(h.notifications.find(item => item[0].startsWith("folder-"))[1].message, /検出1件/);
+});
+
+test("folder stop finishes the current message, keeps remaining count, and cannot restart itself", async () => {
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  const h = await harness({ mails: [mail(1), mail(2), mail(3)], scanGate: async id => { if (id === 1) { entered(); await gate; } } });
+  const jobId = await startFolder(h);
+  await started;
+  assert.equal((await h.send("state")).folderJob.scanning, 1);
+  await h.send("folderStop", { jobId });
+  await h.send("folderStop", { jobId });
+  assert.equal((await h.send("state")).folderJob.status, "stopping");
+  release();
+  const state = await settledFolder(h, "stopped");
+  assert.equal(state.folderJob.total, 3); assert.equal(state.folderJob.completed, 1);
+  assert.deepEqual(h.rawReads, [1]);
+  h.timers[0](); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(h.rawReads, [1]);
+});
+
+test("fresh automatic mail is scanned before the next folder target", async () => {
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  const fresh = mail(99); fresh.folder = { accountId: "one", path: "/Other" };
+  const h = await harness({ mails: [mail(1), mail(2), fresh],
+    saved: { settings: { enabled: true, accountIds: ["one"], notifications: false } },
+    scanGate: async id => { if (id === 1) { entered(); await gate; } } });
+  await startFolder(h); await started;
+  h.events.newMail.listeners[0](fresh.folder, { messages: [fresh] });
+  await new Promise(resolve => setImmediate(resolve));
+  release();
+  const state = await settledFolder(h, "completed");
+  assert.deepEqual(h.rawReads, [1, 99, 2]);
+  assert.equal(state.folderJob.completed, 2);
+});
+
+test("folder progress continues past history replacement without losing attention records", async () => {
+  const warnings = Array.from({ length: 999 }, (_, i) => ({ key: "old" + i, status: "detected", locator: { accountId: "one" } }));
+  const h = await harness({ saved: { records: warnings }, mails: [mail(1), mail(2), mail(3), mail(4), mail(5)] });
+  const jobId = await startFolder(h);
+  const state = await settledFolder(h, "completed");
+  assert.equal(state.folderJob.completed, 5);
+  assert.equal(state.records.length, 1000);
+  assert.equal(state.records.filter(record => record.folderJobId === jobId).length, 1);
+  assert.equal(state.records.filter(record => record.status === "detected").length, 999);
+});
+
+test("attention-only history capacity stops folder work with unprocessed counts", async () => {
+  const warnings = Array.from({ length: 999 }, (_, i) => ({ key: "old" + i, status: "detected", locator: { accountId: "one" } }));
+  const h = await harness({ saved: { records: warnings }, mails: [mail(1), mail(2)], scanResult: { status: "detected" } });
+  await startFolder(h);
+  const state = await settledFolder(h, "blocked");
+  assert.equal(state.folderJob.completed, 1); assert.equal(state.folderJob.total, 2);
+  assert.equal(state.records.length, 1000);
+  assert.match(state.folderJob.detail, /1000/);
+  assert.deepEqual(h.rawReads, [1]);
+});
+
+test("folder errors are counted once and interrupted work is not auto-resumed", async () => {
+  const h = await harness({ mails: [mail(1)], nativeFailure: true });
+  await startFolder(h);
+  const state = await settledFolder(h, "completed");
+  assert.equal(state.folderJob.counts.error, 1);
+  assert.equal(state.records[0].attempts, 1); assert.equal(state.records[0].nextRetry, null);
+  const interrupted = await harness({ saved: { folderJob: { ...state.folderJob, status: "running", scanning: 1 },
+    records: [{ ...state.records[0], status: "scanning" }] }, mails: [mail(1)] });
+  const restored = await interrupted.send("state");
+  assert.equal(restored.folderJob.status, "interrupted");
+  assert.equal(restored.folderJob.scanning, 0);
+  assert.equal(restored.records[0].status, "error");
+  assert.equal(interrupted.rawReads.length, 0);
+});
+
+test("folder context validates tokens, virtual folders and right-click folder selection", async () => {
+  const h = await harness({ mails: [mail(1)] });
+  assert.equal((await h.send("folderStart", { token: "forged", includeSubfolders: false })).ok, false);
+  await h.api.menus.onClicked.listeners[0]({ menuItemId: "scan-folder", selectedFolders: [{ id: "inbox" }] }, {});
+  await new Promise(resolve => setImmediate(resolve));
+  const state = await h.send("state");
+  assert.equal(state.folderRequest.folder.path, "/Inbox");
+  await h.send("folderCancel", { token: state.folderRequest.token });
+  assert.equal((await h.send("state")).folderRequest, null);
+  h.api.mailTabs.get = async () => ({ displayedFolder: { accountId: "one", path: "/Search", isVirtual: true } });
+  assert.equal((await h.send("folderContext")).ok, false);
+  assert.equal(h.rawReads.length, 0);
+});
+
+test("folder scan includes descendants only when explicitly requested", async () => {
+  const folderRefs = [
+    { id: "inbox", accountId: "one", path: "/Inbox", name: "受信トレイ" },
+    { id: "child", accountId: "one", path: "/Inbox/Child", name: "子", parentId: "inbox" }
+  ];
+  const childMail = mail(2); childMail.folder = folderRefs[1];
+  const h = await harness({ mails: [mail(1), childMail], folderRefs });
+  await startFolder(h, false);
+  assert.equal((await settledFolder(h, "completed")).folderJob.total, 1);
+  await startFolder(h, true);
+  const state = await settledFolder(h, "completed");
+  assert.equal(state.folderJob.total, 2);
+  assert.deepEqual(h.rawReads, [1, 1, 2]);
+});
+
+test("folder notifications are bounded and respect the existing notification setting", async () => {
+  for (const notifications of [true, false]) {
+    const h = await harness({ mails: [mail(1), mail(2), mail(3)], scanResult: { status: "detected" },
+      saved: { settings: { enabled: false, accountIds: [], notifications } } });
+    await startFolder(h); await settledFolder(h, "completed");
+    assert.equal(h.notifications.length, notifications ? 2 : 0);
+    assert.equal(JSON.stringify(h.notifications).includes("sender@example.invalid"), false);
+  }
 });

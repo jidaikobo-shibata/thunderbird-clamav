@@ -1,10 +1,13 @@
 import { LABELS, needsAttention } from "./core.mjs";
 import { selectable, canDelete, filterRecords, resultPage } from "./results.mjs";
+import { FOLDER_STATES } from "./folder-scan.mjs";
 
 const $ = id => document.getElementById(id);
 let latest, initialized = false, refreshing = false, busy = false, page = 0;
 let visible = [];
 const rows = new Map(), selected = new Set();
+let folderFilterId = null, seenFolderRequest = null;
+let folderAnnouncement = null;
 
 async function request(type, values = {}) {
   const response = await messenger.runtime.sendMessage({ ...values, type });
@@ -29,6 +32,12 @@ function updateControls() {
   for (const id of ["filter", "account-filter", "search", "reset-filters", "scan-selection", "clear", "allow-delete", "health"]) {
     $(id).disabled = locked;
   }
+  const job = latest?.folderJob;
+  const folderActive = job && ["collecting", "running", "stopping"].includes(job.status);
+  $("scan-folder").disabled = locked || Boolean(folderActive);
+  $("folder-stop").disabled = locked || !folderActive || job.status === "stopping";
+  $("folder-results").disabled = locked || !job;
+  $("folder-only").disabled = locked || !job;
   for (const input of $("settings-form").querySelectorAll("input, button")) input.disabled = locked;
   for (const record of visible) {
     const entry = rows.get(record.key);
@@ -76,6 +85,83 @@ function activateTab(name, focus = false) {
     if (active && focus) button.focus();
   }
 }
+
+function renderFolder() {
+  const job = latest.folderJob;
+  $("folder-progress").hidden = !job;
+  $("folder-only-label").hidden = !job;
+  if (!job) return;
+  if (folderFilterId && folderFilterId !== job.id) {
+    folderFilterId = null; $("folder-only").checked = false; selected.clear(); page = 0;
+  }
+  const account = latest.accounts.find(account => account.id === job.folder.accountId)?.name || job.folder.accountId;
+  setText($("folder-title"), `フォルダー検査：${account} ／ ${job.folder.path}${job.includeSubfolders ? "（サブフォルダーを含む）" : ""}`);
+  const elapsed = Math.max(0, Math.floor(((job.finishedAt ? new Date(job.finishedAt).getTime() : Date.now()) - new Date(job.startedAt).getTime()) / 1000));
+  const time = `経過${Math.floor(elapsed / 60)}分${elapsed % 60}秒`;
+  if (job.total === null) {
+    if (["collecting", "stopping"].includes(job.status)) $("folder-bar").removeAttribute("value");
+    else { $("folder-bar").max = 1; $("folder-bar").value = 0; }
+    setText($("folder-status"), `${FOLDER_STATES[job.status]} ／ 対象${job.discovered}件を確認 ／ ${time}`);
+  } else {
+    $("folder-bar").max = Math.max(1, job.total);
+    $("folder-bar").value = job.total === 0 && job.status === "completed" ? 1 : job.completed;
+    const percent = job.total ? (100 * job.completed / job.total).toFixed(1) : "100.0";
+    const waiting = Math.max(0, job.total - job.completed - job.scanning);
+    setText($("folder-status"), `${FOLDER_STATES[job.status]} ／ 処理済み${job.completed} / ${job.total}件（${percent}%） ／ 検査中${job.scanning}件・未処理${waiting}件 ／ ${time}`);
+  }
+  setText($("folder-counts"), `未検出${job.counts.clean}件 ／ 検出${job.counts.detected}件 ／ 未検査${job.counts.incomplete}件 ／ 失敗${job.counts.error}件`);
+  const milestone = `${job.id}:${job.status}:${Math.floor(job.completed / 10)}`;
+  if (milestone !== folderAnnouncement) {
+    folderAnnouncement = milestone;
+    setText($("folder-announcement"), `フォルダー検査 ${FOLDER_STATES[job.status]}。処理済み${job.completed}件${job.total === null ? "" : `、対象${job.total}件`}。`);
+  }
+  setText($("folder-detail"), job.detail + (job.skippedFolders ? ` 対象外のフォルダー：${job.skippedFolders}件。` : ""));
+  const retained = latest.records.filter(record => record.folderJobId === job.id).length;
+  setText($("folder-retained"), `この検査の履歴を${retained}件保持しています。履歴上限は1000件ですが、進捗の処理件数は別に保持します。検出・未検査・失敗の履歴で上限に達した場合は停止します。`);
+}
+
+function showFolderDialog(context) {
+  seenFolderRequest = context.token;
+  activateTab("results");
+  const account = latest.accounts.find(account => account.id === context.folder.accountId)?.name || context.folder.accountId;
+  setText($("folder-target"), `${account} ／ ${context.folder.path}`);
+  $("folder-subfolders").checked = false;
+  const dialog = $("folder-dialog");
+  dialog.returnValue = "cancel";
+  dialog.addEventListener("close", () => {
+    if (dialog.returnValue !== "start") {
+      void request("folderCancel", { token: context.token }).catch(error => setText($("action-status"), error.message));
+      return;
+    }
+    const includeSubfolders = $("folder-subfolders").checked;
+    void action(async () => {
+      await request("folderStart", { token: context.token, includeSubfolders });
+      folderFilterId = null; $("folder-only").checked = false; selected.clear(); page = 0;
+      return "フォルダー検査を開始しました。進捗パネルで確認できます。";
+    });
+  }, { once: true });
+  dialog.showModal();
+  $("folder-cancel").focus();
+}
+
+$("scan-folder").addEventListener("click", () => {
+  let context;
+  void action(async () => {
+    context = await request("folderContext");
+    return "対象とサブフォルダーの範囲を確認してください。";
+  }).then(() => { if (context && !$("folder-dialog").open) showFolderDialog(context); });
+});
+$("folder-stop").addEventListener("click", () => {
+  const jobId = latest?.folderJob?.id;
+  void action(() => request("folderStop", { jobId }), "中止を受け付けました。実行中の処理を終えて停止します。");
+});
+$("folder-results").addEventListener("click", () => {
+  folderFilterId = latest.folderJob.id; $("folder-only").checked = true;
+  $("filter").value = "all"; $("account-filter").value = "all"; $("search").value = ""; resetSelection();
+});
+$("folder-only").addEventListener("change", () => {
+  folderFilterId = $("folder-only").checked ? latest?.folderJob?.id : null; resetSelection();
+});
 for (const [index, name] of ["results", "settings"].entries()) {
   $("tab-" + name).addEventListener("click", () => activateTab(name));
   $("tab-" + name).addEventListener("keydown", event => {
@@ -165,7 +251,8 @@ function makeRow(record) {
 
 function renderRecords() {
   if (!latest) return;
-  const filtered = filterRecords(latest.records, { status: $("filter").value, account: $("account-filter").value, search: $("search").value });
+  renderFolder();
+  const filtered = filterRecords(latest.records, { status: $("filter").value, account: $("account-filter").value, search: $("search").value, folderJobId: folderFilterId });
   const result = resultPage(filtered, page);
   page = result.page;
   visible = result.records;
@@ -238,6 +325,8 @@ async function refresh() {
     $("issue").hidden = !latest.issue;
     setText($("issue"), latest.issue || "");
     renderRecords();
+    if (latest.folderRequest && latest.folderRequest.token !== seenFolderRequest && !blocked() &&
+        !$("delete-dialog").open && !$("folder-dialog").open) showFolderDialog(latest.folderRequest);
   } finally { refreshing = false; }
 }
 
@@ -245,7 +334,8 @@ function resetSelection() { selected.clear(); page = 0; renderRecords(); }
 for (const id of ["filter", "account-filter"]) $(id).addEventListener("change", resetSelection);
 $("search").addEventListener("input", resetSelection);
 $("reset-filters").addEventListener("click", () => {
-  $("filter").value = "all"; $("account-filter").value = "all"; $("search").value = ""; resetSelection();
+  $("filter").value = "all"; $("account-filter").value = "all"; $("search").value = "";
+  folderFilterId = null; $("folder-only").checked = false; resetSelection();
 });
 for (const [id, delta] of [["previous-page", -1], ["next-page", 1]]) {
   $(id).addEventListener("click", () => { selected.clear(); page += delta; renderRecords(); });

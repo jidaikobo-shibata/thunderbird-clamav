@@ -2,6 +2,7 @@ import {
   MAX_BYTES, DEFAULTS, LABELS, NativeClient, accountOf, locator, sameEnvelope,
   validateSettings, messagePages, sha256, needsAttention
 } from "./core.mjs";
+import { FolderScan, FOLDER_STATES, realFolder } from "./folder-scan.mjs";
 
 const api = messenger;
 const session = crypto.randomUUID();
@@ -17,6 +18,35 @@ const deletionTickets = new Map();
 const deleting = new Set();
 const batchTickets = new Map();
 let batchProgress = null;
+let folderRequest = null;
+const folderScan = new FolderScan(api, {
+  changed: () => save(), wake: () => { void drain().catch(report); },
+  finished: async job => {
+    if (!settings.notifications) return;
+    try {
+      await api.notifications.create("folder-" + job.id, { type: "basic", iconUrl: api.runtime.getURL("icon.svg"),
+        title: "ClamAV：フォルダー検査 " + FOLDER_STATES[job.status],
+        message: `処理済み${job.completed}件、検出${job.counts.detected}件、未検査${job.counts.incomplete}件、失敗${job.counts.error}件。結果画面を確認してください。` });
+    } catch { issue = "フォルダー検査の通知を表示できません。結果画面を確認してください。"; }
+  }
+});
+
+async function chooseFolder(folder) {
+  if (folderScan.active) throw new Error("フォルダー検査は既に実行中です。");
+  const current = folder?.id ? await api.folders.get(folder.id, false) : folder;
+  if (!realFolder(current)) throw new Error("通常のメールフォルダーを1つ選択してください。統合・検索・タグの仮想フォルダーは対象外です。");
+  folderRequest = { token: crypto.randomUUID(), folder: { id: current.id, accountId: current.accountId,
+    path: current.path, name: current.name || current.path } };
+  return folderRequest;
+}
+
+async function currentFolder() {
+  const tabs = await api.mailTabs.query({});
+  const tab = tabs.find(tab => tab.id === lastMailTab) || tabs.find(tab => tab.active) || tabs[0];
+  if (!tab) throw new Error("Thunderbirdのフォルダー一覧で対象を選択してください。");
+  const full = await api.mailTabs.get(tab.id);
+  return chooseFolder(full.displayedFolder);
+}
 
 function deletable(key) {
   const record = records.find(item => item.key === key);
@@ -114,7 +144,7 @@ function report(error) {
 function save() {
   // Take a snapshot now, then serialize storage writes so an older snapshot
   // cannot overwrite a later scan result.
-  const value = JSON.parse(JSON.stringify({ settings, records, issue }));
+  const value = JSON.parse(JSON.stringify({ settings, records, issue, folderJob: folderScan.snapshot() }));
   writes = writes.catch(() => {}).then(() => api.storage.local.set(value));
   return writes;
 }
@@ -217,7 +247,7 @@ function enqueue(first, source) {
       Object.assign(record, {
         messageId: message.id, session, locator: locator(message), source,
         status: "queued", detail: "検査を待っています。", signatures: [],
-        sha256: null, engine: null, attempts: 0, nextRetry: null, updatedAt: new Date().toISOString()
+        sha256: null, engine: null, attempts: 0, nextRetry: null, folderJobId: null, updatedAt: new Date().toISOString()
       });
       if (!existing) records.push(record);
     }
@@ -235,9 +265,31 @@ async function drain() {
   running = true;
   try {
     while (true) {
-      const record = records.find(item => item.status === "queued" &&
-        (item.source === "manual" || (settings.enabled && settings.accountIds.includes(item.locator.accountId))));
+      // Folder work is fed one at a time, after fresh mail and manual work.
+      let record = records.find(item => item.status === "queued" && item.source === "automatic" &&
+        settings.enabled && settings.accountIds.includes(item.locator.accountId)) ||
+        records.find(item => item.status === "queued" && item.source === "manual");
+      if (!record && folderScan.available()) {
+        if (records.length >= MAX_RECORDS) {
+          const index = records.findIndex(item => item.status === "clean");
+          if (index === -1) {
+            await folderScan.finish("blocked", "検出・未検査・失敗などの履歴で上限1000件に達したため停止しました。履歴を確認・整理し、改めて開始してください。");
+            continue;
+          }
+          records.splice(index, 1);
+        }
+        const message = folderScan.take();
+        if (message) {
+          record = { key: crypto.randomUUID(), createdAt: new Date().toISOString(),
+            messageId: message.id, session, locator: locator(message), source: "folder",
+            status: "queued", detail: "フォルダー検査を待っています。", signatures: [],
+            sha256: null, engine: null, attempts: 0, nextRetry: null, folderJobId: folderScan.job.id,
+            updatedAt: new Date().toISOString() };
+          records.push(record);
+        }
+      }
       if (!record) break;
+      const fromFolder = record.source === "folder";
       record.status = "scanning";
       record.detail = "メールを取得して検査しています。";
       record.attempts++;
@@ -270,11 +322,20 @@ async function drain() {
       }
       record.updatedAt = new Date().toISOString();
       // Two automatic attempts total; no endless retry loop on bad mail/host.
-      if (record.status === "error" && record.attempts < 2) {
+      if (!fromFolder && record.status === "error" && record.attempts < 2) {
         record.nextRetry = Date.now() + 60000;
       }
+      if (fromFolder) {
+        const flag = record.status === "detected" ? "notifiedDetection" :
+          ["incomplete", "error"].includes(record.status) ? "notifiedProblem" : null;
+        if (flag && !folderScan.job[flag]) {
+          folderScan.job[flag] = true;
+          void notify(record);
+        }
+        await folderScan.complete(record.status);
+      }
       await save();
-      await notify(record);
+      if (!fromFolder) await notify(record);
       await updateBadge();
     }
   } catch (error) {
@@ -282,6 +343,9 @@ async function drain() {
     if (active) {
       active.status = "error";
       active.detail = "検査状態の保存に失敗しました。保存領域を確認して再検査してください。";
+    }
+    if (folderScan.active) {
+      await folderScan.finish("error", "検査状態の保存などに失敗したため停止しました。結果を確認して改めて開始してください。").catch(() => {});
     }
     throw error;
   } finally { running = false; }
@@ -299,20 +363,23 @@ async function scanSelection() {
 }
 
 const ready = (async () => {
-  const data = await api.storage.local.get(["settings", "records", "issue"]);
+  const data = await api.storage.local.get(["settings", "records", "issue", "folderJob"]);
   settings = { ...DEFAULTS, ...data.settings };
   records = Array.isArray(data.records) ? data.records : [];
   issue = typeof data.issue === "string" ? data.issue : "";
+  folderScan.restore(data.folderJob);
   for (const record of records) {
     record.messageId = null;
     record.session = null;
-    if (record.status === "scanning") {
-      record.status = "queued";
-      record.detail = "前回中断された検査を再開します。";
+    if (record.status === "scanning" || (record.source === "folder" && record.status === "queued")) {
+      record.status = record.source === "folder" ? "error" : "queued";
+      record.detail = record.source === "folder" ? "フォルダー検査中に終了したため、このメールの結果は未確認です。" : "前回中断された検査を再開します。";
+      if (record.source === "folder") record.nextRetry = null;
     }
   }
   await api.menus.removeAll();
   api.menus.create({ id: "scan", title: "ClamAVで選択メールを検査", contexts: ["message_list"] });
+  api.menus.create({ id: "scan-folder", title: "ClamAVでフォルダーを検査", contexts: ["folder_pane"] });
   await save();
   await updateBadge();
 })().catch(error => { report(error); throw error; });
@@ -322,6 +389,17 @@ api.messages.onNewMailReceived.addListener((folder, list) => {
 }, true);
 api.mailTabs.onSelectedMessagesChanged.addListener(tab => { lastMailTab = tab.id; });
 api.menus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === "scan-folder") {
+    void ready.then(async () => {
+      if (!folderScan.active) {
+        const folders = info.selectedFolders || (info.selectedFolder ? [info.selectedFolder] : []);
+        if (folders.length !== 1) throw new Error("フォルダーを1つ選択してください。");
+        await chooseFolder(folders[0]);
+      }
+      await openDashboard();
+    }).catch(report);
+    return;
+  }
   if (info.menuItemId !== "scan") return;
   if (tab?.id !== undefined) lastMailTab = tab.id;
   void ready.then(() => info.selectedMessages ? enqueue(info.selectedMessages, "manual") : scanSelection())
@@ -337,7 +415,8 @@ api.runtime.onMessage.addListener(async (request, sender) => {
   try {
     switch (request.type) {
       case "state":
-        return { ok: true, settings, records, issue, batch: batchProgress, accounts: (await api.accounts.list())
+        return { ok: true, settings, records, issue, batch: batchProgress, folderRequest,
+          folderJob: folderScan.snapshot(), accounts: (await api.accounts.list())
           .filter(account => ["imap", "pop3", "none"].includes(account.type))
           .map(account => ({ id: account.id, name: account.name, type: account.type })) };
       case "settings": {
@@ -355,6 +434,26 @@ api.runtime.onMessage.addListener(async (request, sender) => {
       case "scanSelection":
         await scanSelection();
         return { ok: true };
+      case "folderContext":
+        return { ok: true, ...await currentFolder() };
+      case "folderCancel":
+        if (folderRequest?.token === request.token) folderRequest = null;
+        return { ok: true };
+      case "folderStart": {
+        if (!folderRequest || folderRequest.token !== request.token) throw new Error("フォルダーの選択が変わりました。選び直してください。");
+        if (typeof request.includeSubfolders !== "boolean") throw new Error("サブフォルダーの選択が不正です。");
+        const folder = folderRequest.folder;
+        const current = folder.id ? await api.folders.get(folder.id, false) : folder;
+        if (!realFolder(current) || current.accountId !== folder.accountId || current.path !== folder.path) throw new Error("フォルダーが見つからないか、場所が変わりました。選び直してください。");
+        const job = await folderScan.start(current, request.includeSubfolders);
+        folderRequest = null;
+        void folderScan.collecting.catch(report);
+        return { ok: true, job };
+      }
+      case "folderStop":
+        if (request.jobId !== folderScan.job?.id) throw new Error("検査の対象が変わりました。画面を更新してください。");
+        await folderScan.stop();
+        return { ok: true };
       case "retry": {
         const record = records.find(item => item.key === request.key);
         if (!record || deleting.has(record.key) || ["scanning", "queued", "deleted"].includes(record.status)) {
@@ -364,6 +463,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         record.source = "manual";
         record.attempts = 0;
         record.nextRetry = null;
+        record.folderJobId = null;
         await save();
         void drain().catch(report);
         return { ok: true };
@@ -376,7 +476,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
           throw new Error("再検査できない結果が含まれています。選び直してください。");
         }
         for (const record of targets) {
-          Object.assign(record, { status: "queued", source: "manual", attempts: 0, nextRetry: null });
+          Object.assign(record, { status: "queued", source: "manual", attempts: 0, nextRetry: null, folderJobId: null });
         }
         await save();
         void drain().catch(report);
