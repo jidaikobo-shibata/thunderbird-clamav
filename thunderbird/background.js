@@ -111,7 +111,7 @@ async function prepareBatch(keys) {
   requestedKeys(keys);
   if (batchProgress?.active) throw new Error("一括削除の処理中です。");
   if (!await api.permissions.contains({ permissions: ["messagesDelete"] })) {
-    throw new Error("設定タブの「完全削除を許可」から権限を許可してください。");
+    throw new Error("完全削除の権限がありません。削除ボタンからもう一度操作してください。");
   }
   const tickets = [], targets = [], positions = new Set();
   for (const key of keys) {
@@ -583,7 +583,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
       }
       case "prepareDelete": {
         if (!await api.permissions.contains({ permissions: ["messagesDelete"] })) {
-          throw new Error("先に「完全削除を許可」から権限を許可してください。");
+          throw new Error("完全削除の権限がありません。削除ボタンからもう一度操作してください。");
         }
         const record = deletable(request.key);
         const hash = record.sha256;

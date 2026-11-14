@@ -29,7 +29,7 @@ function updateControls() {
   $("select-page").disabled = locked || !candidates.length;
   $("select-page").checked = candidates.length > 0 && chosen.length === candidates.length;
   $("select-page").indeterminate = chosen.length > 0 && chosen.length < candidates.length;
-  for (const id of ["filter", "account-filter", "search", "reset-filters", "scan-selection", "clear", "allow-delete", "health"]) {
+  for (const id of ["filter", "account-filter", "search", "reset-filters", "scan-selection", "clear", "health"]) {
     $(id).disabled = locked;
   }
   const job = latest?.folderJob;
@@ -218,7 +218,15 @@ function confirmDeletion(targets) {
 }
 $("delete-ack").addEventListener("change", () => { $("delete-confirm").disabled = !$("delete-ack").checked; });
 
+async function requireDeletePermission() {
+  // Called synchronously from the delete click, before any other awaited work.
+  // Already-granted permissions resolve without another permission prompt.
+  const granted = await messenger.permissions.request({ permissions: ["messagesDelete"] });
+  if (!granted) throw new Error("完全削除が許可されなかったため、メールは削除していません。");
+}
+
 async function deleteOne(key) {
+  await requireDeletePermission();
   setText($("action-status"), "削除対象を照合しています。");
   const target = await request("prepareDelete", { key });
   if (!await confirmDeletion([target])) {
@@ -380,6 +388,7 @@ $("retry-selected").addEventListener("click", () => {
 $("delete-selected").addEventListener("click", () => {
   const keys = selection().map(record => record.key);
   void action(async () => {
+    await requireDeletePermission();
     $("batch-report").replaceChildren(); $("batch-report").hidden = true;
     setText($("action-status"), "選択した削除対象を照合しています。");
     const prepared = await request("prepareDeleteBatch", { keys });
@@ -418,13 +427,6 @@ $("scan-selection").addEventListener("click", () => { void action(() => request(
 $("clear").addEventListener("click", () => {
   if (blocked() || !confirm("検出・失敗を含む、完了した検査履歴を消去します。メール自体は削除しません。続けますか？")) return;
   void action(() => request("clear"), "完了した検査履歴を消去しました。");
-});
-$("allow-delete").addEventListener("click", () => {
-  // Keep the permission request in the original user gesture.
-  void action(async () => {
-    const granted = await messenger.permissions.request({ permissions: ["messagesDelete"] });
-    return granted ? "完全削除を許可しました。検査結果タブで対象を選択できます。" : "完全削除は許可されませんでした。";
-  });
 });
 void refresh().catch(error => setText($("action-status"), error.message));
 setInterval(() => {

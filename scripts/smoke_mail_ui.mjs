@@ -69,6 +69,7 @@ try {
   await call("Page.addScriptToEvaluateOnNewDocument", { source: `
     window.testCalls = [];
     window.confirmResult = true;
+    window.permissionGranted = true;
     window.confirm = () => confirmResult;
     const makeRecord = (key, status, accountId = "test") => ({ key, status, sha256: "test",
       updatedAt: new Date(Date.UTC(2026, 10, 14, 9) - Number(key.replace(/[^0-9]/g, '') || 0) * 1000).toISOString(),
@@ -121,7 +122,7 @@ try {
         return { key, deleted: i === 0, error: i === 0 ? undefined : "模擬の削除失敗" }; }) };
       if (request.type === "retryMany") return { ok: true, count: request.keys.length };
       return { ok: true };
-    } }, permissions: { request: async value => { testCalls.push({ type: "permission", ...value }); return true; } } };
+    } }, permissions: { request: async value => { testCalls.push({ type: "permission", ...value }); return permissionGranted; } } };
   ` });
   const until = expression => evaluate(`new Promise((resolve, reject) => {
     const timer = setInterval(() => { if (${expression}) { clearInterval(timer); clearTimeout(deadline); resolve(true); } }, 20);
@@ -162,10 +163,15 @@ try {
     document.querySelector('#accounts input').checked = true;
     document.getElementById('settings-form').requestSubmit();`);
   await until("testCalls.some(call => call.type === 'settings') && !document.getElementById('health').disabled");
-  await evaluate("document.getElementById('allow-delete').click()");
-  await until("testCalls.some(call => call.type === 'permission') && !document.getElementById('health').disabled");
-  await evaluate("document.getElementById('tab-results').click(); document.getElementById('select-page').click(); document.getElementById('delete-selected').click()");
+  assert.equal(await evaluate("document.getElementById('allow-delete')"), null);
+  await evaluate("document.getElementById('tab-results').click(); document.getElementById('select-page').click(); permissionGranted = false; document.getElementById('delete-selected').click()");
+  await until("document.getElementById('action-status').textContent.includes('許可されなかった') && !document.getElementById('delete-selected').disabled");
+  assert.equal(await evaluate("document.getElementById('delete-dialog').open"), false);
+  assert.equal(await evaluate("testCalls.some(call => call.type === 'prepareDeleteBatch' || call.type === 'deleteBatch')"), false);
+  await evaluate("permissionGranted = true; document.getElementById('delete-selected').click()");
   await until("document.getElementById('delete-dialog').open");
+  assert.equal(await evaluate("testCalls.some(call => call.type === 'permission')"), true);
+  assert.equal(await evaluate("testCalls.findIndex(call => call.type === 'permission') < testCalls.findIndex(call => call.type === 'prepareDeleteBatch')"), true);
   assert.equal(await evaluate("document.querySelectorAll('#delete-targets li').length"), 2);
   assert.equal(await evaluate("document.querySelectorAll('#delete-targets img').length"), 0);
   assert.equal(await evaluate("document.activeElement.id"), "delete-cancel");
@@ -182,7 +188,12 @@ try {
   await until("document.getElementById('action-status').textContent.includes('完全削除1件')");
   assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 1);
   assert.match(await evaluate("document.getElementById('batch-report').textContent"), /模擬の削除失敗/);
-  await evaluate("document.querySelector('#results button:last-child').click()");
+  const singlePrepares = await evaluate("testCalls.filter(call => call.type === 'prepareDelete').length");
+  await evaluate("permissionGranted = false; document.querySelector('#results button:last-child').click()");
+  await until("document.getElementById('action-status').textContent.includes('許可されなかった') && !document.querySelector('#results button:last-child').disabled");
+  assert.equal(await evaluate("testCalls.filter(call => call.type === 'prepareDelete').length"), singlePrepares);
+  assert.equal(await evaluate("document.getElementById('delete-dialog').open"), false);
+  await evaluate("permissionGranted = true; document.querySelector('#results button:last-child').click()");
   await until("document.getElementById('delete-dialog').open");
   await evaluate("document.getElementById('delete-ack').click(); document.getElementById('delete-confirm').click()");
   await until("document.getElementById('action-status').textContent.includes('対象メールを完全削除')");

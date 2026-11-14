@@ -46,7 +46,7 @@
       <button type="button" id="delete-selected" class="danger" disabled>選択したメールを完全削除</button>
       <button type="button" id="deselect" disabled>選択を解除</button>
     </div>
-    <p class="hint">選択は表示中のページのみです。絞り込み・ページ変更で解除します。一括完全削除は、未検出・検出・未検査・失敗のメールを選択すると利用できます。権限の許可は「設定」タブにあります。</p>
+    <p class="hint">選択は表示中のページのみです。絞り込み・ページ変更で解除します。一括完全削除は、未検出・検出・未検査・失敗のメールを選択すると利用できます。初回は削除ボタンからThunderbirdの権限確認が表示されます。</p>
     <p id="batch-progress" role="status" aria-live="polite" hidden></p>
     <ul id="batch-report" aria-label="一括操作で処理できなかった結果" hidden></ul>
     <div class="table-scroll" tabindex="0" role="region" aria-label="検査結果一覧（横にスクロールできます）">
@@ -72,9 +72,6 @@
       <div class="actions"><button type="submit">設定を保存</button><button type="button" id="health">ClamAVとの接続を確認</button></div>
     </form>
     <p id="health-result"></p>
-    <h3>完全削除の権限</h3>
-    <p>メールを完全削除する場合に許可してください。削除ごとに対象の確認が必要です。ごみ箱を経由せず、元には戻せません。IMAPではサーバーと他端末にも反映されます。</p>
-    <button type="button" id="allow-delete">完全削除を許可</button>
     <h3>検査履歴</h3>
     <p>最大1000件を保持します。上限時は古い未検出の結果から置き換えます。差出人・件名・検査結果をローカルに保存し、本文と添付は履歴に保存しません。</p>
     <button type="button" id="clear">完了した検査履歴を消去</button>
