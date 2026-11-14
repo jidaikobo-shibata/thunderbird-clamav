@@ -15,6 +15,8 @@ let writes = Promise.resolve();
 let mutations = Promise.resolve();
 const deletionTickets = new Map();
 const deleting = new Set();
+const batchTickets = new Map();
+let batchProgress = null;
 
 function deletable(key) {
   const record = records.find(item => item.key === key);
@@ -34,6 +36,74 @@ async function verified(record) {
     throw new Error("対象メールが検査時と一致しません。再検査してください。");
   }
   return message;
+}
+
+function requestedKeys(keys) {
+  if (!Array.isArray(keys) || !keys.length || keys.length > 100 ||
+      keys.some(key => typeof key !== "string") || new Set(keys).size !== keys.length) {
+    throw new Error("一括操作は重複のない1〜100件を選択してください。");
+  }
+  return keys;
+}
+
+async function prepareBatch(keys) {
+  requestedKeys(keys);
+  if (batchProgress?.active) throw new Error("一括削除の処理中です。");
+  if (!await api.permissions.contains({ permissions: ["messagesDelete"] })) {
+    throw new Error("設定タブの「完全削除を許可」から権限を許可してください。");
+  }
+  const tickets = [], targets = [], positions = new Set();
+  for (const key of keys) {
+    const record = deletable(key);
+    if (deleting.has(key)) throw new Error("削除処理中のメールがあります。");
+    const hash = record.sha256;
+    const message = await verified(record);
+    if (deletable(key).sha256 !== hash) throw new Error("検査結果が変わりました。選び直してください。");
+    const place = position(message);
+    if (positions.has(place)) throw new Error("同じメールを指す履歴が含まれています。重複を外してください。");
+    positions.add(place);
+    tickets.push({ key, hash, position: place });
+    targets.push({ key, author: message.author || "差出人なし", subject: message.subject || "件名なし",
+      accountId: message.folder.accountId, folder: message.folder.path || message.folder.name || "",
+      signatures: record.signatures || [] });
+  }
+  for (const [token, batch] of batchTickets) {
+    if (batch.expires < Date.now()) batchTickets.delete(token);
+  }
+  if (batchTickets.size >= 10) throw new Error("未完了の確認が多いため、ほかの確認画面を閉じてやり直してください。");
+  const token = crypto.randomUUID();
+  batchTickets.set(token, { tickets, expires: Date.now() + 300000 });
+  return { ok: true, token, targets };
+}
+
+
+async function executeDeletion(ticket) {
+  if (deleting.has(ticket.key)) throw new Error("このメールは削除処理中です。");
+  deleting.add(ticket.key);
+  try {
+    if (!await api.permissions.contains({ permissions: ["messagesDelete"] })) {
+      throw new Error("完全削除の権限がありません。");
+    }
+    const record = deletable(ticket.key);
+    if (record.sha256 !== ticket.hash) throw new Error("検査結果が変わりました。再確認してください。");
+    const message = await verified(record);
+    // Never follow a move/replacement after the user saw the confirmation.
+    const current = await api.messages.get(message.id);
+    if (position(current) !== ticket.position || !sameEnvelope(current, record.locator) ||
+        deletable(ticket.key).sha256 !== ticket.hash) {
+      throw new Error("確認後にメールの場所や検査結果が変わりました。再確認してください。");
+    }
+    await api.messages.delete([current.id], { deletePermanently: true, isUserAction: true });
+    record.status = "deleted";
+    record.deletedAt = new Date().toISOString();
+    record.updatedAt = record.deletedAt;
+    record.nextRetry = null;
+    record.detail = "ごみ箱を経由せず完全削除しました。元には戻せません。";
+    try { await save(); }
+    catch { issue = "メールの削除は完了しましたが、履歴を保存できませんでした。"; }
+    await updateBadge().catch(report);
+    return { ok: true };
+  } finally { deleting.delete(ticket.key); }
 }
 
 function report(error) {
@@ -267,7 +337,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
   try {
     switch (request.type) {
       case "state":
-        return { ok: true, settings, records, issue, accounts: (await api.accounts.list())
+        return { ok: true, settings, records, issue, batch: batchProgress, accounts: (await api.accounts.list())
           .filter(account => ["imap", "pop3", "none"].includes(account.type))
           .map(account => ({ id: account.id, name: account.name, type: account.type })) };
       case "settings": {
@@ -297,6 +367,47 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         await save();
         void drain().catch(report);
         return { ok: true };
+      }
+      case "retryMany": {
+        const keys = requestedKeys(request.keys);
+        const targets = keys.map(key => records.find(record => record.key === key));
+        if (targets.some(record => !record || deleting.has(record.key) ||
+            !["clean", "detected", "incomplete", "error"].includes(record.status))) {
+          throw new Error("再検査できない結果が含まれています。選び直してください。");
+        }
+        for (const record of targets) {
+          Object.assign(record, { status: "queued", source: "manual", attempts: 0, nextRetry: null });
+        }
+        await save();
+        void drain().catch(report);
+        return { ok: true, count: targets.length };
+      }
+      case "prepareDeleteBatch":
+        return await prepareBatch(request.keys);
+      case "cancelDeleteBatch":
+        batchTickets.delete(request.token);
+        return { ok: true };
+      case "deleteBatch": {
+        if (batchProgress?.active) throw new Error("一括削除の処理中です。");
+        const batch = batchTickets.get(request.token);
+        batchTickets.delete(request.token);
+        if (!batch || batch.expires < Date.now()) throw new Error("削除確認が期限切れです。選び直してください。");
+        batchProgress = { active: true, total: batch.tickets.length, completed: 0, deleted: 0, failed: 0 };
+        const results = [];
+        try {
+          for (const ticket of batch.tickets) {
+            try {
+              await executeDeletion(ticket);
+              batchProgress.deleted++;
+              results.push({ key: ticket.key, deleted: true });
+            } catch (error) {
+              batchProgress.failed++;
+              results.push({ key: ticket.key, deleted: false, error: error.message || "削除に失敗しました。" });
+            }
+            batchProgress.completed++;
+          }
+          return { ok: true, results };
+        } finally { batchProgress.active = false; }
       }
       case "open": {
         const record = records.find(item => item.key === request.key);
@@ -331,36 +442,11 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         return { ok: true };
       case "deletePermanently": {
         const ticket = deletionTickets.get(request.token);
-        deletionTickets.delete(request.token); // Single use, including failures.
+        deletionTickets.delete(request.token);
         if (!ticket || ticket.key !== request.key || ticket.expires < Date.now()) {
           throw new Error("削除確認が無効か期限切れです。もう一度操作してください。");
         }
-        if (deleting.has(ticket.key)) throw new Error("このメールは削除処理中です。");
-        deleting.add(ticket.key);
-        try {
-          if (!await api.permissions.contains({ permissions: ["messagesDelete"] })) {
-            throw new Error("完全削除の権限がありません。");
-          }
-          const record = deletable(ticket.key);
-          if (record.sha256 !== ticket.hash) throw new Error("検査結果が変わりました。再確認してください。");
-          const message = await verified(record);
-          // Never follow a move/replacement after the user saw the confirmation.
-          const current = await api.messages.get(message.id);
-          if (position(current) !== ticket.position || !sameEnvelope(current, record.locator) ||
-              deletable(ticket.key).sha256 !== ticket.hash) {
-            throw new Error("確認後にメールの場所や検査結果が変わりました。再確認してください。");
-          }
-          await api.messages.delete([current.id], { deletePermanently: true, isUserAction: true });
-          record.status = "deleted";
-          record.deletedAt = new Date().toISOString();
-          record.updatedAt = record.deletedAt;
-          record.nextRetry = null;
-          record.detail = "ごみ箱を経由せず完全削除しました。元には戻せません。";
-          try { await save(); }
-          catch { issue = "メールの削除は完了しましたが、履歴を保存できませんでした。"; }
-          await updateBadge().catch(report);
-          return { ok: true };
-        } finally { deleting.delete(ticket.key); }
+        return await executeDeletion(ticket);
       }
       case "clear":
         // This removes only generated results, never messages. The page asks

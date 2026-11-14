@@ -8,7 +8,7 @@ function event() {
 }
 
 let caseId = 0;
-async function harness({ saved = {}, mails = [], nativeFailure = false, oversized = false, deleteAllowed = false, deleteFailure = false, scanResult = {} } = {}) {
+async function harness({ saved = {}, mails = [], nativeFailure = false, oversized = false, deleteAllowed = false, deleteFailure = false, deleteFailureIds = [], scanResult = {} } = {}) {
   let stored = structuredClone(saved);
   const notifications = [], opened = [], rawReads = [], timers = [], deleted = [];
   const events = { newMail: event(), selected: event(), message: event() };
@@ -35,7 +35,7 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
     },
     messages: {
       delete: async (ids, options) => {
-        if (deleteFailure) throw new Error("server refused deletion");
+        if (deleteFailure || ids.some(id => deleteFailureIds.includes(id))) throw new Error("server refused deletion");
         deleted.push({ ids, options });
         for (const id of ids) byId.delete(id);
       },
@@ -273,4 +273,97 @@ test("detected mail notifies only when enabled and notifications omit sender and
       assert.equal(JSON.stringify(h.notifications).includes("Example"), false);
     }
   }
+});
+
+async function batchFixture(options = {}) {
+  const mails = [mail(1), mail(2), mail(3)];
+  const hash = await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello"));
+  const records = mails.map(target => ({ key: "k" + target.id, status: "detected", sha256: hash,
+    signatures: ["Test.Threat"], updatedAt: new Date().toISOString(),
+    locator: { accountId: "one", headerMessageId: target.headerMessageId,
+      author: target.author, subject: target.subject, date: target.date.toISOString() } }));
+  const h = await harness({ mails, saved: { records }, deleteAllowed: true, ...options });
+  return { h, mails, records };
+}
+
+test("batch deletes only the confirmed set, keeps unselected mail, and cannot replay", async () => {
+  const { h } = await batchFixture();
+  const prepared = await h.send("prepareDeleteBatch", { keys: ["k1", "k3"] });
+  assert.equal(prepared.targets.length, 2);
+  assert.equal(h.deleted.length, 0);
+  const response = await h.send("deleteBatch", { token: prepared.token });
+  assert.deepEqual(response.results.map(result => result.deleted), [true, true]);
+  assert.deepEqual(h.deleted.map(item => item.ids[0]), [1, 3]);
+  assert.equal((await h.send("state")).records[1].status, "detected");
+  assert.equal((await h.send("state")).batch.completed, 2);
+  assert.equal((await h.send("state")).batch.active, false);
+  assert.equal((await h.send("deleteBatch", { token: prepared.token })).ok, false);
+});
+
+test("batch cancel and expiration cause no deletion", async () => {
+  const { h } = await batchFixture();
+  let prepared = await h.send("prepareDeleteBatch", { keys: ["k1", "k2"] });
+  await h.send("cancelDeleteBatch", { token: prepared.token });
+  assert.equal((await h.send("deleteBatch", { token: prepared.token })).ok, false);
+  prepared = await h.send("prepareDeleteBatch", { keys: ["k1", "k2"] });
+  const now = Date.now;
+  Date.now = () => now() + 300001;
+  try { assert.equal((await h.send("deleteBatch", { token: prepared.token })).ok, false); }
+  finally { Date.now = now; }
+  assert.equal(h.deleted.length, 0);
+});
+
+test("batch rechecks every mail and reports changed and server-refused items separately", async () => {
+  const { h, mails } = await batchFixture({ deleteFailureIds: [2] });
+  const prepared = await h.send("prepareDeleteBatch", { keys: ["k1", "k2", "k3"] });
+  mails[0].raw = "changed after confirmation";
+  const response = await h.send("deleteBatch", { token: prepared.token });
+  assert.deepEqual(response.results.map(result => result.deleted), [false, false, true]);
+  assert.deepEqual(h.deleted.map(item => item.ids[0]), [3]);
+  assert.match(response.results[0].error, /一致/);
+  assert.match(response.results[1].error, /server refused/);
+  assert.deepEqual((await h.send("state")).records.map(record => record.status), ["detected", "detected", "deleted"]);
+});
+
+test("batch rejects invalid keys, missing permission, unknown or non-detected records before deleting", async () => {
+  const { h } = await batchFixture();
+  for (const keys of [[], ["k1", "k1"], ["k1", "unknown"], Array.from({ length: 101 }, (_, i) => "k" + i)]) {
+    assert.equal((await h.send("prepareDeleteBatch", { keys })).ok, false);
+  }
+  const denied = await batchFixture({ deleteAllowed: false });
+  assert.equal((await denied.h.send("prepareDeleteBatch", { keys: ["k1"] })).ok, false);
+  const clean = await batchFixture();
+  await clean.h.send("retry", { key: "k2" });
+  await settle(clean.h, state => state.records[1].status === "clean");
+  assert.equal((await clean.h.send("prepareDeleteBatch", { keys: ["k1", "k2"] })).ok, false);
+  assert.equal(clean.h.deleted.length, 0);
+  assert.equal(h.deleted.length, 0);
+});
+
+test("batch refuses two history records for the same underlying message", async () => {
+  const { records, mails } = await batchFixture();
+  const duplicate = { ...records[0], key: "duplicate" };
+  const h = await harness({ mails, deleteAllowed: true, saved: { records: [records[0], duplicate] } });
+  assert.equal((await h.send("prepareDeleteBatch", { keys: ["k1", "duplicate"] })).ok, false);
+  assert.equal(h.deleted.length, 0);
+});
+
+test("bulk retry queues the selected terminal results without deleting mail", async () => {
+  const { h } = await batchFixture();
+  const response = await h.send("retryMany", { keys: ["k1", "k3"] });
+  assert.equal(response.count, 2);
+  const state = await settle(h, state => state.records[0].status === "clean" && state.records[2].status === "clean");
+  assert.equal(state.records[1].status, "detected");
+  assert.equal(h.deleted.length, 0);
+});
+
+test("concurrent batch submissions cannot delete the same confirmation twice", async () => {
+  const { h } = await batchFixture();
+  const prepared = await h.send("prepareDeleteBatch", { keys: ["k1", "k2"] });
+  const responses = await Promise.all([
+    h.send("deleteBatch", { token: prepared.token }),
+    h.send("deleteBatch", { token: prepared.token })
+  ]);
+  assert.equal(responses.filter(response => response.ok).length, 1);
+  assert.deepEqual(h.deleted.map(item => item.ids[0]), [1, 2]);
 });

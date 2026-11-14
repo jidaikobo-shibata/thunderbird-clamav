@@ -12,7 +12,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const profile = await mkdtemp(path.join(tmpdir(), "clam-mail-ui-"));
 const server = createServer(async (request, response) => {
   const name = new URL(request.url, "http://localhost").pathname.slice(1);
-  if (!["dashboard.html", "dashboard.css", "dashboard.js", "core.mjs", "icon.svg"].includes(name)) {
+  if (!["dashboard.html", "dashboard.css", "dashboard.js", "core.mjs", "results.mjs", "icon.svg"].includes(name)) {
     response.writeHead(404).end(); return;
   }
   const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript", ".svg": "image/svg+xml" };
@@ -70,67 +70,114 @@ try {
     window.testCalls = [];
     window.confirmResult = true;
     window.confirm = () => confirmResult;
-    window.testState = {
-      ok: true, issue: "", settings: { enabled: false, accountIds: [], notifications: true },
-      accounts: [{ id: "test", name: "テストアカウント", type: "imap" }],
-      records: [{ key: "test-result", status: "detected", sha256: "test",
-        updatedAt: "2026-11-14T09:00:00Z", engine: "ClamAV test",
-        signatures: ["Eicar-Test-Signature"], detail: "脅威候補を検出しました。",
-        locator: { author: '<img src=x onerror="window.bad=true">', subject: "テスト添付メール" } }]
-    };
+    const makeRecord = (key, status, accountId = "test") => ({ key, status, sha256: "test",
+      updatedAt: new Date(Date.UTC(2026, 10, 14, 9) - Number(key.replace(/[^0-9]/g, '') || 0) * 1000).toISOString(),
+      engine: "ClamAV test", signatures: status === "detected" ? ["Eicar-Test-Signature"] : [],
+      detail: status === "detected" ? "脅威候補を検出しました。" : "検査結果",
+      locator: { accountId, author: key === "r0" ? '<img src=x onerror="window.bad=true">' : "送信者",
+        subject: key === "r0" ? "テスト添付メール" : "メール " + key, folder: { path: "/Inbox" } } });
+    window.testState = { ok: true, issue: "", batch: null,
+      settings: { enabled: false, accountIds: [], notifications: true },
+      accounts: [{ id: "test", name: "テストアカウント", type: "imap" }, { id: "other", name: "別アカウント", type: "imap" }],
+      records: [makeRecord("r0", "detected"), makeRecord("r1", "detected", "other"),
+        makeRecord("r2", "clean"), makeRecord("r3", "incomplete", "other"),
+        makeRecord("r4", "queued"), makeRecord("r5", "deleted"),
+        ...Array.from({ length: 55 }, (_, i) => makeRecord("r" + (i + 6), "clean"))] };
+    const target = key => { const record = testState.records.find(record => record.key === key);
+      return { key, author: record.locator.author, subject: record.locator.subject,
+        folder: "/Inbox", accountId: record.locator.accountId, signatures: record.signatures }; };
+    let batchKeys = [];
     window.messenger = { runtime: { sendMessage: async request => {
       testCalls.push(request);
-      if (request.type === "state") return testState;
+      if (request.type === "state") return structuredClone(testState);
       if (request.type === "health") return { ok: true, health: { status: "ready", engine: "ClamAV test", detail: "接続可能" } };
-      if (request.type === "clear") testState.records = [];
-      if (request.type === "prepareDelete") return { ok: true, token: "test-ticket", author: "test@example.invalid", subject: "テスト添付メール", accountId: "test", folder: "/Inbox", signatures: ["Test"] };
-      if (request.type === "deletePermanently") testState.records[0].status = "deleted";
+      if (request.type === "clear") testState.records = testState.records.filter(record => ["queued", "scanning"].includes(record.status));
+      if (request.type === "prepareDelete") return { ok: true, token: "test-ticket", ...target(request.key) };
+      if (request.type === "deletePermanently") testState.records.find(record => record.key === request.key).status = "deleted";
+      if (request.type === "prepareDeleteBatch") { batchKeys = request.keys; return { ok: true, token: "batch", targets: batchKeys.map(target) }; }
+      if (request.type === "deleteBatch") return { ok: true, results: batchKeys.map((key, i) => {
+        if (i === 0) testState.records.find(record => record.key === key).status = "deleted";
+        return { key, deleted: i === 0, error: i === 0 ? undefined : "模擬の削除失敗" }; }) };
+      if (request.type === "retryMany") return { ok: true, count: request.keys.length };
       return { ok: true };
     } }, permissions: { request: async value => { testCalls.push({ type: "permission", ...value }); return true; } } };
   ` });
-  await call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 1100, deviceScaleFactor: 1, mobile: false });
-  await call("Page.navigate", { url: `http://127.0.0.1:${server.address().port}/dashboard.html` });
-  const ready = await evaluate(`new Promise((resolve, reject) => {
-    const timer = setInterval(() => {
-      if (document.querySelector('#results tr')) { clearInterval(timer); resolve(true); }
-    }, 50);
-    setTimeout(() => { clearInterval(timer); reject(new Error('UI not ready')); }, 5000);
+  const until = expression => evaluate(`new Promise((resolve, reject) => {
+    const timer = setInterval(() => { if (${expression}) { clearInterval(timer); clearTimeout(deadline); resolve(true); } }, 20);
+    const deadline = setTimeout(() => { clearInterval(timer); reject(new Error('UI condition timed out')); }, 5000);
   })`);
-  assert.equal(ready, true);
+  const change = async (id, value, event = "change") => evaluate(`document.getElementById(${JSON.stringify(id)}).value = ${JSON.stringify(value)};
+    document.getElementById(${JSON.stringify(id)}).dispatchEvent(new Event(${JSON.stringify(event)}));`);
+  await call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
+  await call("Page.navigate", { url: `http://127.0.0.1:${server.address().port}/dashboard.html` });
+  await until("document.querySelectorAll('#results tr').length === 50");
+  assert.equal(await evaluate("document.getElementById('panel-settings').hidden"), true);
   assert.equal(await evaluate("document.querySelectorAll('#results img').length"), 0);
-  assert.equal(await evaluate("Boolean(window.bad)"), false);
   assert.match(await evaluate("document.getElementById('results').textContent"), /<img/);
+  await evaluate("document.querySelector('#results input').click()");
+  assert.match(await evaluate("document.getElementById('selected-count').textContent"), /1件/);
+  await evaluate("document.getElementById('next-page').click()");
+  assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 11);
+  assert.match(await evaluate("document.getElementById('selected-count').textContent"), /0件/);
+  await evaluate("document.getElementById('previous-page').click()");
+  await change("filter", "detected");
+  assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 2);
+  await change("account-filter", "other");
+  assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 1);
+  await change("search", "not found", "input");
+  assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 0);
+  assert.equal(await evaluate("document.getElementById('empty-results').hidden"), false);
+  await evaluate("document.getElementById('reset-filters').click()");
+  await evaluate("document.getElementById('select-page').click()");
+  assert.equal(await evaluate("document.getElementById('delete-selected').disabled"), true);
+  await change("filter", "detected");
+  assert.match(await evaluate("document.getElementById('selected-count').textContent"), /0件/);
+  await evaluate("document.getElementById('tab-results').focus(); document.getElementById('tab-results').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))");
+  assert.equal(await evaluate("document.getElementById('panel-results').hidden"), true);
+  assert.equal(await evaluate("document.activeElement.id"), "tab-settings");
   await evaluate("document.getElementById('health').click()");
-  assert.match(await evaluate("document.getElementById('health-result').textContent"), /ClamAV test/);
-  await evaluate("testState.records[0].status = 'clean'; document.getElementById('health').click()");
-  assert.equal(await evaluate("getComputedStyle(document.querySelector('#results button:last-child')).display"), "none");
-  await evaluate("testState.records[0].status = 'detected'; document.getElementById('health').click()");
+  await until("document.getElementById('health-result').textContent.includes('ClamAV test') && !document.getElementById('health').disabled");
   await evaluate(`document.getElementById('enabled').checked = true;
     document.querySelector('#accounts input').checked = true;
     document.getElementById('settings-form').requestSubmit();`);
-  assert.equal(await evaluate("testCalls.some(call => call.type === 'settings' && call.settings.accountIds[0] === 'test')"), true);
-  await evaluate("document.querySelector('#results button').click()");
-  assert.equal(await evaluate("testCalls.some(call => call.type === 'open')"), true);
+  await until("testCalls.some(call => call.type === 'settings') && !document.getElementById('health').disabled");
+  await evaluate("document.getElementById('allow-delete').click()");
+  await until("testCalls.some(call => call.type === 'permission') && !document.getElementById('health').disabled");
+  await evaluate("document.getElementById('tab-results').click(); document.getElementById('select-page').click(); document.getElementById('delete-selected').click()");
+  await until("document.getElementById('delete-dialog').open");
+  assert.equal(await evaluate("document.querySelectorAll('#delete-targets li').length"), 2);
+  assert.equal(await evaluate("document.querySelectorAll('#delete-targets img').length"), 0);
+  assert.equal(await evaluate("document.activeElement.id"), "delete-cancel");
+  assert.equal(await evaluate("document.getElementById('delete-confirm').disabled"), true);
+  await evaluate("document.getElementById('delete-cancel').click()");
+  await until("testCalls.some(call => call.type === 'cancelDeleteBatch') && !document.getElementById('delete-selected').disabled");
+  assert.equal(await evaluate("testCalls.some(call => call.type === 'deleteBatch')"), false);
   await mkdir(path.join(root, "dist"), { recursive: true });
   const desktop = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
   await writeFile(path.join(root, "dist/ui-desktop.png"), Buffer.from(desktop.data, "base64"));
+  await evaluate("document.getElementById('delete-selected').click()");
+  await until("document.getElementById('delete-dialog').open");
+  await evaluate("document.getElementById('delete-ack').click(); document.getElementById('delete-confirm').click()");
+  await until("document.getElementById('action-status').textContent.includes('完全削除1件')");
+  assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 1);
+  assert.match(await evaluate("document.getElementById('batch-report').textContent"), /模擬の削除失敗/);
+  await evaluate("document.querySelector('#results button:last-child').click()");
+  await until("document.getElementById('delete-dialog').open");
+  await evaluate("document.getElementById('delete-ack').click(); document.getElementById('delete-confirm').click()");
+  await until("document.getElementById('action-status').textContent.includes('対象メールを完全削除')");
+  await change("filter", "deleted");
+  assert.equal(await evaluate("document.querySelector('#results button').disabled"), true);
+  await change("filter", "clean");
+  assert.equal(await evaluate("getComputedStyle(document.querySelector('#results button:last-child')).display"), "none");
+  await evaluate("document.querySelector('#results input').click(); document.getElementById('retry-selected').click()");
+  await until("testCalls.some(call => call.type === 'retryMany') && !document.getElementById('filter').disabled");
   await call("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   assert.equal(await evaluate("document.documentElement.scrollWidth <= window.innerWidth"), true);
   const mobile = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
   await writeFile(path.join(root, "dist/ui-mobile.png"), Buffer.from(mobile.data, "base64"));
-  await evaluate("document.getElementById('allow-delete').click()");
-  assert.equal(await evaluate("testCalls.some(call => call.type === 'permission' && call.permissions[0] === 'messagesDelete')"), true);
-  await evaluate("confirmResult = false; document.querySelector('#results button:last-child').click()");
-  assert.equal(await evaluate("testCalls.some(call => call.type === 'cancelDelete')"), true);
-  assert.equal(await evaluate("testCalls.some(call => call.type === 'deletePermanently')"), false);
-  await evaluate("confirmResult = true; document.querySelector('#results button:last-child').click()");
-  assert.equal(await evaluate("testCalls.some(call => call.type === 'deletePermanently')"), true);
-  assert.match(await evaluate("document.querySelector('#results .state').textContent"), /完全削除済み/);
-  assert.equal(await evaluate("document.querySelector('#results button').disabled"), true);
-  await evaluate("document.getElementById('clear').click()");
-  assert.equal(await evaluate("testCalls.some(call => call.type === 'clear')"), true);
-  assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 0);
-  console.log("UI smoke: passed (settings, result opening, history clearing, literal untrusted text, desktop/mobile layout)");
+  await evaluate("document.getElementById('tab-settings').click(); document.getElementById('clear').click()");
+  await until("testCalls.some(call => call.type === 'clear') && !document.getElementById('clear').disabled");
+  console.log("UI smoke: passed (tabs, keyboard, filters, pagination, selection reset, permission, bulk cancel/delete/retry, partial failures, literal text, desktop/mobile)");
 } finally {
   for (const waiter of pending.values()) clearTimeout(waiter.timer);
   chrome.kill();

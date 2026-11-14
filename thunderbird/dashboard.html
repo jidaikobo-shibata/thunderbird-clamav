@@ -9,55 +9,81 @@
 </head>
 <body>
 <main>
-  <h1>ClamAV メール検査</h1>
-  <p>受信後にメール全体を検査します。検査完了前の閲覧や添付操作は止めません。</p>
-  <p>メール本文・添付は外部サービスに送信しません。暗号化メールは復号せず、未検査として扱います。</p>
+  <header><h1>ClamAV メール検査</h1><p>検査結果を確認し、必要なメールに対処します。</p></header>
+  <div class="tabs" role="tablist" aria-label="メール検査の画面">
+    <button type="button" role="tab" id="tab-results" aria-selected="true" aria-controls="panel-results">検査結果</button>
+    <button type="button" role="tab" id="tab-settings" aria-selected="false" aria-controls="panel-settings" tabindex="-1">設定</button>
+  </div>
   <p id="action-status" role="status" aria-live="polite"></p>
   <p id="issue" role="alert" hidden></p>
 
-  <section aria-labelledby="settings-heading">
-    <h2 id="settings-heading">設定</h2>
-    <form id="settings-form">
-      <label><input id="enabled" type="checkbox"> 新着メールを自動検査する</label>
-      <fieldset>
-        <legend>自動検査するアカウント</legend>
-        <div id="accounts"></div>
-      </fieldset>
-      <label><input id="notifications" type="checkbox"> 検出・検査不能・失敗をデスクトップ通知する</label>
-      <p class="hint">通知には差出人・件名を表示しません。設定を保存した後に届いた新着が対象です。</p>
-      <div class="actions">
-        <button type="submit">設定を保存</button>
-        <button type="button" id="health">ClamAVとの接続を確認</button>
-      </div>
-    </form>
-    <p id="health-result"></p>
-    <p class="hint">上限は1通25MiB、展開後の合計100MiB、検査時間は最大120秒です。ClamAVの定義が3日超古い場合は検査失敗として扱います。URLの評判によるフィッシング判定は無効です。</p>
-  </section>
-
-  <section aria-labelledby="results-heading">
-    <h2 id="results-heading">検査結果</h2>
-    <div class="actions">
-      <button type="button" id="scan-selection">メール一覧で選択したメールを検査</button>
-      <button type="button" id="clear">完了した検査履歴を消去</button>
-      <button type="button" id="allow-delete">完全削除を許可</button>
-      <label for="filter">表示</label>
-      <select id="filter">
-        <option value="all">すべて</option>
-        <option value="attention">検出・未検査・失敗</option>
-        <option value="pending">検査待ち・検査中</option>
-      </select>
+  <section id="panel-results" role="tabpanel" aria-labelledby="tab-results" tabindex="0">
+    <div class="section-heading"><h2>検査結果</h2><button type="button" id="scan-selection">メール一覧で選択したメールを検査</button></div>
+    <div class="filters">
+      <label for="filter">状態<select id="filter">
+        <option value="all">すべて</option><option value="attention">確認が必要</option>
+        <option value="detected">脅威候補を検出</option><option value="incomplete">一部または全部が未検査</option>
+        <option value="error">検査失敗</option><option value="clean">未検出</option>
+        <option value="pending">検査待ち・検査中</option><option value="deleted">完全削除済み</option>
+      </select></label>
+      <label for="account-filter">アカウント<select id="account-filter"><option value="all">すべて</option></select></label>
+      <label for="search">検索<input id="search" type="search" placeholder="差出人・件名・検出名など"></label>
+      <button type="button" id="reset-filters">絞り込みを解除</button>
     </div>
-    <p class="hint">メール一覧の右クリックからも検査できます。履歴は最大1000件です。上限時は古い未検出の結果から置き換え、警告のある結果は自動消去しません。</p>
-    <p class="hint">差出人・件名・検査結果をこの拡張のローカル保存領域に保持します。本文と添付は履歴に保存しません。履歴の消去でメールは削除されません。</p>
     <p id="summary" role="status" aria-live="polite"></p>
+    <div class="selection-bar" aria-label="選択した結果への操作">
+      <strong id="selected-count">選択0件</strong>
+      <button type="button" id="retry-selected" disabled>選択したメールを再検査</button>
+      <button type="button" id="delete-selected" class="danger" disabled>選択したメールを完全削除</button>
+      <button type="button" id="deselect" disabled>選択を解除</button>
+    </div>
+    <p class="hint">選択は表示中のページのみです。絞り込み・ページ変更で解除します。一括完全削除は、脅威候補を検出したメールだけを選択すると利用できます。権限の許可は「設定」タブにあります。</p>
+    <p id="batch-progress" role="status" aria-live="polite" hidden></p>
+    <ul id="batch-report" aria-label="一括操作で処理できなかった結果" hidden></ul>
     <div class="table-scroll" tabindex="0" role="region" aria-label="検査結果一覧（横にスクロールできます）">
       <table>
-        <caption>新しい検査から最大100件を表示します。脅威候補を検出したメールは、権限の許可と対象の確認後、ごみ箱を経由せず完全削除できます。IMAPではサーバーと他端末にも削除が反映されます。元には戻せません。</caption>
-        <thead><tr><th scope="col">状態・検査日時</th><th scope="col">差出人・件名</th><th scope="col">詳細</th><th scope="col">操作</th></tr></thead>
+        <caption class="visually-hidden">メールごとの検査結果。各行のチェックボックスで一括操作の対象を選べます。</caption>
+        <thead><tr><th scope="col" class="select-cell"><input type="checkbox" id="select-page" aria-label="このページの操作可能な結果をすべて選択"></th><th scope="col">状態・検査日時</th><th scope="col">差出人・件名</th><th scope="col">詳細</th><th scope="col">操作</th></tr></thead>
         <tbody id="results"></tbody>
       </table>
     </div>
+    <p id="empty-results" hidden>該当する検査結果はありません。</p>
+    <nav class="pagination" aria-label="結果一覧のページ送り">
+      <button type="button" id="previous-page">前のページ</button><span id="page-label"></span><button type="button" id="next-page">次のページ</button>
+    </nav>
+  </section>
+
+  <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" tabindex="0" hidden>
+    <h2>設定</h2>
+    <form id="settings-form">
+      <label><input id="enabled" type="checkbox"> 新着メールを自動検査する</label>
+      <fieldset><legend>自動検査するアカウント</legend><div id="accounts"></div></fieldset>
+      <label><input id="notifications" type="checkbox"> 検出・検査不能・失敗をデスクトップ通知する</label>
+      <p class="hint">通知には差出人・件名を表示しません。設定保存後に届いた新着が対象です。</p>
+      <div class="actions"><button type="submit">設定を保存</button><button type="button" id="health">ClamAVとの接続を確認</button></div>
+    </form>
+    <p id="health-result"></p>
+    <h3>完全削除の権限</h3>
+    <p>検出メールを完全削除する場合だけ許可してください。削除ごとに対象の確認が必要です。ごみ箱を経由せず、元には戻せません。IMAPではサーバーと他端末にも反映されます。</p>
+    <button type="button" id="allow-delete">完全削除を許可</button>
+    <h3>検査履歴</h3>
+    <p>最大1000件を保持します。上限時は古い未検出の結果から置き換えます。差出人・件名・検査結果をローカルに保存し、本文と添付は履歴に保存しません。</p>
+    <button type="button" id="clear">完了した検査履歴を消去</button>
+    <p class="hint">履歴の消去では、メール自体は削除されません。</p>
+    <h3>検査範囲</h3>
+    <p>受信後にメール全体を検査します。検査完了前の閲覧や添付操作は止めません。メール本文・添付は外部サービスに送信しません。暗号化メールは復号せず、未検査として扱います。</p>
+    <p>上限は1通25MiB、展開後の合計100MiB、検査時間は最大120秒です。ClamAVの定義が3日超古い場合は検査失敗として扱います。URLの評判によるフィッシング判定は無効です。</p>
   </section>
 </main>
+<dialog id="delete-dialog" aria-labelledby="delete-title" aria-describedby="delete-warning">
+  <form method="dialog">
+    <h2 id="delete-title">メールの完全削除</h2>
+    <p id="delete-warning">ごみ箱を経由せず完全に削除します。元には戻せません。IMAPではサーバーと他端末にも反映されます。</p>
+    <p id="delete-count"></p>
+    <div class="dialog-targets"><ol id="delete-targets"></ol></div>
+    <label><input type="checkbox" id="delete-ack"> 上の対象を確認し、元に戻せないことを理解しました</label>
+    <div class="actions"><button id="delete-cancel" value="cancel" autofocus>キャンセル</button><button id="delete-confirm" class="danger" value="delete" disabled>完全に削除する</button></div>
+  </form>
+</dialog>
 </body>
 </html>
