@@ -249,11 +249,11 @@ test("changed bytes or moved mail after confirmation cannot be deleted", async (
   }
 });
 
-test("uninfected and ambiguous mail cannot be prepared for deletion", async () => {
+test("uninfected mail can be prepared while ambiguous mail is rejected", async () => {
   const { h } = await deletionFixture();
   await h.send("retry", { key: "threat" });
   await settle(h, value => value.records[0]?.status === "clean");
-  assert.equal((await h.send("prepareDelete", { key: "threat" })).ok, false);
+  assert.equal((await h.send("prepareDelete", { key: "threat" })).ok, true);
   assert.equal(h.deleted.length, 0);
   const first = mail(1), second = { ...first, id: 2 };
   const fixture = await deletionFixture({ mails: [first, second] });
@@ -336,7 +336,7 @@ test("batch rechecks every mail and reports changed and server-refused items sep
   assert.deepEqual((await h.send("state")).records.map(record => record.status), ["detected", "detected", "deleted"]);
 });
 
-test("batch rejects invalid keys, missing permission, unknown or non-detected records before deleting", async () => {
+test("batch rejects invalid keys and missing permission while accepting mixed terminal results", async () => {
   const { h } = await batchFixture();
   for (const keys of [[], ["k1", "k1"], ["k1", "unknown"], Array.from({ length: 101 }, (_, i) => "k" + i)]) {
     assert.equal((await h.send("prepareDeleteBatch", { keys })).ok, false);
@@ -346,7 +346,7 @@ test("batch rejects invalid keys, missing permission, unknown or non-detected re
   const clean = await batchFixture();
   await clean.h.send("retry", { key: "k2" });
   await settle(clean.h, state => state.records[1].status === "clean");
-  assert.equal((await clean.h.send("prepareDeleteBatch", { keys: ["k1", "k2"] })).ok, false);
+  assert.equal((await clean.h.send("prepareDeleteBatch", { keys: ["k1", "k2"] })).ok, true);
   assert.equal(clean.h.deleted.length, 0);
   assert.equal(h.deleted.length, 0);
 });
@@ -625,4 +625,73 @@ test("manual enqueue can also replace a deleted result at capacity", async () =>
   assert.equal(state.records.some(record => record.key === "deleted"), false);
   assert.equal(state.records.filter(record => record.status === "detected").length, 999);
   assert.deepEqual(h.deleted, []);
+});
+
+
+test("mixed clean, detected, incomplete and failed selections can be permanently deleted", async () => {
+  const { records, mails } = await batchFixture();
+  const fourth = mail(4);
+  const mixed = [...records, { ...records[0], key: "k4", locator: { ...records[0].locator,
+    headerMessageId: fourth.headerMessageId } }].map((record, i) => ({ ...record,
+    status: ["clean", "detected", "incomplete", "error"][i], sha256: i === 3 ? null : record.sha256 }));
+  const h = await harness({ saved: { records: mixed }, mails: [...mails, fourth], deleteAllowed: true });
+  const prepared = await h.send("prepareDeleteBatch", { keys: mixed.map(record => record.key) });
+  assert.equal(prepared.ok, true);
+  assert.deepEqual(prepared.targets.map(target => target.status), ["clean", "detected", "incomplete", "error"]);
+  assert.equal(h.deleted.length, 0);
+  const response = await h.send("deleteBatch", { token: prepared.token });
+  assert.ok(response.results.every(result => result.deleted));
+  assert.deepEqual(h.deleted.map(call => call.ids[0]), [1, 2, 3, 4]);
+  assert.ok(h.deleted.every(call => call.options.deletePermanently && call.options.isUserAction));
+  assert.ok((await h.send("state")).records.every(record => record.status === "deleted"));
+});
+
+test("missing scan hash uses a fresh deletion fingerprint and refuses changed bytes", async () => {
+  const { records, mails } = await batchFixture();
+  for (const changed of [false, true]) {
+    const target = { ...mails[0] };
+    const h = await harness({ saved: { records: [{ ...records[0], status: "incomplete", sha256: null }] },
+      mails: [target], deleteAllowed: true });
+    const prepared = await h.send("prepareDelete", { key: "k1" });
+    assert.equal(prepared.ok, true);
+    if (changed) target.raw = "changed after confirmation";
+    const response = await h.send("deletePermanently", { key: "k1", token: prepared.token });
+    assert.equal(response.ok, !changed);
+    assert.equal(h.deleted.length, changed ? 0 : 1);
+  }
+});
+
+test("oversized unscanned mail is fingerprinted in bounded chunks for deletion", async () => {
+  const { records, mails } = await batchFixture();
+  const h = await harness({ saved: { records: [{ ...records[0], status: "incomplete", sha256: null }] },
+    mails: [mails[0]], deleteAllowed: true });
+  let slices = 0;
+  const size = 26 * 1024 * 1024;
+  h.api.messages.getRaw = async () => ({ size,
+    arrayBuffer() { throw new Error("must not allocate the entire mail"); },
+    slice(start, end) { slices++; assert.ok(end - start <= 512 * 1024);
+      return new Blob([new Uint8Array(Math.min(end, size) - start)]); }
+  });
+  const prepared = await h.send("prepareDelete", { key: "k1" });
+  assert.equal(prepared.ok, true);
+  assert.equal(h.deleted.length, 0);
+  const response = await h.send("deletePermanently", { key: "k1", token: prepared.token });
+  assert.equal(response.ok, true);
+  assert.equal(slices, 104);
+  assert.equal(h.deleted.length, 1);
+});
+
+test("queued, scanning, deleted and unresolvable results cannot be deleted", async () => {
+  const { records, mails } = await batchFixture();
+  for (const status of ["queued", "scanning", "deleted", "unknown"]) {
+    const h = await harness({ saved: { records: [{ ...records[0], status, source: "automatic" }] },
+      mails, deleteAllowed: true });
+    assert.equal((await h.send("prepareDelete", { key: "k1" })).ok, false);
+    assert.equal((await h.send("prepareDeleteBatch", { keys: ["k1"] })).ok, false);
+    assert.equal(h.deleted.length, 0);
+  }
+  const h = await harness({ saved: { records: [{ ...records[0], status: "error", sha256: null }] },
+    mails: [], deleteAllowed: true });
+  assert.equal((await h.send("prepareDelete", { key: "k1" })).ok, false);
+  assert.equal(h.deleted.length, 0);
 });

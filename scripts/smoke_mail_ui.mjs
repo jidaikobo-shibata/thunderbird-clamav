@@ -85,7 +85,7 @@ try {
         ...Array.from({ length: 55 }, (_, i) => makeRecord("r" + (i + 6), "clean"))] };
     const target = key => { const record = testState.records.find(record => record.key === key);
       return { key, author: record.locator.author, subject: record.locator.subject,
-        folder: "/Inbox", accountId: record.locator.accountId, signatures: record.signatures }; };
+        folder: "/Inbox", accountId: record.locator.accountId, status: record.status, signatures: record.signatures }; };
     let batchKeys = [];
     window.messenger = { runtime: { sendMessage: async request => {
       testCalls.push(request);
@@ -150,7 +150,7 @@ try {
   assert.equal(await evaluate("document.getElementById('empty-results').hidden"), false);
   await evaluate("document.getElementById('reset-filters').click()");
   await evaluate("document.getElementById('select-page').click()");
-  assert.equal(await evaluate("document.getElementById('delete-selected').disabled"), true);
+  assert.equal(await evaluate("document.getElementById('delete-selected').disabled"), false);
   await change("filter", "detected");
   assert.match(await evaluate("document.getElementById('selected-count').textContent"), /0件/);
   await evaluate("document.getElementById('tab-results').focus(); document.getElementById('tab-results').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))");
@@ -189,7 +189,20 @@ try {
   await change("filter", "deleted");
   assert.equal(await evaluate("document.querySelector('#results button').disabled"), true);
   await change("filter", "clean");
-  assert.equal(await evaluate("getComputedStyle(document.querySelector('#results button:last-child')).display"), "none");
+  assert.notEqual(await evaluate("getComputedStyle(document.querySelector('#results button:last-child')).display"), "none");
+  assert.equal(await evaluate("document.querySelector('#results button:last-child').disabled"), false);
+  await evaluate("testState.records.find(record => record.key === 'r3').sha256 = null");
+  await change("filter", "incomplete");
+  await evaluate("document.getElementById('select-page').click()");
+  assert.equal(await evaluate("document.getElementById('delete-selected').disabled"), false);
+  await evaluate("document.getElementById('delete-selected').click()");
+  await until("document.getElementById('delete-dialog').open");
+  assert.equal(await evaluate("document.querySelectorAll('#delete-targets li').length"), 1);
+  assert.match(await evaluate("document.getElementById('delete-targets').textContent"), /一部または全部が未検査/);
+  await evaluate("document.getElementById('delete-cancel').click()");
+  await until("!document.getElementById('delete-dialog').open && !document.getElementById('delete-selected').disabled");
+  await change("filter", "clean");
+
   await evaluate("document.querySelector('#results input').click(); document.getElementById('retry-selected').click()");
   await until("testCalls.some(call => call.type === 'retryMany') && !document.getElementById('filter').disabled");
   await call("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });

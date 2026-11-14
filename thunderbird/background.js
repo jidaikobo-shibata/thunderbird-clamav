@@ -2,6 +2,7 @@ import {
   MAX_BYTES, DEFAULTS, LABELS, NativeClient, accountOf, locator, sameEnvelope,
   validateSettings, messagePages, sha256, needsAttention
 } from "./core.mjs";
+import { canDelete } from "./results.mjs";
 import { FolderScan, FOLDER_STATES, realFolder, checkpointHint } from "./folder-scan.mjs";
 
 const api = messenger;
@@ -54,8 +55,8 @@ async function currentFolder() {
 
 function deletable(key) {
   const record = records.find(item => item.key === key);
-  if (!record || record.status !== "detected" || !record.sha256) {
-    throw new Error("脅威候補を検出した、未削除のメールだけが対象です。");
+  if (!record || !canDelete(record)) {
+    throw new Error("処理が終了した未削除のメールを選択してください。");
   }
   return record;
 }
@@ -64,12 +65,38 @@ function position(message) {
   return JSON.stringify([message.id, message.folder?.accountId, message.folder?.path, message.folder?.id]);
 }
 
-async function verified(record) {
+async function verified(record, expectedFingerprint = null) {
   const message = await resolveRecord(record);
-  if (message.external || !message.folder || await sha256(await rawBytes(message.id)) !== record.sha256) {
-    throw new Error("対象メールが検査時と一致しません。再検査してください。");
+  if (message.external || !message.folder) throw new Error("保存されているメールを特定できません。");
+  let fingerprint;
+  if (record.sha256) {
+    const digest = await sha256(await rawBytes(message.id));
+    if (digest !== record.sha256) throw new Error("対象メールが検査時と一致しません。再検査してください。");
+    fingerprint = "sha256:" + digest;
+  } else {
+    // Failed/oversized scans may have no scan digest. Establish a confirmation
+    // snapshot without loading the entire message or invoking the scanner.
+    const raw = await api.messages.getRaw(message.id, { data_format: "File", decrypt: false });
+    if (!raw || !Number.isSafeInteger(raw.size) || raw.size < 0 || typeof raw.slice !== "function") {
+      throw new Error("削除対象のメール内容を取得できませんでした。");
+    }
+    let digest = await sha256(new TextEncoder().encode("clam-mail-check-delete-v1:" + raw.size));
+    for (let offset = 0; offset < raw.size; offset += 512 * 1024) {
+      const chunk = new Uint8Array(await raw.slice(offset, offset + 512 * 1024).arrayBuffer());
+      if (chunk.length !== Math.min(512 * 1024, raw.size - offset)) {
+        throw new Error("削除対象のメール内容を最後まで取得できませんでした。");
+      }
+      const bytes = new Uint8Array(32 + chunk.length);
+      bytes.set(digest.match(/../g).map(value => parseInt(value, 16)));
+      bytes.set(chunk, 32);
+      digest = await sha256(bytes);
+    }
+    fingerprint = "chunked-sha256-v1:" + digest;
   }
-  return message;
+  if (expectedFingerprint && fingerprint !== expectedFingerprint) {
+    throw new Error("確認後にメール内容が変わりました。もう一度確認してください。");
+  }
+  return { message, fingerprint };
 }
 
 function requestedKeys(keys) {
@@ -91,15 +118,15 @@ async function prepareBatch(keys) {
     const record = deletable(key);
     if (deleting.has(key)) throw new Error("削除処理中のメールがあります。");
     const hash = record.sha256;
-    const message = await verified(record);
+    const { message, fingerprint } = await verified(record);
     if (deletable(key).sha256 !== hash) throw new Error("検査結果が変わりました。選び直してください。");
     const place = position(message);
     if (positions.has(place)) throw new Error("同じメールを指す履歴が含まれています。重複を外してください。");
     positions.add(place);
-    tickets.push({ key, hash, position: place });
+    tickets.push({ key, hash, fingerprint, position: place });
     targets.push({ key, author: message.author || "差出人なし", subject: message.subject || "件名なし",
       accountId: message.folder.accountId, folder: message.folder.path || message.folder.name || "",
-      signatures: record.signatures || [] });
+      status: record.status, signatures: record.signatures || [] });
   }
   for (const [token, batch] of batchTickets) {
     if (batch.expires < Date.now()) batchTickets.delete(token);
@@ -120,7 +147,7 @@ async function executeDeletion(ticket) {
     }
     const record = deletable(ticket.key);
     if (record.sha256 !== ticket.hash) throw new Error("検査結果が変わりました。再確認してください。");
-    const message = await verified(record);
+    const { message } = await verified(record, ticket.fingerprint);
     // Never follow a move/replacement after the user saw the confirmation.
     const current = await api.messages.get(message.id);
     if (position(current) !== ticket.position || !sameEnvelope(current, record.locator) ||
@@ -560,17 +587,17 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         }
         const record = deletable(request.key);
         const hash = record.sha256;
-        const message = await verified(record);
+        const { message, fingerprint } = await verified(record);
         if (deletable(record.key).sha256 !== hash) throw new Error("検査結果が変わりました。操作をやり直してください。");
         const token = crypto.randomUUID();
         for (const [key, ticket] of deletionTickets) {
           if (ticket.expires < Date.now() || ticket.key === record.key) deletionTickets.delete(key);
         }
-        deletionTickets.set(token, { key: record.key, hash, position: position(message),
+        deletionTickets.set(token, { key: record.key, hash, fingerprint, position: position(message),
           expires: Date.now() + 60000 });
         return { ok: true, token, author: message.author || "差出人なし",
           subject: message.subject || "件名なし", folder: message.folder.path || message.folder.name || "",
-          accountId: message.folder.accountId, signatures: record.signatures || [] };
+          accountId: message.folder.accountId, status: record.status, signatures: record.signatures || [] };
       }
       case "cancelDelete":
         deletionTickets.delete(request.token);

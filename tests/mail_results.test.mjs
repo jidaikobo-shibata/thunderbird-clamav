@@ -29,10 +29,11 @@ test("pagination reaches all history and clamps after results shrink", () => {
   assert.equal(resultPage(many.slice(0, 3), 2).page, 0);
   assert.deepEqual(resultPage([], 9), { records: [], page: 0, pages: 1 });
 });
-test("selection excludes pending/deleted mail and deletion requires a detection and digest", () => {
+test("selection and deletion accept all terminal undeleted results", () => {
   assert.equal(records.filter(selectable).length, 4);
-  assert.deepEqual(records.filter(canDelete).map(record => record.status), ["detected"]);
-  assert.equal(canDelete({ status: "detected" }), false);
+  assert.deepEqual(records.filter(canDelete).map(record => record.status), ["clean", "detected", "incomplete", "error"]);
+  assert.equal(canDelete({ status: "incomplete" }), true);
+  assert.equal(canDelete({ status: "unknown" }), false);
 });
 
 test("folder job filter combines with account and state without mixing other runs", () => {

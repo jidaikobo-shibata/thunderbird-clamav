@@ -1,7 +1,7 @@
 import { needsAttention } from "./core.mjs";
 
 export const selectable = record => ["clean", "detected", "incomplete", "error"].includes(record.status);
-export const canDelete = record => record.status === "detected" && Boolean(record.sha256);
+export const canDelete = record => selectable(record);
 
 export function filterRecords(records, { status = "all", account = "all", search = "", folderJobId = null } = {}) {
   const query = search.trim().toLocaleLowerCase();

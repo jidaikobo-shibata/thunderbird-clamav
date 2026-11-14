@@ -204,7 +204,7 @@ function confirmDeletion(targets) {
     subject.textContent = target.subject;
     const detail = item.appendChild(document.createElement("div"));
     const account = latest.accounts.find(account => account.id === target.accountId)?.name || target.accountId;
-    detail.textContent = `${target.author} ／ ${account} ／ ${target.folder} ／ ${target.signatures.join(" / ")}`;
+    detail.textContent = [target.author, account, target.folder, LABELS[target.status], target.signatures.join(" / ")].filter(Boolean).join(" ／ ");
     $("delete-targets").append(item);
   }
   $("delete-ack").checked = false;
@@ -299,7 +299,7 @@ function renderRecords() {
     setText(entry.parts.detail, record.detail || "");
     setText(entry.parts.signatures, (record.signatures || []).join(" / "));
     setText(entry.parts.engine, record.engine || "");
-    entry.remove.hidden = record.status !== "detected";
+    entry.remove.hidden = !selectable(record);
     for (const [button, label] of [[entry.checkbox, "一括操作の対象に選択"], [entry.remove, "ごみ箱を経由せず完全削除"], [entry.open, "メールを開く"], [entry.retry, "再検査"]]) {
       button.setAttribute("aria-label", `${record.locator.subject || "件名なし"}：${label}`);
     }
