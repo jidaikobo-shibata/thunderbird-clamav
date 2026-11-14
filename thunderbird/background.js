@@ -263,6 +263,7 @@ function enqueue(first, source) {
 async function drain() {
   if (running) return;
   running = true;
+  let client, engine;
   try {
     while (true) {
       // Folder work is fed one at a time, after fresh mail and manual work.
@@ -295,7 +296,6 @@ async function drain() {
       record.attempts++;
       record.updatedAt = new Date().toISOString();
       await save();
-      let client;
       try {
         const message = await resolveRecord(record);
         if (message.headersOnly) {
@@ -303,22 +303,25 @@ async function drain() {
         }
         const bytes = await rawBytes(message.id);
         record.sha256 = await sha256(bytes);
-        client = new NativeClient(api.runtime);
-        const health = await client.request("health");
-        if (health.status !== "ready" || health.protocol !== 1) {
-          throw new Error(health.detail || "補助プログラムのバージョンが対応していません。");
+        if (!client || client.closed) {
+          client = new NativeClient(api.runtime);
+          const health = await client.request("health");
+          if (health.status !== "ready" || health.protocol !== 1) {
+            client.close();
+            throw new Error(health.detail || "補助プログラムのバージョンが対応していません。");
+          }
+          engine = health.engine;
         }
-        record.engine = health.engine;
+        record.engine = engine;
         const result = await client.scan(bytes, record.sha256);
         record.status = result.status;
+        record.engine = result.engine || engine;
         record.detail = result.detail;
         record.signatures = result.signatures || [];
         record.nextRetry = null;
       } catch (error) {
         record.status = error.incomplete ? "incomplete" : "error";
         record.detail = error.message || "検査に失敗しました。";
-      } finally {
-        client?.close();
       }
       record.updatedAt = new Date().toISOString();
       // Two automatic attempts total; no endless retry loop on bad mail/host.
@@ -348,7 +351,10 @@ async function drain() {
       await folderScan.finish("error", "検査状態の保存などに失敗したため停止しました。結果を確認して改めて開始してください。").catch(() => {});
     }
     throw error;
-  } finally { running = false; }
+  } finally {
+    client?.close();
+    running = false;
+  }
 }
 
 async function scanSelection() {

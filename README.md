@@ -71,9 +71,9 @@ node --check thunderbird/dashboard.js
 python3 scripts/build_mail_check.py
 ```
 
-`dist/clam-mail-check-0.4.0.xpi` と、確認用の補助プログラム・登録JSONを
+`dist/clam-mail-check-0.5.0.xpi` と、確認用の補助プログラム・登録JSONを
 `dist/native/` に生成します。GUIセットアップ一式は
-`dist/clam-mail-check-setup-0.4.0-linux-<architecture>.tar.gz` に生成します。
+`dist/clam-mail-check-setup-0.5.0-linux-<architecture>.tar.gz` に生成します。
 XPI・補助プログラム・GUIを同梱しており、ソースのチェックアウトは不要です。
 生成しただけではインストールされません。起動用実行ファイルはビルドした
 アーキテクチャ向けです。今回の確認対象はUbuntu 26.04 / x86_64です。
@@ -175,7 +175,7 @@ python3 scripts/register_mail_host.py --install
 ユーザーのホーム配下に、次の2ファイルを新規作成します。
 
 ```text
-$HOME/.local/lib/clam-mail-check/0.4.0/host.py
+$HOME/.local/lib/clam-mail-check/0.5.0/host.py
 $HOME/.mozilla/native-messaging-hosts/local.clam_mail_check.json
 ```
 
@@ -219,6 +219,43 @@ GUI方式と混在させず、新規導入にはGUIセットアップを使っ�
 - 一括処理を開始した後の取り消しはありません。画面を閉じても、確認済みの処理は
   拡張のバックグラウンドで続きます。Thunderbird終了で中断された処理は自動再開しません。
 - 0.4.0では以下のフォルダー検査と進捗表示にも対応しています。
+
+## 連続検査の高速化（0.5.0）
+
+- 拡張と補助プログラムの両方を更新してください。新しい配布物を展開して
+  セットアップを起動し、「更新／修復」で補助プログラムを更新した後、同梱XPIを読み込みます。
+  検査中の更新は避け、先に中止して停止を待ってください。中断したフォルダーの途中再開には未対応です。
+- Linuxの`/usr/sbin/clamd`が利用可能な場合、連続検査中だけ専用の前景プロセスを起動します。
+  最初の定義読み込みは1回のみです。2通目以降は同じNative Messaging接続・同じ定義を使います。
+  待ち行列を処理し終えた場合や中止後、接続を閉じて専用プロセスと一時領域を解放します。
+- 既存のClamAVサービスやOS設定は変更しません。定義は`/var/lib/clamav`から読みます。
+  既存daemonとは別の定義をメモリに保持するため、検査中の追加メモリが必要です。
+  専用daemonの起動は最大60秒、検査は最大120秒で打ち切ります。
+- 初期起動に失敗した場合や`clamd`がない場合は、その接続では従来の`clamscan`を利用し、
+  結果の詳細に明示します。稼働中のdaemonとの通信失敗は「検査失敗」にし、
+  daemonを終了させます。その後のメールは通常方式に戻して検査します。
+- 25MiB／展開後100MiB／10000ファイル／深さ16／検査エンジン内60秒の上限、
+  暗号化・上限超過の通知、フィッシングURL判定無効を専用設定で維持します。
+  使用中の定義日時を毎回確認し、3日を超えて古い場合は検査失敗とします。
+  定義の再確認は60秒間隔、再読込時は処理を待たせてメモリの二重使用を抑えます。
+- 所有者のみがアクセスできる一時ディレクトリとUnixソケットで
+  [INSTREAM](https://docs.clamav.net/manual/Usage/ClamdProtocol.html)を使い、
+  メールのバイト列を送信します。TCP接続・任意のファイルパス指定は受け付けません。
+  daemonの暗号化・上限の通知や診断の警告は「未検査」として扱います。
+  INSTREAMは最初の検出で終了するため、従来のallmatch検査より検出名が少ない場合があります。
+  未検出を含め、安全を保証するものではありません。
+- 通常の終了・タイムアウト時に一時領域を削除します。Linuxの親プロセス終了通知で、
+  補助プログラムが異常終了した場合も専用daemonを終了させます。
+  強制終了・電源断時の一時ディレクトリの残留には未対応です。
+- 接続確認は利用可能性とバージョンの確認です。daemonの起動と実検査は検査開始時に行います。
+  実際にdaemonで検査した結果のエンジン表示には`(clamd)`が付きます。
+
+連続Native Messaging接続での実ClamAV検証（模擬メールのみ）は次のとおりです。
+`--require-clamd`は通常方式へのフォールバックを成功と扱わない指定です。
+
+```bash
+python3 -B scripts/smoke_mail_check.py --require-clamd
+```
 
 ## フォルダー検査と進捗（0.4.0）
 

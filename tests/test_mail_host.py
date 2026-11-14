@@ -45,7 +45,7 @@ class ProtocolTests(unittest.TestCase):
                             "data": base64.b64encode(data[start:start + host.CHUNK_SIZE]).decode()})
         with patch.object(host, "scan", return_value={"status": "clean"}) as scan:
             self.assertEqual(session.handle({"op": "end", "sha256": hashlib.sha256(data).hexdigest()})["status"], "clean")
-            scan.assert_called_once_with(data)
+            scan.assert_called_once_with(data, session.scanner)
         self.assertIsNone(session.buffer)
 
     def test_rejects_sequence_overflow_short_data_and_wrong_digest(self):
@@ -131,6 +131,115 @@ class ScannerTests(unittest.TestCase):
         self.assertTrue(host.encrypted_mail(b"Content-Type: text/plain\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nexample"))
         self.assertTrue(host.encrypted_mail(b"Content-Type: application/pkcs7-mime; smime-type=enveloped-data\r\n\r\nexample"))
         self.assertFalse(host.encrypted_mail(b"Content-Type: application/pkcs7-mime; smime-type=signed-data\r\n\r\nexample"))
+
+
+class DaemonTests(unittest.TestCase):
+    def version(self):
+        from datetime import datetime
+        return "ClamAV 1.5.4/1/" + datetime.now().strftime("%a %b %d %H:%M:%S %Y")
+
+    def test_stream_results_fail_closed_and_preserve_digest(self):
+        cases = [("stream: OK", "clean"), ("stream: Eicar-Test FOUND", "detected"),
+                 ("stream: Heuristics.Encrypted.Zip FOUND", "incomplete"),
+                 ("stream: Heuristics.Limits.Exceeded.MaxScanSize FOUND", "incomplete"),
+                 ("stream: failure ERROR", "error"), ("stream: Test FOUND\0stream: failure ERROR", "error"),
+                 ("OK", "error"), ("", "error")]
+        for reply, expected in cases:
+            with self.subTest(reply=reply):
+                daemon = host.MailDaemon()
+                with patch.object(daemon, "start"), patch.object(daemon, "exchange", side_effect=[self.version(), reply]):
+                    result = host.scan(b"hello", daemon)
+                self.assertEqual(result["status"], expected)
+                self.assertEqual(result["sha256"], hashlib.sha256(b"hello").hexdigest())
+                self.assertIn("clamd", result["engine"])
+
+    def test_loaded_stale_or_unparseable_database_never_clean(self):
+        for version in ["ClamAV 1/1/Sat Jan 01 00:00:00 2000", "invalid"]:
+            daemon = host.MailDaemon()
+            with patch.object(daemon, "start"), patch.object(daemon, "exchange", return_value=version) as exchange:
+                self.assertEqual(host.scan(b"hello", daemon)["status"], "error")
+                exchange.assert_called_once_with(b"VERSION", timeout=2)
+
+    def test_startup_failure_falls_back_but_scan_failure_does_not(self):
+        daemon = host.MailDaemon()
+        with patch.object(daemon, "start", side_effect=host.DaemonUnavailable), patch.object(host, "scan_clamscan", return_value={"status": "clean", "detail": "normal"}) as fallback:
+            result = host.scan(b"hello", daemon)
+            self.assertEqual(result["status"], "clean")
+            self.assertIn("clamscan", result["detail"])
+            fallback.assert_called_once()
+        with patch.object(daemon, "start"), patch.object(daemon, "exchange", side_effect=TimeoutError), patch.object(host, "scan_clamscan") as fallback:
+            self.assertEqual(host.scan(b"hello", daemon)["status"], "error")
+            fallback.assert_not_called()
+
+    def test_binary_absence_is_cached_and_existing_daemon_is_not_used(self):
+        daemon = host.MailDaemon()
+        with patch.object(host.os, "access", return_value=False) as access:
+            for _ in range(2):
+                with self.assertRaises(host.DaemonUnavailable):
+                    daemon.start()
+            access.assert_called_once_with(host.CLAMD, host.os.X_OK)
+
+    def test_private_config_single_process_reuse_and_cleanup(self):
+        from unittest.mock import Mock
+        daemon = host.MailDaemon()
+        process = Mock()
+        process.poll.return_value = None
+        with patch.object(host.os, "access", return_value=True), patch.object(host.subprocess, "Popen", return_value=process) as popen, patch.object(daemon, "exchange", side_effect=["PONG", self.version()]):
+            daemon.start()
+            directory = Path(daemon.temp.name)
+            config = (directory / "clamd.conf").read_text()
+            self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+            self.assertEqual((directory / "clamd.conf").stat().st_mode & 0o777, 0o600)
+            for flag in ["LocalSocketMode 600", "FailIfCvdOlderThan 3", "AlertEncrypted yes", "AlertExceedsMax yes", "PhishingSignatures no", "PhishingScanURLs no", "MaxFileSize 25M", "MaxScanSize 100M", "MaxRecursion 16", "MaxScanTime 60000"]:
+                self.assertIn(flag, config)
+            self.assertNotIn("TCPSocket", config)
+            self.assertNotIn("/etc/clamav", config)
+            daemon.start()
+            popen.assert_called_once()
+            self.assertTrue(callable(popen.call_args.kwargs["preexec_fn"]))
+            daemon.close()
+            process.terminate.assert_called_once()
+            self.assertFalse(directory.exists())
+            daemon.close()
+
+    def test_stream_wire_format_and_bounded_truncated_replies(self):
+        from unittest.mock import MagicMock
+        for reply, expected in [(b"stream: OK\0", "stream: OK"), (b"stream: OK", None),
+                                (b"x" * (host.MAX_FRAME + 1), None)]:
+            connection = MagicMock()
+            connection.__enter__.return_value = connection
+            connection.recv.side_effect = [reply, b""]
+            daemon = host.MailDaemon()
+            daemon.address = "/tmp/synthetic-only.sock"
+            with patch.object(host.socket, "socket", return_value=connection) as factory:
+                if expected is None:
+                    with self.assertRaises(host.ProtocolError):
+                        daemon.exchange(b"INSTREAM", b"abc")
+                else:
+                    self.assertEqual(daemon.exchange(b"INSTREAM", b"abc"), expected)
+                factory.assert_called_once_with(host.socket.AF_UNIX, host.socket.SOCK_STREAM)
+                self.assertEqual([call.args[0] for call in connection.sendall.call_args_list],
+                                 [b"zINSTREAM\0", b"\0\0\0\3abc", b"\0\0\0\0"])
+
+    def test_daemon_warning_and_encrypted_mime_never_clean(self):
+        daemon = host.MailDaemon()
+        with tempfile.TemporaryFile() as diagnostic:
+            diagnostic.write(b"WARNING: synthetic warning\n")
+            diagnostic.flush()
+            daemon.diagnostics = diagnostic
+            with patch.object(daemon, "start"), patch.object(daemon, "exchange", side_effect=[self.version(), "stream: OK"]):
+                self.assertEqual(host.scan(b"hello", daemon)["status"], "incomplete")
+        daemon.diagnostics = None
+        with patch.object(daemon, "start"), patch.object(daemon, "exchange", side_effect=[self.version(), "stream: OK"]):
+            self.assertEqual(host.scan(b"Content-Type: application/pgp-encrypted\r\n\r\nx", daemon)["status"], "incomplete")
+
+    def test_session_owns_daemon_until_final_close(self):
+        session = host.Session()
+        with patch.object(session.scanner, "close") as close:
+            session.reset()
+            close.assert_not_called()
+            session.close()
+            close.assert_called_once()
 
 
 class PackagingTests(unittest.TestCase):

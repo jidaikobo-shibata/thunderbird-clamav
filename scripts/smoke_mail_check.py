@@ -26,18 +26,16 @@ def encode(value):
     return struct.pack("=I", len(data)) + data
 
 
-def check(data):
+def check(data, process):
     requests = [{"id": "health", "op": "health"},
                 {"id": "begin", "op": "begin", "size": len(data)}]
     for seq, offset in enumerate(range(0, len(data), CHUNK_SIZE)):
         requests.append({"id": "chunk-" + str(seq), "op": "chunk", "seq": seq,
                          "data": base64.b64encode(data[offset:offset + CHUNK_SIZE]).decode()})
     requests.append({"id": "end", "op": "end", "sha256": hashlib.sha256(data).hexdigest()})
-    process = subprocess.run([sys.executable, str(ROOT / "native/host.py")],
-                             input=b"".join(map(encode, requests)), capture_output=True,
-                             timeout=150, check=True)
-    output = io.BytesIO(process.stdout)
-    replies = [read_frame(output) for _ in requests]
+    process.stdin.write(b"".join(map(encode, requests)))
+    process.stdin.flush()
+    replies = [read_frame(process.stdout) for _ in requests]
     assert replies[0]["status"] == "ready", replies[0]
     assert replies[-1]["sha256"] == requests[-1]["sha256"], replies[-1]
     return replies[-1]
@@ -68,12 +66,28 @@ def main():
         ("zip-attachment", message(archive.getvalue(), "test.zip"), "detected"),
         ("encrypted-mail", b'Content-Type: multipart/encrypted; boundary="x"\r\n\r\n--x--\r\n', "incomplete")
     ]
-    for name, data, expected in cases:
-        started = time.monotonic()
-        result = check(data)
-        print(name, result["status"], result.get("signatures", []),
-              f"{time.monotonic() - started:.1f}s", flush=True)
-        assert result["status"] == expected, result
+    process = subprocess.Popen([sys.executable, str(ROOT / "native/host.py")],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL)
+    try:
+        for name, data, expected in cases:
+            started = time.monotonic()
+            result = check(data, process)
+            print(name, result["status"], result.get("signatures", []),
+                  f"{time.monotonic() - started:.3f}s", result.get("engine", "clamscan"), flush=True)
+            assert result["status"] == expected, result
+            if "--require-clamd" in sys.argv:
+                assert "(clamd)" in result.get("engine", ""), result
+    finally:
+        process.stdin.close()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+        process.stdout.close()
+    assert process.returncode == 0
+
 
 
 if __name__ == "__main__":

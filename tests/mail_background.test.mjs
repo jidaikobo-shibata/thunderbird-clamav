@@ -11,7 +11,7 @@ let caseId = 0;
 async function harness({ saved = {}, mails = [], nativeFailure = false, oversized = false, deleteAllowed = false, deleteFailure = false, deleteFailureIds = [], scanResult = {}, scanGate = null,
   folderRefs = [{ id: "inbox", accountId: "one", path: "/Inbox", name: "受信トレイ" }] } = {}) {
   let stored = structuredClone(saved);
-  const notifications = [], opened = [], rawReads = [], timers = [], deleted = [];
+  const notifications = [], opened = [], rawReads = [], timers = [], deleted = [], nativePorts = [];
   const events = { newMail: event(), selected: event(), message: event() };
   const byId = new Map(mails.map(mail => [mail.id, mail]));
   const api = {
@@ -21,7 +21,7 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
       id: "unit", getURL: path => "moz-extension://unit/" + path,
       onMessage: events.message, onInstalled: event(),
       connectNative() {
-        const port = { onMessage: event(), onDisconnect: event(), disconnect() {},
+        const port = { disconnected: false, onMessage: event(), onDisconnect: event(), disconnect() { this.disconnected = true; },
           postMessage(request) {
             queueMicrotask(async () => {
               if (request.op === "end" && scanGate) await scanGate(rawReads.at(-1));
@@ -33,6 +33,7 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
               port.onMessage.listeners[0]({ id: request.id, ...result });
             });
           } };
+        nativePorts.push(port);
         return port;
       }
     },
@@ -77,7 +78,7 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
   const send = (type, values = {}, sender = { id: "unit", url: api.runtime.getURL("dashboard.html") }) =>
     events.message.listeners[0]({ type, ...values }, sender);
   await send("state");
-  return { api, send, events, notifications, opened, rawReads, timers, deleted, stored: () => stored };
+  return { api, send, events, notifications, opened, rawReads, timers, deleted, nativePorts, stored: () => stored };
 }
 
 function mail(id, accountId = "one") {
@@ -518,4 +519,20 @@ test("folder notifications are bounded and respect the existing notification set
     assert.equal(h.notifications.length, notifications ? 2 : 0);
     assert.equal(JSON.stringify(h.notifications).includes("sender@example.invalid"), false);
   }
+});
+
+
+test("continuous scans share one native host and release it when drained", async () => {
+  const h = await harness({ mails: [mail(1), mail(2), mail(3)], scanResult: { engine: "loaded engine (clamd)" } });
+  await h.send("scanSelection");
+  const state = await settle(h, value => value.records.length === 3 && value.records.every(record => record.status === "clean"));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.nativePorts.length, 1);
+  assert.ok(h.nativePorts[0].disconnected);
+  assert.ok(state.records.every(record => record.engine === "loaded engine (clamd)"));
+  await h.send("scanSelection");
+  await settle(h, value => value.records.every(record => record.status === "clean"));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.nativePorts.length, 2);
+  assert.ok(h.nativePorts[1].disconnected);
 });

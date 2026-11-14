@@ -128,7 +128,7 @@ export class NativeClient {
         throw new Error(result.detail || "メールの転送に失敗しました。");
       }
     }
-    result = await this.request("end", { sha256: digest }, 135000);
+    result = await this.request("end", { sha256: digest }, 225000);
     if (!["clean", "detected", "incomplete", "error"].includes(result.status)) {
       throw new Error("補助プログラムの結果を解釈できません。");
     }

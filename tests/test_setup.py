@@ -64,11 +64,11 @@ class SetupTests(unittest.TestCase):
         self.apply("install")
         manifest = self.root / "thunderbird/manifest.json"
         value = json.loads(manifest.read_text())
-        value["version"] = "0.5.0"
+        value["version"] = "0.6.0"
         manifest.write_text(json.dumps(value))
         newer = Manager(self.root, self.home)
         newer.apply("repair", newer.plan("repair")["token"])
-        self.assertEqual(newer.state()["version"], "0.5.0")
+        self.assertEqual(newer.state()["version"], "0.6.0")
         with self.assertRaises(SetupError):
             self.manager.plan("repair")
 

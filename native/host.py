@@ -6,11 +6,16 @@ import binascii
 import hashlib
 import io
 import json
+import os
+from pathlib import Path
+import signal
+import socket
 import re
 import struct
 import subprocess
 import sys
 import tempfile
+import time
 
 HOST_NAME = "local.clam_mail_check"
 PROTOCOL = 1
@@ -19,6 +24,8 @@ CHUNK_SIZE = 64 * 1024
 MAX_FRAME = 128 * 1024
 CLAMSCAN = "/usr/bin/clamscan"
 TIMEOUT = 120
+CLAMD = "/usr/sbin/clamd"
+START_TIMEOUT = 60
 
 
 class ProtocolError(Exception):
@@ -114,10 +121,169 @@ def encrypted_mail(data):
     return False
 
 
-def scan(data):
-    if not data or len(data) > MAX_MAIL:
-        return {"status": "incomplete", "signatures": [],
-                "detail": "メールが空か、検査上限の25MiBを超えています。"}
+class DaemonUnavailable(Exception):
+    pass
+
+
+def child_lifetime(parent):
+    """Linux child: terminate if the Native Messaging host disappears."""
+    import ctypes
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(1, signal.SIGTERM) != 0:
+        os._exit(1)
+    if os.getppid() != parent:
+        os._exit(1)
+
+
+class MailDaemon:
+    """Private, foreground daemon; no OS service/config/registration changes."""
+
+    def __init__(self):
+        self.process = None
+        self.temp = None
+        self.address = None
+        self.disabled = False
+        self.engine = None
+        self.diagnostics = None
+
+    def exchange(self, command, data=None, timeout=TIMEOUT):
+        deadline = time.monotonic() + timeout
+
+        def remaining():
+            value = deadline - time.monotonic()
+            if value <= 0:
+                raise TimeoutError("clamd request timed out")
+            return value
+
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(timeout)
+            connection.connect(self.address)
+            connection.sendall(b"z" + command + b"\0")
+            if data is not None:
+                for offset in range(0, len(data), CHUNK_SIZE):
+                    chunk = data[offset:offset + CHUNK_SIZE]
+                    connection.settimeout(remaining())
+                    connection.sendall(struct.pack("!I", len(chunk)) + chunk)
+                connection.sendall(struct.pack("!I", 0))
+            reply = bytearray()
+            while True:
+                connection.settimeout(remaining())
+                chunk = connection.recv(4096)
+                if not chunk:
+                    break
+                reply.extend(chunk)
+                if len(reply) > MAX_FRAME:
+                    raise ProtocolError("clamdの応答が長すぎます。")
+            if not reply or not reply.endswith(b"\0"):
+                raise ProtocolError("clamdの応答が途中で終了しました。")
+            return bytes(reply[:-1]).decode("utf-8", "replace")
+
+    def start(self):
+        if self.disabled:
+            raise DaemonUnavailable()
+        if self.process is not None:
+            if self.process.poll() is not None:
+                # A failed running daemon is an error, never silently clean.
+                raise ProtocolError("メール検査用clamdが終了しました。")
+            return
+        if not os.access(CLAMD, os.X_OK):
+            self.disabled = True
+            raise DaemonUnavailable()
+        try:
+            # Fixed /tmp avoids long/newline-containing TMPDIR socket paths.
+            self.temp = tempfile.TemporaryDirectory(prefix="clam-mail-daemon-", dir="/tmp")
+            directory = Path(self.temp.name)
+            self.address = str(directory / "clamd.sock")
+            config = directory / "clamd.conf"
+            config.write_text("\n".join([
+                "Foreground yes", "LocalSocket " + self.address, "LocalSocketMode 600",
+                "TemporaryDirectory " + str(directory), "DatabaseDirectory /var/lib/clamav",
+                "FailIfCvdOlderThan 3", "SelfCheck 60", "ConcurrentDatabaseReload no",
+                "ScanMail yes", "ScanArchive yes", "AlertEncrypted yes", "AlertExceedsMax yes",
+                "PhishingSignatures no", "PhishingScanURLs no", "DisableCache yes",
+                "MaxFileSize 25M", "MaxScanSize 100M", "StreamMaxLength 25M",
+                "MaxFiles 10000", "MaxRecursion 16", "MaxScanTime 60000",
+                "MaxThreads 1", "MaxQueue 2", "LogSyslog no", "LogClean no",
+                "LeaveTemporaryFiles no", "ExitOnOOM yes", "ReadTimeout 120", "",
+            ]))
+            config.chmod(0o600)
+            self.diagnostics = tempfile.TemporaryFile(dir=directory)
+            parent = os.getpid()
+            self.process = subprocess.Popen(
+                [CLAMD, "--foreground", "--config-file=" + str(config)],
+                stdin=subprocess.DEVNULL, stdout=self.diagnostics, stderr=self.diagnostics,
+                preexec_fn=lambda: child_lifetime(parent),
+            )
+            deadline = time.monotonic() + START_TIMEOUT
+            while time.monotonic() < deadline:
+                if self.process.poll() is not None:
+                    raise OSError("daemon startup failed")
+                try:
+                    if self.exchange(b"PING", timeout=1) == "PONG":
+                        self.engine = self.exchange(b"VERSION", timeout=2)
+                        if not self.engine.startswith("ClamAV "):
+                            raise OSError("invalid daemon version")
+                        return
+                except (OSError, ProtocolError):
+                    pass
+                time.sleep(0.1)
+            raise OSError("daemon startup timed out")
+        except (OSError, subprocess.SubprocessError):
+            self.close()
+            self.disabled = True
+            raise DaemonUnavailable() from None
+
+    def scan(self, data):
+        self.start()
+        # Check the loaded database, not just the possibly newer on-disk files.
+        version = self.exchange(b"VERSION", timeout=2)
+        try:
+            from datetime import datetime
+            stamp = version.split("/", 2)[2]
+            age = time.time() - datetime.strptime(stamp, "%a %b %d %H:%M:%S %Y").timestamp()
+            if not -86400 <= age <= 3 * 86400:
+                raise ValueError("stale database")
+        except (ValueError, IndexError):
+            return {"status": "error", "signatures": [],
+                    "detail": "clamdの使用中の定義が古いか、更新日時を確認できません。"}
+        output = self.exchange(b"INSTREAM", data)
+        # INSTREAM reports one match; preserve limit/encryption alerts as incomplete.
+        lines = output.split("\0")
+        valid = all(line == "stream: OK" or
+                    re.fullmatch(r"stream: .+ FOUND", line) for line in lines)
+        normalized = "\n".join("stdin:" + line[7:] if line.startswith("stream:") else line
+                               for line in lines)
+        found = any(line.endswith(" FOUND") for line in lines)
+        value = classify((1 if found else 0) if valid else 2, normalized)
+        value["engine"] = version + " (clamd)"
+        if self.diagnostics is not None:
+            size = os.fstat(self.diagnostics.fileno()).st_size
+            diagnostic = os.pread(self.diagnostics.fileno(), min(size, MAX_FRAME), 0).upper()
+            if size > MAX_FRAME or b"WARNING" in diagnostic or b"ERROR" in diagnostic:
+                if value["status"] == "clean":
+                    value["status"] = "incomplete"
+                    value["detail"] = "clamdが警告を返しました。検査範囲を確認できません。"
+        return value
+
+    def close(self):
+        if self.process is not None:
+            if self.process.poll() is None:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=5)
+            self.process = None
+        if self.diagnostics is not None:
+            self.diagnostics.close()
+            self.diagnostics = None
+        if self.temp is not None:
+            self.temp.cleanup()
+            self.temp = None
+
+
+def scan_clamscan(data):
     args = [CLAMSCAN, "--stdout", "--no-summary", "--scan-mail=yes",
             "--allmatch=yes", "--alert-encrypted=yes", "--alert-exceeds-max=yes",
             "--max-filesize=25M", "--max-scansize=100M", "--max-files=10000",
@@ -143,6 +309,27 @@ def scan(data):
     ):
         value["status"] = "incomplete"
         value["detail"] = "ClamAVが警告を返しました。検査範囲を確認できません。"
+    return value
+
+
+def scan(data, scanner=None):
+    if not data or len(data) > MAX_MAIL:
+        return {"status": "incomplete", "signatures": [],
+                "detail": "メールが空か、検査上限の25MiBを超えています。"}
+    fallback = False
+    try:
+        value = scanner.scan(data) if scanner else scan_clamscan(data)
+    except DaemonUnavailable:
+        fallback = True
+        value = scan_clamscan(data)
+    except (OSError, ProtocolError):
+        if scanner is not None:
+            scanner.close()
+            scanner.disabled = True
+        value = {"status": "error", "signatures": [],
+                 "detail": "clamdとの通信に失敗しました。検査は完了していません。"}
+    if fallback:
+        value["detail"] += " clamdを利用できないため、通常のclamscanで検査しました。"
     try:
         encrypted = encrypted_mail(data)
     except (ValueError, RecursionError):
@@ -168,7 +355,9 @@ def health():
         return {"status": "error", "detail": "ClamAVのバージョンを取得できません。"}
     return {"status": "ready", "protocol": PROTOCOL, "engine": version,
             "maxBytes": MAX_MAIL, "chunkBytes": CHUNK_SIZE,
-            "detail": "検査はclamscanで1通ずつ実行します。"}
+            "detail": ("連続検査では専用clamdを利用します。初回は定義を読み込みます。"
+                       "起動できない場合はclamscanを利用します。"
+                       if os.access(CLAMD, os.X_OK) else "検査はclamscanで1通ずつ実行します。" )}
 
 
 class Session:
@@ -176,6 +365,11 @@ class Session:
         self.buffer = None
         self.expected = 0
         self.sequence = 0
+        self.scanner = MailDaemon()
+
+    def close(self):
+        self.reset()
+        self.scanner.close()
 
     def reset(self):
         if self.buffer is not None:
@@ -224,7 +418,7 @@ class Session:
             if request.get("sha256") != digest:
                 raise ProtocolError("メールデータの照合に失敗しました。")
             self.reset()
-            return scan(data)
+            return scan(data, self.scanner)
         raise ProtocolError("未対応の操作です。")
 
 
@@ -249,7 +443,7 @@ def main(input_stream=None, output_stream=None):
     except (ProtocolError, BrokenPipeError):
         return 1
     finally:
-        session.reset()
+        session.close()
     return 0
 
 
