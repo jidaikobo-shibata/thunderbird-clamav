@@ -8,12 +8,13 @@ function event() {
 }
 
 let caseId = 0;
-async function harness({ saved = {}, mails = [], nativeFailure = false, oversized = false } = {}) {
+async function harness({ saved = {}, mails = [], nativeFailure = false, oversized = false, deleteAllowed = false, deleteFailure = false, scanResult = {} } = {}) {
   let stored = structuredClone(saved);
-  const notifications = [], opened = [], rawReads = [], timers = [];
+  const notifications = [], opened = [], rawReads = [], timers = [], deleted = [];
   const events = { newMail: event(), selected: event(), message: event() };
   const byId = new Map(mails.map(mail => [mail.id, mail]));
   const api = {
+    permissions: { contains: async () => deleteAllowed },
     storage: { local: { get: async () => structuredClone(stored), set: async value => { stored = structuredClone(value); } } },
     runtime: {
       id: "unit", getURL: path => "moz-extension://unit/" + path,
@@ -24,7 +25,7 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
             queueMicrotask(() => {
               if (nativeFailure) { port.onDisconnect.listeners[0](); return; }
               const result = request.op === "health" ? { status: "ready", protocol: 1, engine: "test" } :
-                request.op === "end" ? { status: "clean", detail: "未検出", sha256: request.sha256, signatures: [] } :
+                request.op === "end" ? { status: "clean", detail: "未検出", sha256: request.sha256, signatures: [], ...scanResult } :
                   { status: "accepted", seq: request.seq + 1 };
               port.onMessage.listeners[0]({ id: request.id, ...result });
             });
@@ -33,6 +34,11 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
       }
     },
     messages: {
+      delete: async (ids, options) => {
+        if (deleteFailure) throw new Error("server refused deletion");
+        deleted.push({ ids, options });
+        for (const id of ids) byId.delete(id);
+      },
       onNewMailReceived: events.newMail,
       get: async id => { if (!byId.has(id)) throw new Error("missing"); return byId.get(id); },
       getRaw: async (id, options) => {
@@ -61,7 +67,7 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
   const send = (type, values = {}, sender = { id: "unit", url: api.runtime.getURL("dashboard.html") }) =>
     events.message.listeners[0]({ type, ...values }, sender);
   await send("state");
-  return { api, send, events, notifications, opened, rawReads, timers, stored: () => stored };
+  return { api, send, events, notifications, opened, rawReads, timers, deleted, stored: () => stored };
 }
 
 function mail(id, accountId = "one") {
@@ -142,7 +148,7 @@ test("messages from other pages are rejected and clearing results never deletes 
   assert.equal((await h.send("state")).records.length, 1);
   assert.equal((await h.send("clear")).ok, true);
   assert.equal((await h.send("state")).records.length, 0);
-  assert.equal(h.api.messages.delete, undefined);
+  assert.equal(h.deleted.length, 0);
 });
 
 test("oversized mail is incomplete and not retried as a clean scan", async () => {
@@ -174,4 +180,97 @@ test("disabled automatic scanning preserves failed status instead of clearing th
   h.timers[0]();
   await new Promise(resolve => setImmediate(resolve));
   assert.equal((await h.send("state")).records[0].status, "error");
+});
+
+async function deletionFixture(options = {}) {
+  const target = mail(1);
+  const hash = await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello"));
+  const record = { key: "threat", status: "detected", sha256: hash, signatures: ["Test.Threat"],
+    locator: { accountId: "one", headerMessageId: target.headerMessageId,
+      author: target.author, subject: target.subject, date: target.date.toISOString() } };
+  const h = await harness({ saved: { records: [record] }, mails: [target], deleteAllowed: true, ...options });
+  return { h, target, record };
+}
+
+test("deletion needs an explicit optional permission and a current confirmation ticket", async () => {
+  const { h } = await deletionFixture({ deleteAllowed: false });
+  assert.equal((await h.send("prepareDelete", { key: "threat" })).ok, false);
+  assert.equal((await h.send("deletePermanently", { key: "threat", token: "invented" })).ok, false);
+  assert.equal(h.deleted.length, 0);
+});
+
+test("verified detected mail bypasses trash once and keeps a deleted audit record", async () => {
+  const { h } = await deletionFixture();
+  const prepared = await h.send("prepareDelete", { key: "threat" });
+  assert.equal(prepared.ok, true);
+  assert.equal(h.deleted.length, 0);
+  const request = { key: "threat", token: prepared.token };
+  assert.equal((await h.send("deletePermanently", request)).ok, true);
+  assert.deepEqual(h.deleted, [{ ids: [1], options: { deletePermanently: true, isUserAction: true } }]);
+  assert.equal((await h.send("state")).records[0].status, "deleted");
+  assert.equal((await h.send("deletePermanently", request)).ok, false);
+  assert.equal((await h.send("retry", { key: "threat" })).ok, false);
+  assert.equal((await h.send("open", { key: "threat" })).ok, false);
+  assert.equal(h.deleted.length, 1);
+});
+
+test("cancelled and expired confirmation never delete a message", async () => {
+  const { h } = await deletionFixture();
+  let prepared = await h.send("prepareDelete", { key: "threat" });
+  await h.send("cancelDelete", { token: prepared.token });
+  assert.equal((await h.send("deletePermanently", { key: "threat", token: prepared.token })).ok, false);
+  prepared = await h.send("prepareDelete", { key: "threat" });
+  const now = Date.now;
+  Date.now = () => now() + 61000;
+  try {
+    assert.equal((await h.send("deletePermanently", { key: "threat", token: prepared.token })).ok, false);
+  } finally { Date.now = now; }
+  assert.equal(h.deleted.length, 0);
+});
+
+test("changed bytes or moved mail after confirmation cannot be deleted", async () => {
+  for (const change of [target => { target.raw = "changed"; }, target => { target.folder.path = "/Moved"; }]) {
+    const { h, target } = await deletionFixture();
+    const prepared = await h.send("prepareDelete", { key: "threat" });
+    change(target);
+    assert.equal((await h.send("deletePermanently", { key: "threat", token: prepared.token })).ok, false);
+    assert.equal(h.deleted.length, 0);
+  }
+});
+
+test("uninfected and ambiguous mail cannot be prepared for deletion", async () => {
+  const { h } = await deletionFixture();
+  await h.send("retry", { key: "threat" });
+  await settle(h, value => value.records[0]?.status === "clean");
+  assert.equal((await h.send("prepareDelete", { key: "threat" })).ok, false);
+  assert.equal(h.deleted.length, 0);
+  const first = mail(1), second = { ...first, id: 2 };
+  const fixture = await deletionFixture({ mails: [first, second] });
+  assert.equal((await fixture.h.send("prepareDelete", { key: "threat" })).ok, false);
+  assert.equal(fixture.h.deleted.length, 0);
+});
+
+test("server refusal preserves detection and a confirmation cannot be replayed", async () => {
+  const { h } = await deletionFixture({ deleteFailure: true });
+  const prepared = await h.send("prepareDelete", { key: "threat" });
+  const request = { key: "threat", token: prepared.token };
+  assert.equal((await h.send("deletePermanently", request)).ok, false);
+  assert.equal((await h.send("state")).records[0].status, "detected");
+  assert.equal((await h.send("deletePermanently", request)).ok, false);
+});
+
+test("detected mail notifies only when enabled and notifications omit sender and subject", async () => {
+  for (const enabled of [true, false]) {
+    const h = await harness({ mails: [mail(1)],
+      saved: { settings: { enabled: false, accountIds: [], notifications: enabled } },
+      scanResult: { status: "detected", signatures: ["Test.Threat"], detail: "脅威候補" } });
+    await h.send("scanSelection");
+    await settle(h, value => value.records[0]?.status === "detected");
+    assert.equal(h.notifications.length, enabled ? 1 : 0);
+    if (enabled) {
+      assert.match(h.notifications[0][1].title, /脅威候補/);
+      assert.equal(JSON.stringify(h.notifications).includes("sender@example.invalid"), false);
+      assert.equal(JSON.stringify(h.notifications).includes("Example"), false);
+    }
+  }
 });

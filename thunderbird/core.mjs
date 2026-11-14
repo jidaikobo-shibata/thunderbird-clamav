@@ -6,7 +6,8 @@ export const DEFAULTS = Object.freeze({
 });
 export const LABELS = Object.freeze({
   queued: "検査待ち", scanning: "検査中", clean: "未検出",
-  detected: "脅威候補を検出", incomplete: "一部または全部が未検査", error: "検査失敗"
+  detected: "脅威候補を検出", incomplete: "一部または全部が未検査", error: "検査失敗",
+  deleted: "完全削除済み"
 });
 export const needsAttention = record => ["detected", "incomplete", "error"].includes(record.status);
 

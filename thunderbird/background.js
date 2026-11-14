@@ -13,6 +13,28 @@ let running = false;
 let lastMailTab;
 let writes = Promise.resolve();
 let mutations = Promise.resolve();
+const deletionTickets = new Map();
+const deleting = new Set();
+
+function deletable(key) {
+  const record = records.find(item => item.key === key);
+  if (!record || record.status !== "detected" || !record.sha256) {
+    throw new Error("脅威候補を検出した、未削除のメールだけが対象です。");
+  }
+  return record;
+}
+
+function position(message) {
+  return JSON.stringify([message.id, message.folder?.accountId, message.folder?.path, message.folder?.id]);
+}
+
+async function verified(record) {
+  const message = await resolveRecord(record);
+  if (message.external || !message.folder || await sha256(await rawBytes(message.id)) !== record.sha256) {
+    throw new Error("対象メールが検査時と一致しません。再検査してください。");
+  }
+  return message;
+}
 
 function report(error) {
   issue = error instanceof Error ? error.message : String(error);
@@ -112,6 +134,7 @@ function enqueue(first, source) {
       if (source === "automatic" && (!settings.enabled ||
           !settings.accountIds.includes(accountOf(message)))) continue;
       const existing = records.find(record => record.session === session && record.messageId === message.id);
+      if (existing && (deleting.has(existing.key) || existing.status === "deleted")) continue;
       if (existing && ["queued", "scanning"].includes(existing.status)) continue;
       if (existing && source === "automatic") continue;
       // Only discard old non-alert results when the bounded history is full.
@@ -264,7 +287,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         return { ok: true };
       case "retry": {
         const record = records.find(item => item.key === request.key);
-        if (!record || ["scanning", "queued"].includes(record.status)) {
+        if (!record || deleting.has(record.key) || ["scanning", "queued", "deleted"].includes(record.status)) {
           throw new Error("この結果は再検査できません。");
         }
         record.status = "queued";
@@ -277,7 +300,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
       }
       case "open": {
         const record = records.find(item => item.key === request.key);
-        if (!record || !record.sha256) throw new Error("検査対象を照合できません。メール一覧から確認してください。");
+        if (!record || record.status === "deleted" || deleting.has(record.key) || !record.sha256) throw new Error("検査対象を照合できません。メール一覧から確認してください。");
         const message = await resolveRecord(record);
         if (await sha256(await rawBytes(message.id)) !== record.sha256) {
           throw new Error("メール内容が検査時から変わっています。再検査してください。");
@@ -285,10 +308,64 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         await api.messageDisplay.open({ messageId: message.id, location: "tab" });
         return { ok: true };
       }
+      case "prepareDelete": {
+        if (!await api.permissions.contains({ permissions: ["messagesDelete"] })) {
+          throw new Error("先に「完全削除を許可」から権限を許可してください。");
+        }
+        const record = deletable(request.key);
+        const hash = record.sha256;
+        const message = await verified(record);
+        if (deletable(record.key).sha256 !== hash) throw new Error("検査結果が変わりました。操作をやり直してください。");
+        const token = crypto.randomUUID();
+        for (const [key, ticket] of deletionTickets) {
+          if (ticket.expires < Date.now() || ticket.key === record.key) deletionTickets.delete(key);
+        }
+        deletionTickets.set(token, { key: record.key, hash, position: position(message),
+          expires: Date.now() + 60000 });
+        return { ok: true, token, author: message.author || "差出人なし",
+          subject: message.subject || "件名なし", folder: message.folder.path || message.folder.name || "",
+          accountId: message.folder.accountId, signatures: record.signatures || [] };
+      }
+      case "cancelDelete":
+        deletionTickets.delete(request.token);
+        return { ok: true };
+      case "deletePermanently": {
+        const ticket = deletionTickets.get(request.token);
+        deletionTickets.delete(request.token); // Single use, including failures.
+        if (!ticket || ticket.key !== request.key || ticket.expires < Date.now()) {
+          throw new Error("削除確認が無効か期限切れです。もう一度操作してください。");
+        }
+        if (deleting.has(ticket.key)) throw new Error("このメールは削除処理中です。");
+        deleting.add(ticket.key);
+        try {
+          if (!await api.permissions.contains({ permissions: ["messagesDelete"] })) {
+            throw new Error("完全削除の権限がありません。");
+          }
+          const record = deletable(ticket.key);
+          if (record.sha256 !== ticket.hash) throw new Error("検査結果が変わりました。再確認してください。");
+          const message = await verified(record);
+          // Never follow a move/replacement after the user saw the confirmation.
+          const current = await api.messages.get(message.id);
+          if (position(current) !== ticket.position || !sameEnvelope(current, record.locator) ||
+              deletable(ticket.key).sha256 !== ticket.hash) {
+            throw new Error("確認後にメールの場所や検査結果が変わりました。再確認してください。");
+          }
+          await api.messages.delete([current.id], { deletePermanently: true, isUserAction: true });
+          record.status = "deleted";
+          record.deletedAt = new Date().toISOString();
+          record.updatedAt = record.deletedAt;
+          record.nextRetry = null;
+          record.detail = "ごみ箱を経由せず完全削除しました。元には戻せません。";
+          try { await save(); }
+          catch { issue = "メールの削除は完了しましたが、履歴を保存できませんでした。"; }
+          await updateBadge().catch(report);
+          return { ok: true };
+        } finally { deleting.delete(ticket.key); }
+      }
       case "clear":
         // This removes only generated results, never messages. The page asks
         // for confirmation before sending this request.
-        records = records.filter(record => ["scanning", "queued"].includes(record.status));
+        records = records.filter(record => deleting.has(record.key) || ["scanning", "queued"].includes(record.status));
         issue = "";
         await save();
         await updateBadge();

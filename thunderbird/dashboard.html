@@ -39,6 +39,7 @@
     <div class="actions">
       <button type="button" id="scan-selection">メール一覧で選択したメールを検査</button>
       <button type="button" id="clear">完了した検査履歴を消去</button>
+      <button type="button" id="allow-delete">完全削除を許可</button>
       <label for="filter">表示</label>
       <select id="filter">
         <option value="all">すべて</option>
@@ -51,7 +52,7 @@
     <p id="summary" role="status" aria-live="polite"></p>
     <div class="table-scroll" tabindex="0" role="region" aria-label="検査結果一覧（横にスクロールできます）">
       <table>
-        <caption>新しい検査から最大100件を表示します。削除・移動は対象メールを開いてThunderbird標準の操作で行ってください。</caption>
+        <caption>新しい検査から最大100件を表示します。脅威候補を検出したメールは、権限の許可と対象の確認後、ごみ箱を経由せず完全削除できます。IMAPではサーバーと他端末にも削除が反映されます。元には戻せません。</caption>
         <thead><tr><th scope="col">状態・検査日時</th><th scope="col">差出人・件名</th><th scope="col">詳細</th><th scope="col">操作</th></tr></thead>
         <tbody id="results"></tbody>
       </table>

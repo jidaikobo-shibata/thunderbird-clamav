@@ -68,7 +68,8 @@ try {
   await call("Page.enable");
   await call("Page.addScriptToEvaluateOnNewDocument", { source: `
     window.testCalls = [];
-    window.confirm = () => true;
+    window.confirmResult = true;
+    window.confirm = () => confirmResult;
     window.testState = {
       ok: true, issue: "", settings: { enabled: false, accountIds: [], notifications: true },
       accounts: [{ id: "test", name: "テストアカウント", type: "imap" }],
@@ -82,8 +83,10 @@ try {
       if (request.type === "state") return testState;
       if (request.type === "health") return { ok: true, health: { status: "ready", engine: "ClamAV test", detail: "接続可能" } };
       if (request.type === "clear") testState.records = [];
+      if (request.type === "prepareDelete") return { ok: true, token: "test-ticket", author: "test@example.invalid", subject: "テスト添付メール", accountId: "test", folder: "/Inbox", signatures: ["Test"] };
+      if (request.type === "deletePermanently") testState.records[0].status = "deleted";
       return { ok: true };
-    } } };
+    } }, permissions: { request: async value => { testCalls.push({ type: "permission", ...value }); return true; } } };
   ` });
   await call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 1100, deviceScaleFactor: 1, mobile: false });
   await call("Page.navigate", { url: `http://127.0.0.1:${server.address().port}/dashboard.html` });
@@ -99,6 +102,9 @@ try {
   assert.match(await evaluate("document.getElementById('results').textContent"), /<img/);
   await evaluate("document.getElementById('health').click()");
   assert.match(await evaluate("document.getElementById('health-result').textContent"), /ClamAV test/);
+  await evaluate("testState.records[0].status = 'clean'; document.getElementById('health').click()");
+  assert.equal(await evaluate("getComputedStyle(document.querySelector('#results button:last-child')).display"), "none");
+  await evaluate("testState.records[0].status = 'detected'; document.getElementById('health').click()");
   await evaluate(`document.getElementById('enabled').checked = true;
     document.querySelector('#accounts input').checked = true;
     document.getElementById('settings-form').requestSubmit();`);
@@ -112,6 +118,15 @@ try {
   assert.equal(await evaluate("document.documentElement.scrollWidth <= window.innerWidth"), true);
   const mobile = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
   await writeFile(path.join(root, "dist/ui-mobile.png"), Buffer.from(mobile.data, "base64"));
+  await evaluate("document.getElementById('allow-delete').click()");
+  assert.equal(await evaluate("testCalls.some(call => call.type === 'permission' && call.permissions[0] === 'messagesDelete')"), true);
+  await evaluate("confirmResult = false; document.querySelector('#results button:last-child').click()");
+  assert.equal(await evaluate("testCalls.some(call => call.type === 'cancelDelete')"), true);
+  assert.equal(await evaluate("testCalls.some(call => call.type === 'deletePermanently')"), false);
+  await evaluate("confirmResult = true; document.querySelector('#results button:last-child').click()");
+  assert.equal(await evaluate("testCalls.some(call => call.type === 'deletePermanently')"), true);
+  assert.match(await evaluate("document.querySelector('#results .state').textContent"), /完全削除済み/);
+  assert.equal(await evaluate("document.querySelector('#results button').disabled"), true);
   await evaluate("document.getElementById('clear').click()");
   assert.equal(await evaluate("testCalls.some(call => call.type === 'clear')"), true);
   assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 0);

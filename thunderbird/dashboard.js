@@ -22,8 +22,8 @@ async function action(callback, success) {
   busy = true;
   try {
     setText($("action-status"), "処理しています。");
-    await callback();
-    setText($("action-status"), success);
+    const message = await callback();
+    setText($("action-status"), success || message || "処理が完了しました。");
     await refresh();
   } catch (error) { setText($("action-status"), error.message); }
   finally { busy = false; }
@@ -55,7 +55,21 @@ function makeRow(record) {
   retry.addEventListener("click", () => {
     void action(() => request("retry", { key: record.key }), "再検査を受け付けました。");
   });
-  return { row, parts, open, retry };
+  const remove = cells[3].appendChild(document.createElement("button"));
+  remove.textContent = "完全削除";
+  remove.className = "danger";
+  remove.addEventListener("click", () => {
+    void action(async () => {
+      const target = await request("prepareDelete", { key: record.key });
+      if (!confirm(`この1通をごみ箱を経由せず完全に削除します。元には戻せません。\nIMAPではサーバーと他端末にも反映されます。\n\n差出人: ${target.author}\n件名: ${target.subject}\nアカウント: ${target.accountId}\nフォルダー: ${target.folder}\n検出名: ${target.signatures.join(" / ")}\n\n完全に削除しますか？`)) {
+        await request("cancelDelete", { token: target.token });
+        return "削除をキャンセルしました。";
+      }
+      await request("deletePermanently", { key: record.key, token: target.token });
+      return "対象メールを完全削除しました。";
+    });
+  });
+  return { row, parts, open, retry, remove };
 }
 
 function renderRecords() {
@@ -82,8 +96,11 @@ function renderRecords() {
     setText(entry.parts.detail, record.detail || "");
     setText(entry.parts.signatures, (record.signatures || []).join(" / "));
     setText(entry.parts.engine, record.engine || "");
-    entry.open.disabled = !record.sha256 || ["queued", "scanning"].includes(record.status);
-    entry.retry.disabled = ["queued", "scanning"].includes(record.status);
+    entry.open.disabled = !record.sha256 || ["queued", "scanning", "deleted"].includes(record.status);
+    entry.retry.disabled = ["queued", "scanning", "deleted"].includes(record.status);
+    entry.remove.hidden = record.status !== "detected";
+    entry.remove.disabled = !record.sha256;
+    entry.remove.setAttribute("aria-label", `${record.locator.subject || "件名なし"}：ごみ箱を経由せず完全削除`);
     entry.open.setAttribute("aria-label", `${record.locator.subject || "件名なし"}：メールを開く`);
     entry.retry.setAttribute("aria-label", `${record.locator.subject || "件名なし"}：再検査`);
     const at = $("results").children[index];
@@ -142,6 +159,13 @@ $("clear").addEventListener("click", () => {
   void action(() => request("clear"), "完了した検査履歴を消去しました。");
 });
 $("filter").addEventListener("change", renderRecords);
+$("allow-delete").addEventListener("click", () => {
+  // Invoke directly in the click handler to preserve the required user gesture.
+  void action(async () => {
+    const granted = await messenger.permissions.request({ permissions: ["messagesDelete"] });
+    return granted ? "完全削除を許可しました。削除時には対象の確認が必要です。" : "完全削除は許可されませんでした。";
+  });
+});
 void refresh().catch(error => setText($("action-status"), error.message));
 setInterval(() => {
   if (!document.hidden) void refresh().catch(error => setText($("action-status"), error.message));

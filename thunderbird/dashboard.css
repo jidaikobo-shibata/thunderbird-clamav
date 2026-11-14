@@ -1,4 +1,6 @@
 :root { color-scheme: light dark; font: 16px/1.65 system-ui, sans-serif; }
+[hidden] { display: none !important; }
+.danger { font-weight: bold; }
 body { margin: 0; background: Canvas; color: CanvasText; }
 main { max-width: 1200px; margin: auto; padding: 24px; }
 h1 { margin-top: 0; }

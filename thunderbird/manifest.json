@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "ClamAV Mail Check",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "受信メールをローカルのClamAVで検査し、検出・検査不能を確認します。",
   "browser_specific_settings": {
     "gecko": {
@@ -13,6 +13,7 @@
     "accountsRead", "messagesRead", "nativeMessaging", "storage",
     "notifications", "menus"
   ],
+  "optional_permissions": ["messagesDelete"],
   "background": { "page": "background.html", "persistent": true },
   "browser_action": {
     "default_title": "ClamAVの検査結果を開く",
