@@ -71,9 +71,9 @@ node --check thunderbird/dashboard.js
 python3 scripts/build_mail_check.py
 ```
 
-`dist/clam-mail-check-0.8.0.xpi` と、確認用の補助プログラム・登録JSONを
+`dist/clam-mail-check-0.8.1.xpi` と、確認用の補助プログラム・登録JSONを
 `dist/native/` に生成します。GUIセットアップ一式は
-`dist/clam-mail-check-setup-0.8.0-linux-<architecture>.tar.gz` に生成します。
+`dist/clam-mail-check-setup-0.8.1-linux-<architecture>.tar.gz` に生成します。
 XPI・補助プログラム・GUIを同梱しており、ソースのチェックアウトは不要です。
 生成しただけではインストールされません。起動用実行ファイルはビルドした
 アーキテクチャ向けです。今回の確認対象はUbuntu 26.04 / x86_64です。
@@ -175,7 +175,7 @@ python3 scripts/register_mail_host.py --install
 ユーザーのホーム配下に、次の2ファイルを新規作成します。
 
 ```text
-$HOME/.local/lib/clam-mail-check/0.8.0/host.py
+$HOME/.local/lib/clam-mail-check/0.8.1/host.py
 $HOME/.mozilla/native-messaging-hosts/local.clam_mail_check.json
 ```
 
@@ -219,6 +219,12 @@ GUI方式と混在させず、新規導入にはGUIセットアップを使っ�
 - 一括処理を開始した後の取り消しはありません。画面を閉じても、確認済みの処理は
   拡張のバックグラウンドで続きます。Thunderbird終了で中断された処理は自動再開しません。
 - 0.4.0では以下のフォルダー検査と進捗表示にも対応しています。
+
+## タブの固定表示（0.8.1）
+
+スクロール時は4つのタブだけを画面上端に残します。タイトルと説明文は通常どおりスクロールします。
+タブの背景で背後の内容を隠し、フォーカス移動時のスクロールにはタブの高さ分の余白を設けます。
+補助プログラムの更新は不要です。
 
 ## 検査・結果・設定・ヘルプの整理（0.8.0）
 

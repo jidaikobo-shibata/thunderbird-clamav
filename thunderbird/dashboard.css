@@ -14,7 +14,8 @@ select, input[type="search"] { box-sizing: border-box; width: 100%; }
 button { cursor: pointer; }
 button:disabled { cursor: default; }
 :focus-visible { outline: 3px solid Highlight; outline-offset: 3px; }
-.tabs { display: flex; gap: 8px; border-bottom: 1px solid GrayText; }
+.tabs { display: flex; gap: 8px; border-bottom: 1px solid GrayText; position: sticky; top: 0; z-index: 10; background: Canvas; }
+html { scroll-padding-block-start: 6rem; }
 [role="tab"] { border: 0; border-bottom: 4px solid transparent; background: transparent; color: CanvasText; min-width: 120px; }
 [role="tab"][aria-selected="true"] { border-bottom-color: Highlight; font-weight: bold; }
 [role="tabpanel"] { padding-top: 8px; }

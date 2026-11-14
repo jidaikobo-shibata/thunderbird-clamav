@@ -154,6 +154,12 @@ try {
   await evaluate("document.getElementById('tab-help').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))");
   assert.equal(await evaluate("document.activeElement.id"), "tab-scan");
   await evaluate("document.getElementById('tab-results').click()");
+  await evaluate("window.scrollTo(0, 600)");
+  assert.ok(await evaluate("Math.abs(document.querySelector('.tabs').getBoundingClientRect().top) < 1"));
+  assert.ok(await evaluate("document.querySelector('header').getBoundingClientRect().bottom < 0"));
+  assert.equal(await evaluate("getComputedStyle(document.querySelector('.tabs')).backgroundColor === getComputedStyle(document.body).backgroundColor"), true);
+  await evaluate("window.scrollTo(0, 0)");
+
 
   assert.equal(await evaluate("document.getElementById('panel-settings').hidden"), true);
   assert.equal(await evaluate("document.querySelectorAll('#results img').length"), 0);
