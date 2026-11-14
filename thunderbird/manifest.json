@@ -1,0 +1,23 @@
+{
+  "manifest_version": 2,
+  "name": "ClamAV Mail Check",
+  "version": "0.1.0",
+  "description": "受信メールをローカルのClamAVで検査し、検出・検査不能を確認します。",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "clam-mail-check@local.invalid",
+      "strict_min_version": "140.0"
+    }
+  },
+  "permissions": [
+    "accountsRead", "messagesRead", "nativeMessaging", "storage",
+    "notifications", "menus"
+  ],
+  "background": { "page": "background.html", "persistent": true },
+  "browser_action": {
+    "default_title": "ClamAVの検査結果を開く",
+    "default_icon": "icon.svg"
+  },
+  "icons": { "48": "icon.svg", "96": "icon.svg" },
+  "content_security_policy": "script-src 'self'; object-src 'none'"
+}

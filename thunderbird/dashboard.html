@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ClamAV メール検査</title>
+  <link rel="stylesheet" href="dashboard.css">
+  <script type="module" src="dashboard.js"></script>
+</head>
+<body>
+<main>
+  <h1>ClamAV メール検査</h1>
+  <p>受信後にメール全体を検査します。検査完了前の閲覧や添付操作は止めません。</p>
+  <p>メール本文・添付は外部サービスに送信しません。暗号化メールは復号せず、未検査として扱います。</p>
+  <p id="action-status" role="status" aria-live="polite"></p>
+  <p id="issue" role="alert" hidden></p>
+
+  <section aria-labelledby="settings-heading">
+    <h2 id="settings-heading">設定</h2>
+    <form id="settings-form">
+      <label><input id="enabled" type="checkbox"> 新着メールを自動検査する</label>
+      <fieldset>
+        <legend>自動検査するアカウント</legend>
+        <div id="accounts"></div>
+      </fieldset>
+      <label><input id="notifications" type="checkbox"> 検出・検査不能・失敗をデスクトップ通知する</label>
+      <p class="hint">通知には差出人・件名を表示しません。設定を保存した後に届いた新着が対象です。</p>
+      <div class="actions">
+        <button type="submit">設定を保存</button>
+        <button type="button" id="health">ClamAVとの接続を確認</button>
+      </div>
+    </form>
+    <p id="health-result"></p>
+    <p class="hint">上限は1通25MiB、展開後の合計100MiB、検査時間は最大120秒です。ClamAVの定義が3日超古い場合は検査失敗として扱います。URLの評判によるフィッシング判定は無効です。</p>
+  </section>
+
+  <section aria-labelledby="results-heading">
+    <h2 id="results-heading">検査結果</h2>
+    <div class="actions">
+      <button type="button" id="scan-selection">メール一覧で選択したメールを検査</button>
+      <button type="button" id="clear">完了した検査履歴を消去</button>
+      <label for="filter">表示</label>
+      <select id="filter">
+        <option value="all">すべて</option>
+        <option value="attention">検出・未検査・失敗</option>
+        <option value="pending">検査待ち・検査中</option>
+      </select>
+    </div>
+    <p class="hint">メール一覧の右クリックからも検査できます。履歴は最大1000件です。上限時は古い未検出の結果から置き換え、警告のある結果は自動消去しません。</p>
+    <p class="hint">差出人・件名・検査結果をこの拡張のローカル保存領域に保持します。本文と添付は履歴に保存しません。履歴の消去でメールは削除されません。</p>
+    <p id="summary" role="status" aria-live="polite"></p>
+    <div class="table-scroll" tabindex="0" role="region" aria-label="検査結果一覧（横にスクロールできます）">
+      <table>
+        <caption>新しい検査から最大100件を表示します。削除・移動は対象メールを開いてThunderbird標準の操作で行ってください。</caption>
+        <thead><tr><th scope="col">状態・検査日時</th><th scope="col">差出人・件名</th><th scope="col">詳細</th><th scope="col">操作</th></tr></thead>
+        <tbody id="results"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+</body>
+</html>

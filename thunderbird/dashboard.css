@@ -1,0 +1,30 @@
+:root { color-scheme: light dark; font: 16px/1.65 system-ui, sans-serif; }
+body { margin: 0; background: Canvas; color: CanvasText; }
+main { max-width: 1200px; margin: auto; padding: 24px; }
+h1 { margin-top: 0; }
+section { border-top: 1px solid GrayText; margin-top: 24px; padding-top: 8px; }
+fieldset { margin: 12px 0; }
+label { display: block; }
+input[type="checkbox"] { width: 18px; height: 18px; vertical-align: middle; margin-right: 8px; }
+button, select { font: inherit; min-height: 44px; padding: 6px 12px; }
+button { cursor: pointer; }
+button:disabled { cursor: default; }
+:focus-visible { outline: 3px solid Highlight; outline-offset: 3px; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.hint { font-size: .9rem; }
+#issue { border: 2px solid #b43b26; padding: 12px; }
+#action-status { min-height: 1.65em; }
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+caption { text-align: left; margin: 12px 0; }
+th, td { text-align: left; vertical-align: top; border-bottom: 1px solid GrayText; padding: 12px 8px; overflow-wrap: anywhere; }
+th:first-child { min-width: 140px; }
+td:nth-child(2) { min-width: 170px; max-width: 360px; }
+td:nth-child(3) { min-width: 180px; max-width: 400px; }
+td:last-child { min-width: 120px; }
+td button { display: block; margin: 0 0 12px; width: 100%; }
+.state { font-weight: bold; }
+[data-status="detected"] .state, [data-status="error"] .state { text-decoration: underline double; }
+time, .sender, .subject, .engine, .signatures { display: block; }
+.engine { font-size: .85rem; }
+@media (max-width: 600px) { main { padding: 12px; } }
