@@ -70,6 +70,7 @@ try {
     window.testCalls = [];
     window.confirmResult = true;
     window.permissionGranted = true;
+    window.failSettings = false;
     window.confirm = () => confirmResult;
     const makeRecord = (key, status, accountId = "test") => ({ key, status, sha256: "test",
       updatedAt: new Date(Date.UTC(2026, 10, 14, 9) - Number(key.replace(/[^0-9]/g, '') || 0) * 1000).toISOString(),
@@ -91,6 +92,15 @@ try {
     window.messenger = { runtime: { sendMessage: async request => {
       testCalls.push(request);
       if (request.type === "state") return structuredClone(testState);
+      if (request.type === "settings") {
+        if (failSettings) return { ok: false, error: "synthetic storage failure" };
+        testState.settings = structuredClone(request.settings); return { ok: true };
+      }
+      if (request.type === "folderChoices") return { ok: true, folders: [
+        { id: "inbox", accountId: "test", path: "/Inbox", name: "受信トレイ" },
+        { id: "spam", accountId: "test", path: "/Inbox/Spam", name: "迷惑メール" },
+        { id: "other-inbox", accountId: "other", path: "/Inbox", name: "受信トレイ" }
+      ] };
       if (request.type === "folderContext") {
         testState.folderRequest = { token: "folder-token", folder: { accountId: "test", path: "/Inbox", name: "受信トレイ" } };
         return { ok: true, ...testState.folderRequest };
@@ -112,7 +122,10 @@ try {
       if (request.type === "folderStop") { testState.folderJob.status = "stopped"; testState.folderJob.scanning = 0;
         testState.folderJob.finishedAt = new Date().toISOString(); testState.folderJob.detail = "中止しました。"; }
 
-      if (request.type === "health") return { ok: true, health: { status: "ready", engine: "ClamAV test", detail: "接続可能" } };
+      if (request.type === "health") {
+        testState.lastHealth = { status: "ready", engine: "ClamAV test", detail: "接続可能", checkedAt: new Date().toISOString() };
+        return { ok: true, health: testState.lastHealth };
+      }
       if (request.type === "clear") testState.records = testState.records.filter(record => ["queued", "scanning"].includes(record.status));
       if (request.type === "prepareDelete") return { ok: true, token: "test-ticket", ...target(request.key) };
       if (request.type === "deletePermanently") testState.records.find(record => record.key === request.key).status = "deleted";
@@ -133,6 +146,15 @@ try {
   await call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
   await call("Page.navigate", { url: `http://127.0.0.1:${server.address().port}/dashboard.html` });
   await until("document.querySelectorAll('#results tr').length === 50");
+  assert.equal(await evaluate("document.querySelectorAll('[role=tab]').length"), 4);
+  assert.equal(await evaluate("document.getElementById('panel-scan').hidden"), false);
+  assert.equal(await evaluate("document.getElementById('scan-selection')"), null);
+  await evaluate("document.getElementById('tab-help').click()");
+  assert.match(await evaluate("document.getElementById('panel-help').textContent"), /検査範囲/);
+  await evaluate("document.getElementById('tab-help').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))");
+  assert.equal(await evaluate("document.activeElement.id"), "tab-scan");
+  await evaluate("document.getElementById('tab-results').click()");
+
   assert.equal(await evaluate("document.getElementById('panel-settings').hidden"), true);
   assert.equal(await evaluate("document.querySelectorAll('#results img').length"), 0);
   assert.match(await evaluate("document.getElementById('results').textContent"), /<img/);
@@ -159,10 +181,24 @@ try {
   assert.equal(await evaluate("document.activeElement.id"), "tab-settings");
   await evaluate("document.getElementById('health').click()");
   await until("document.getElementById('health-result').textContent.includes('ClamAV test') && !document.getElementById('health').disabled");
-  await evaluate(`document.getElementById('enabled').checked = true;
-    document.querySelector('#accounts input').checked = true;
-    document.getElementById('settings-form').requestSubmit();`);
-  await until("testCalls.some(call => call.type === 'settings') && !document.getElementById('health').disabled");
+  assert.equal(await evaluate("document.querySelector('#settings-form button[type=submit]')"), null);
+  assert.equal(await evaluate("document.getElementById('enabled').disabled"), true);
+  await evaluate("document.querySelector('#accounts input').click()");
+  await until("testState.settings.accountIds.length === 1 && !document.getElementById('enabled').disabled");
+  await evaluate("document.getElementById('enabled').click()");
+  await until("testState.settings.enabled && document.getElementById('settings-status').textContent.includes('保存しました') && !document.getElementById('enabled').disabled");
+  await evaluate("failSettings = true; document.getElementById('notifications').click()");
+  await until("document.getElementById('settings-status').textContent.includes('保存できません') && !document.getElementById('notifications').disabled");
+  assert.equal(await evaluate("document.getElementById('notifications').checked"), true);
+  await evaluate("failSettings = false; document.querySelector('#accounts input').click()");
+  await until("!testState.settings.enabled && testState.settings.accountIds.length === 0 && !document.getElementById('notifications').disabled");
+  assert.equal(await evaluate("document.getElementById('enabled').disabled"), true);
+  assert.match(await evaluate("document.getElementById('health-result').textContent"), /最終接続確認.*応答あり/);
+  await evaluate("testState.lastScan = { checkedAt: new Date().toISOString(), engine: 'ClamAV actual (clamd)', status: 'clean' }; document.getElementById('health').click()");
+  await until("document.getElementById('last-scan-result').textContent.includes('clamd') && !document.getElementById('health').disabled");
+  await mkdir(path.join(root, "dist"), { recursive: true });
+  const settingsImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
+  await writeFile(path.join(root, "dist/ui-settings.png"), Buffer.from(settingsImage.data, "base64"));
   assert.equal(await evaluate("document.getElementById('allow-delete')"), null);
   await evaluate("document.getElementById('tab-results').click(); document.getElementById('select-page').click(); permissionGranted = false; document.getElementById('delete-selected').click()");
   await until("document.getElementById('action-status').textContent.includes('許可されなかった') && !document.getElementById('delete-selected').disabled");
@@ -222,7 +258,13 @@ try {
   await writeFile(path.join(root, "dist/ui-mobile.png"), Buffer.from(mobile.data, "base64"));
   await evaluate("document.getElementById('tab-settings').click(); document.getElementById('clear').click()");
   await until("testCalls.some(call => call.type === 'clear') && !document.getElementById('clear').disabled");
-  await evaluate("document.getElementById('tab-results').click(); document.getElementById('scan-folder').click()");
+  await evaluate("document.getElementById('tab-scan').click()");
+  await until("document.getElementById('scan-account').options.length === 3");
+  await change("scan-account", "test");
+  await change("scan-target", "inbox");
+  assert.match(await evaluate("document.getElementById('scan-target-label').textContent"), /テストアカウント.*Inbox/);
+  assert.equal(await evaluate("document.querySelector('#scan-target option[value=other-inbox]')"), null);
+  await evaluate("document.getElementById('scan-folder').click()");
   await until("document.getElementById('folder-dialog').open");
   assert.equal(await evaluate("document.getElementById('folder-subfolders').checked"), false);
   assert.equal(await evaluate("document.activeElement.id"), "folder-cancel");
@@ -245,13 +287,15 @@ try {
   assert.equal(await evaluate("document.getElementById('folder-bar').value"), 25);
   assert.equal(await evaluate("document.getElementById('folder-bar').max"), 100);
   assert.match(await evaluate("document.getElementById('folder-counts').textContent"), /検出2件/);
+  const scanImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
+  await writeFile(path.join(root, "dist/ui-scan.png"), Buffer.from(scanImage.data, "base64"));
   await evaluate("document.getElementById('folder-results').click()");
   assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 1);
   assert.match(await evaluate("document.getElementById('results').textContent"), /フォルダー検査結果/);
   await call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
   const folderImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
   await writeFile(path.join(root, "dist/ui-folder-progress.png"), Buffer.from(folderImage.data, "base64"));
-  await evaluate("document.getElementById('folder-stop').click()");
+  await evaluate("document.getElementById('tab-scan').click(); document.getElementById('folder-stop').click()");
   await until("document.getElementById('folder-status').textContent.includes('中止') && document.getElementById('folder-stop').disabled");
   assert.match(await evaluate("document.getElementById('folder-status').textContent"), /未処理75件/);
   await evaluate("testState.folderJob.status = 'interrupted'; document.getElementById('health').click()");
@@ -278,7 +322,7 @@ try {
   assert.equal(await evaluate("document.querySelectorAll('#results tr').length > 0"), true);
   await call("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   assert.equal(await evaluate("document.documentElement.scrollWidth <= window.innerWidth"), true);
-  console.log("UI smoke: passed (tabs, filters, bulk actions, folder start/cancel/subfolders, progress counters, run filter, stop/interruption/resume/delete, desktop/mobile)");
+  console.log("UI smoke: passed (four tabs, folder picker, autosave/rollback, connection history, filters, bulk actions, folder start/cancel/subfolders, progress counters, run filter, stop/interruption/resume/delete, desktop/mobile)");
 } finally {
   for (const waiter of pending.values()) clearTimeout(waiter.timer);
   chrome.kill();

@@ -695,3 +695,52 @@ test("queued, scanning, deleted and unresolvable results cannot be deleted", asy
   assert.equal((await h.send("prepareDelete", { key: "k1" })).ok, false);
   assert.equal(h.deleted.length, 0);
 });
+
+test("folder picker enumerates real account folders and starts the explicit target", async () => {
+  const root = { id: "root", accountId: "one", path: "/", isRoot: true };
+  const inbox = { id: "inbox", accountId: "one", path: "/Inbox", name: "受信トレイ" };
+  const spam = { id: "spam", accountId: "one", path: "/Inbox/Spam", name: "迷惑メール" };
+  const virtual = { id: "virtual", accountId: "one", path: "/Search", isVirtual: true };
+  const h = await harness({ folderRefs: [inbox, spam, virtual], mails: [{ ...mail(1), folder: spam }] });
+  h.api.accounts.list = async () => [{ id: "one", type: "imap", name: "one",
+    rootFolder: { ...root, subFolders: [{ ...inbox, subFolders: [spam] }, virtual] } },
+    { id: "news", type: "nntp", rootFolder: { ...root, accountId: "news" } }];
+  const choices = await h.send("folderChoices");
+  assert.deepEqual(choices.folders.map(folder => folder.id), ["inbox", "spam"]);
+  assert.equal((await h.send("folderContext", { folderId: "missing" })).ok, false);
+  assert.equal((await h.send("folderContext", { folderId: "virtual" })).ok, false);
+  const context = await h.send("folderContext", { folderId: "spam" });
+  assert.equal(context.folder.path, "/Inbox/Spam");
+  await h.send("folderStart", { token: context.token, includeSubfolders: false });
+  const state = await settledFolder(h, "completed");
+  assert.equal(state.folderJob.folder.id, "spam");
+  assert.deepEqual(h.rawReads, [1]);
+});
+
+test("connection confirmation and actual scan engine survive reopening/restart independently", async () => {
+  const h = await harness({ mails: [mail(1)], scanResult: { engine: "loaded engine (clamd)" } });
+  assert.equal((await h.send("state")).lastHealth, null);
+  await h.send("health");
+  assert.equal(h.stored().lastHealth.status, "ready");
+  assert.ok(h.stored().lastHealth.checkedAt);
+  assert.equal(h.stored().lastScan, null);
+  await h.send("scanSelection");
+  await settle(h, value => value.records[0]?.status === "clean");
+  const next = await harness({ saved: structuredClone(h.stored()) });
+  const state = await next.send("state");
+  assert.equal(state.lastHealth.status, "ready");
+  assert.equal(state.lastScan.engine, "loaded engine (clamd)");
+  const failed = await harness({ nativeFailure: true });
+  const response = await failed.send("health");
+  assert.equal(response.health.status, "error");
+  assert.equal(failed.stored().lastHealth.status, "error");
+});
+
+test("settings save failure preserves the last effective settings", async () => {
+  const h = await harness();
+  const original = structuredClone((await h.send("state")).settings);
+  h.api.storage.local.set = async () => { throw new Error("synthetic quota failure"); };
+  const response = await h.send("settings", { settings: { enabled: true, accountIds: ["one"], notifications: false } });
+  assert.equal(response.ok, false);
+  assert.deepEqual((await h.send("state")).settings, original);
+});

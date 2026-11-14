@@ -7,7 +7,9 @@ let latest, initialized = false, refreshing = false, busy = false, page = 0;
 let visible = [];
 const rows = new Map(), selected = new Set();
 let folderFilterId = null, seenFolderRequest = null;
-let folderAnnouncement = null;
+let folderAnnouncement = null, seenResultsRequest = null;
+const TABS = ["scan", "results", "settings", "help"];
+let folderChoices = [], foldersLoading = false, settingsSaving = false;
 
 async function request(type, values = {}) {
   const response = await messenger.runtime.sendMessage({ ...values, type });
@@ -29,12 +31,14 @@ function updateControls() {
   $("select-page").disabled = locked || !candidates.length;
   $("select-page").checked = candidates.length > 0 && chosen.length === candidates.length;
   $("select-page").indeterminate = chosen.length > 0 && chosen.length < candidates.length;
-  for (const id of ["filter", "account-filter", "search", "reset-filters", "scan-selection", "clear", "health"]) {
+  for (const id of ["filter", "account-filter", "search", "reset-filters", "clear", "health"]) {
     $(id).disabled = locked;
   }
   const job = latest?.folderJob;
   const folderActive = job && ["collecting", "running", "stopping"].includes(job.status);
-  $("scan-folder").disabled = locked || Boolean(folderActive);
+  $("scan-folder").disabled = locked || Boolean(folderActive) || foldersLoading || !$("scan-target").value;
+  for (const id of ["scan-account", "scan-target", "reload-folders"]) $(id).disabled = locked || foldersLoading;
+  $("scan-target").disabled ||= !$("scan-account").value;
   $("folder-stop").disabled = locked || !folderActive || job.status === "stopping";
   $("folder-resume").hidden = !job || !["stopped", "interrupted", "blocked", "error"].includes(job.status);
   $("folder-resume").disabled = locked || Boolean(folderActive);
@@ -42,6 +46,7 @@ function updateControls() {
   $("folder-results").disabled = locked || !job;
   $("folder-only").disabled = locked || !job;
   for (const input of $("settings-form").querySelectorAll("input, button")) input.disabled = locked;
+  $("enabled").disabled = locked || !$("accounts").querySelector("input:checked");
   for (const record of visible) {
     const entry = rows.get(record.key);
     entry.checkbox.disabled = locked || !selectable(record);
@@ -79,7 +84,7 @@ async function action(callback, success) {
 }
 
 function activateTab(name, focus = false) {
-  for (const id of ["results", "settings"]) {
+  for (const id of TABS) {
     const active = id === name;
     const button = $("tab-" + id);
     button.setAttribute("aria-selected", String(active));
@@ -128,7 +133,7 @@ function renderFolder() {
 
 function showFolderDialog(context) {
   seenFolderRequest = context.token;
-  activateTab("results");
+  activateTab("scan");
   const account = latest.accounts.find(account => account.id === context.folder.accountId)?.name || context.folder.accountId;
   setText($("folder-target"), `${account} ／ ${context.folder.path}`);
   $("folder-subfolders").checked = false;
@@ -153,7 +158,7 @@ function showFolderDialog(context) {
 $("scan-folder").addEventListener("click", () => {
   let context;
   void action(async () => {
-    context = await request("folderContext");
+    context = await request("folderContext", { folderId: $("scan-target").value });
     return "対象とサブフォルダーの範囲を確認してください。";
   }).then(() => { if (context && !$("folder-dialog").open) showFolderDialog(context); });
 });
@@ -178,19 +183,21 @@ $("folder-delete").addEventListener("click", () => {
   $("folder-delete-cancel").focus();
 });
 $("folder-results").addEventListener("click", () => {
+  activateTab("results", true);
   folderFilterId = latest.folderJob.id; $("folder-only").checked = true;
   $("filter").value = "all"; $("account-filter").value = "all"; $("search").value = ""; resetSelection();
 });
 $("folder-only").addEventListener("change", () => {
   folderFilterId = $("folder-only").checked ? latest?.folderJob?.id : null; resetSelection();
 });
-for (const [index, name] of ["results", "settings"].entries()) {
+for (const [index, name] of TABS.entries()) {
   $("tab-" + name).addEventListener("click", () => activateTab(name));
   $("tab-" + name).addEventListener("keydown", event => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
-    const next = event.key === "Home" ? 0 : event.key === "End" ? 1 : 1 - index;
-    activateTab(["results", "settings"][next], true);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? TABS.length - 1 :
+      (index + (event.key === "ArrowRight" ? 1 : -1) + TABS.length) % TABS.length;
+    activateTab(TABS[next], true);
   });
 }
 
@@ -316,6 +323,9 @@ function renderRecords() {
   }
   const waiting = latest.records.filter(record => record.status === "queued").length;
   const attention = latest.records.filter(needsAttention).length;
+  setText($("tab-results"), attention ? `検査結果（${attention}）` : "検査結果");
+  $("tab-results").setAttribute("aria-label", `検査結果、確認が必要${attention}件`);
+  $("tab-results").title = `確認が必要${attention}件`;
   setText($("summary"), `履歴${latest.records.length}件 ／ 確認が必要${attention}件 ／ 検査待ち${waiting}件 ／ 絞り込み結果${filtered.length}件`);
   setText($("page-label"), `${page + 1} / ${result.pages}ページ（1ページ50件）`);
   $("page-label").dataset.pages = String(result.pages);
@@ -331,18 +341,11 @@ async function refresh() {
   refreshing = true;
   try {
     latest = await request("state");
+    if (!settingsSaving) syncSettings(latest.settings);
+    renderConnection();
     if (!initialized) {
-      $("enabled").checked = latest.settings.enabled;
-      $("notifications").checked = latest.settings.notifications;
-      for (const account of latest.accounts) {
-        const label = document.createElement("label"), checkbox = document.createElement("input");
-        checkbox.type = "checkbox"; checkbox.value = account.id;
-        checkbox.checked = latest.settings.accountIds.includes(account.id);
-        label.append(checkbox, document.createTextNode(`${account.name}（${account.type}）`));
-        $("accounts").append(label);
-      }
-      if (!latest.accounts.length) setText($("accounts"), "対象アカウントがありません。");
       initialized = true;
+      void loadFolders();
     }
     // Add history-only accounts as well; don't reset the current filter.
     const accounts = new Map(latest.accounts.map(account => [account.id, account.name]));
@@ -355,6 +358,10 @@ async function refresh() {
     $("issue").hidden = !latest.issue;
     setText($("issue"), latest.issue || "");
     renderRecords();
+    if (latest.resultsRequest && latest.resultsRequest !== seenResultsRequest && !blocked()) {
+      seenResultsRequest = latest.resultsRequest;
+      activateTab("results");
+    }
     if (latest.folderRequest && latest.folderRequest.token !== seenFolderRequest && !blocked() &&
         !$("delete-dialog").open && !$("folder-dialog").open && !$("folder-delete-dialog").open) showFolderDialog(latest.folderRequest);
   } finally { refreshing = false; }
@@ -409,21 +416,101 @@ $("delete-selected").addEventListener("click", () => {
     return `一括削除：完全削除${response.results.length - failed.length}件、未削除${failed.length}件。`;
   });
 });
-$("settings-form").addEventListener("submit", event => {
-  event.preventDefault();
-  void action(() => request("settings", { settings: {
-    enabled: $("enabled").checked, notifications: $("notifications").checked,
-    accountIds: [...$("accounts").querySelectorAll("input:checked")].map(input => input.value)
-  } }), "設定を保存しました。");
+function syncSettings(settings) {
+  $("enabled").checked = settings.enabled;
+  $("notifications").checked = settings.notifications;
+  const current = new Map([...$("accounts").querySelectorAll("input")].map(input => [input.value, input]));
+  const ids = new Set(latest.accounts.map(account => account.id));
+  for (const [id, input] of current) if (!ids.has(id)) input.parentElement.remove();
+  if (latest.accounts.length && !$("accounts").querySelector("input")) $("accounts").replaceChildren();
+  for (const account of latest.accounts) {
+    let checkbox = current.get(account.id);
+    if (!checkbox) {
+      const label = document.createElement("label"); checkbox = document.createElement("input");
+      checkbox.type = "checkbox"; checkbox.value = account.id;
+      label.append(checkbox, document.createTextNode(`${account.name}（${account.type}）`));
+      $("accounts").append(label);
+    }
+    checkbox.checked = settings.accountIds.includes(account.id);
+  }
+  if (!latest.accounts.length) setText($("accounts"), "対象アカウントがありません。");
+}
+
+function renderConnection() {
+  const health = latest.lastHealth;
+  setText($("health-result"), health ?
+    `最終接続確認：${health.status === "ready" ? "応答あり" : "確認失敗"} ／ ${new Date(health.checkedAt).toLocaleString()}。${health.engine || ""} ${health.detail || ""}` :
+    "接続はまだ確認していません。「接続を再確認」で確認できます。");
+  const scan = latest.lastScan;
+  setText($("last-scan-result"), scan ? `最終実検査：${new Date(scan.checkedAt).toLocaleString()} ／ ${
+    scan.engine?.includes("(clamd)") ? "clamd" : "clamscan"} ／ ${scan.engine || ""}` : "実検査の記録はありません。");
+}
+
+function renderFolderChoices() {
+  const accountId = $("scan-account").value, previous = $("scan-target").value;
+  $("scan-target").replaceChildren(new Option("選択してください", ""));
+  for (const folder of folderChoices.filter(folder => folder.accountId === accountId)) {
+    $("scan-target").append(new Option(folder.path, folder.id));
+  }
+  if ([...$("scan-target").options].some(option => option.value === previous)) $("scan-target").value = previous;
+  renderTarget();
+}
+function renderTarget() {
+  const folder = folderChoices.find(folder => folder.id === $("scan-target").value && folder.accountId === $("scan-account").value);
+  const account = latest?.accounts.find(account => account.id === folder?.accountId);
+  setText($("scan-target-label"), folder ? `検査対象：${account?.name || folder.accountId} ／ ${folder.path}` : "検査するアカウントとフォルダーを選択してください。");
+  updateControls();
+}
+async function loadFolders() {
+  if (foldersLoading) return;
+  foldersLoading = true; updateControls();
+  setText($("folder-load-status"), "フォルダー一覧を取得しています。");
+  try {
+    const response = await request("folderChoices");
+    folderChoices = response.folders;
+    const previous = $("scan-account").value;
+    $("scan-account").replaceChildren(new Option("選択してください", ""));
+    for (const account of latest.accounts) $("scan-account").append(new Option(account.name, account.id));
+    if (latest.accounts.some(account => account.id === previous)) $("scan-account").value = previous;
+    else if (latest.accounts.length === 1) $("scan-account").value = latest.accounts[0].id;
+    renderFolderChoices();
+    setText($("folder-load-status"), response.limited ? "フォルダー数の上限に達しました。一覧にない対象はThunderbirdの右クリックから指定してください。" :
+      folderChoices.length ? "" : "検査できるフォルダーがありません。");
+  } catch (error) { setText($("folder-load-status"), "一覧を取得できませんでした。「一覧を更新」で再試行してください。" + error.message); }
+  finally { foldersLoading = false; updateControls(); }
+}
+$("scan-account").addEventListener("change", () => { $("scan-target").value = ""; renderFolderChoices(); });
+$("scan-target").addEventListener("change", renderTarget);
+$("reload-folders").addEventListener("click", () => { void loadFolders(); });
+$("settings-form").addEventListener("submit", event => event.preventDefault());
+$("settings-form").addEventListener("change", () => {
+  const accountIds = [...$("accounts").querySelectorAll("input:checked")].map(input => input.value);
+  const wasEnabled = $("enabled").checked;
+  if (!accountIds.length) $("enabled").checked = false;
+  const settings = { enabled: $("enabled").checked, notifications: $("notifications").checked, accountIds };
+  settingsSaving = true;
+  void action(async () => {
+    setText($("settings-status"), "保存しています。");
+    try {
+      await request("settings", { settings });
+      latest.settings = settings;
+      syncSettings(settings);
+      setText($("settings-status"), !accountIds.length && wasEnabled ? "対象アカウントがなくなったため、自動検査を停止して保存しました。" : "保存しました。");
+    } catch (error) {
+      syncSettings(latest.settings);
+      setText($("settings-status"), "保存できませんでした。変更前の設定に戻しました。");
+      throw error;
+    } finally { settingsSaving = false; }
+  }, "設定を保存しました。");
 });
 $("health").addEventListener("click", () => {
   void action(async () => {
     const { health } = await request("health");
+    latest.lastHealth = health;
+    renderConnection();
     if (health.status !== "ready") throw new Error(health.detail);
-    setText($("health-result"), `${health.engine}。${health.detail} バージョン確認のみで、実際の検査はまだ実行していません。`);
-  }, "ClamAVと補助プログラムに接続できました。");
+  }, "接続の確認結果を更新しました。");
 });
-$("scan-selection").addEventListener("click", () => { void action(() => request("scanSelection"), "選択メールの検査を受け付けました。"); });
 $("clear").addEventListener("click", () => {
   if (blocked() || !confirm("検出・失敗を含む、完了した検査履歴を消去します。メール自体は削除しません。続けますか？")) return;
   void action(() => request("clear"), "完了した検査履歴を消去しました。");

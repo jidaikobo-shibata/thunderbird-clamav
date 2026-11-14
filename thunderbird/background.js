@@ -20,6 +20,8 @@ const deleting = new Set();
 const batchTickets = new Map();
 let batchProgress = null;
 let folderRequest = null;
+let lastHealth = null, lastScan = null;
+let resultsRequest = null;
 const folderScan = new FolderScan(api, {
   digestOf: async message => {
     if (message.headersOnly || message.external) return null;
@@ -175,7 +177,7 @@ function report(error) {
 function save() {
   // Take a snapshot now, then serialize storage writes so an older snapshot
   // cannot overwrite a later scan result.
-  const value = JSON.parse(JSON.stringify({ settings, records, issue, folderJob: folderScan.snapshot(), folderCheckpoint: folderScan.checkpointState() }));
+  const value = JSON.parse(JSON.stringify({ settings, records, issue, lastHealth, lastScan, folderJob: folderScan.snapshot(), folderCheckpoint: folderScan.checkpointState() }));
   writes = writes.catch(() => {}).then(() => api.storage.local.set(value));
   return writes;
 }
@@ -349,6 +351,8 @@ async function drain() {
         record.engine = result.engine || engine;
         record.detail = result.detail;
         record.signatures = result.signatures || [];
+        if (result.status !== "error") lastScan = { checkedAt: new Date().toISOString(),
+          engine: record.engine, status: result.status };
         record.nextRetry = null;
       } catch (error) {
         record.status = error.incomplete ? "incomplete" : "error";
@@ -402,10 +406,16 @@ async function scanSelection() {
 }
 
 const ready = (async () => {
-  const data = await api.storage.local.get(["settings", "records", "issue", "folderJob", "folderCheckpoint"]);
+  const data = await api.storage.local.get(["settings", "records", "issue", "folderJob", "folderCheckpoint", "lastHealth", "lastScan"]);
   settings = { ...DEFAULTS, ...data.settings };
   records = Array.isArray(data.records) ? data.records : [];
   issue = typeof data.issue === "string" ? data.issue : "";
+  lastHealth = data.lastHealth || null;
+  lastScan = data.lastScan || records.filter(record => record.engine &&
+    ["clean", "detected", "incomplete", "deleted"].includes(record.status))
+    .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))[0] || null;
+  if (lastScan && !lastScan.checkedAt) lastScan = { engine: lastScan.engine,
+    checkedAt: lastScan.updatedAt, status: lastScan.status };
   folderScan.restore(data.folderJob, data.folderCheckpoint);
   // Old versions kept only summary/history. Recover verifiable progress from retained results.
   if (data.folderJob && !data.folderCheckpoint) {
@@ -451,7 +461,7 @@ api.menus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== "scan") return;
   if (tab?.id !== undefined) lastMailTab = tab.id;
   void ready.then(() => info.selectedMessages ? enqueue(info.selectedMessages, "manual") : scanSelection())
-    .then(openDashboard).catch(report);
+    .then(() => { resultsRequest = crypto.randomUUID(); return openDashboard(); }).catch(report);
 });
 api.browserAction.onClicked.addListener(() => { void openDashboard().catch(report); });
 api.notifications.onClicked.addListener(() => { void openDashboard().catch(report); });
@@ -463,26 +473,57 @@ api.runtime.onMessage.addListener(async (request, sender) => {
   try {
     switch (request.type) {
       case "state":
-        return { ok: true, settings, records, issue, batch: batchProgress, folderRequest,
+        return { ok: true, settings, records, issue, lastHealth, lastScan, resultsRequest, batch: batchProgress, folderRequest,
           folderJob: folderScan.snapshot(), accounts: (await api.accounts.list())
           .filter(account => ["imap", "pop3", "none"].includes(account.type))
           .map(account => ({ id: account.id, name: account.name, type: account.type })) };
       case "settings": {
         const ids = (await api.accounts.list()).map(account => account.id);
+        const previous = settings;
         settings = validateSettings(request.settings, ids);
-        await save();
+        try { await save(); }
+        catch (error) { settings = previous; throw error; }
         void drain().catch(report);
         return { ok: true };
       }
       case "health": {
         const client = new NativeClient(api.runtime);
-        try { return { ok: true, health: await client.request("health") }; }
-        finally { client.close(); }
+        try {
+          try { lastHealth = { ...await client.request("health"), checkedAt: new Date().toISOString() }; }
+          catch (error) { lastHealth = { status: "error", checkedAt: new Date().toISOString(), detail: error.message }; }
+          await save();
+          return { ok: true, health: lastHealth };
+        } finally { client.close(); }
       }
       case "scanSelection":
         await scanSelection();
         return { ok: true };
+      case "folderChoices": {
+        const choices = [], seen = new Set();
+        const walk = (folder, accountId) => {
+          if (!folder || choices.length >= 5000) return;
+          const current = { ...folder, accountId: folder.accountId || accountId };
+          const identity = current.accountId + ":" + current.path;
+          if (seen.has(identity)) return;
+          seen.add(identity);
+          if (realFolder(current) && typeof current.id === "string") {
+            choices.push({ id: current.id, accountId: current.accountId, path: current.path,
+              name: current.name || current.path });
+          }
+          for (const child of folder.subFolders || []) walk(child, accountId);
+        };
+        for (const account of await api.accounts.list(true)) {
+          if (!["imap", "pop3", "none"].includes(account.type)) continue;
+          if (account.rootFolder) walk(account.rootFolder, account.id);
+          else for (const folder of account.folders || []) walk(folder, account.id);
+        }
+        return { ok: true, folders: choices, limited: choices.length >= 5000 };
+      }
       case "folderContext":
+        if (request.folderId !== undefined) {
+          if (typeof request.folderId !== "string" || !request.folderId) throw new Error("検査するフォルダーを選択してください。");
+          return { ok: true, ...await chooseFolder(await api.folders.get(request.folderId, false)) };
+        }
         return { ok: true, ...await currentFolder() };
       case "folderCancel":
         if (folderRequest?.token === request.token) folderRequest = null;
