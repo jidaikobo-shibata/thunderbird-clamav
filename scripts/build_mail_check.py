@@ -3,6 +3,11 @@
 
 import json
 from pathlib import Path
+import platform
+import shutil
+import subprocess
+import tarfile
+import tempfile
 import zipfile
 
 
@@ -37,6 +42,35 @@ def build(root):
     return target, native / "local.clam_mail_check.json"
 
 
+def build_setup(root, xpi):
+    """Self-contained Ubuntu bundle; compiling the launcher needs a C compiler."""
+    manifest = json.loads((root / "thunderbird/manifest.json").read_text())
+    version = manifest["version"]
+    name = "clam-mail-check-setup-" + version + "-linux-" + platform.machine()
+    output = root / "dist" / (name + ".tar.gz")
+    with tempfile.TemporaryDirectory(prefix="clam-setup-build-") as temp:
+        bundle = Path(temp) / name
+        files = ["setup.py", "setup/__init__.py", "setup/manager.py", "setup/gui.py",
+                 "native/host.py", "thunderbird/manifest.json", "README.md"]
+        for name_in_bundle in files:
+            target = bundle / name_in_bundle
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(root / name_in_bundle, target)
+        shutil.copyfile(xpi, bundle / "extension.xpi")
+        launcher = bundle / "ClamAV-Mail-Check-Setup"
+        subprocess.run(["/usr/bin/cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                        "-D_FORTIFY_SOURCE=2", "-fstack-protector-strong",
+                        "-Wl,-z,relro,-z,now", str(root / "setup/launcher.c"),
+                        "-o", str(launcher)], check=True)
+        launcher.chmod(0o755)
+        (bundle / "setup.py").chmod(0o755)
+        with tarfile.open(output, "w:gz") as archive:
+            archive.add(bundle, arcname=bundle.name)
+    return output
+
+
 if __name__ == "__main__":
-    for artifact in build(Path(__file__).resolve().parents[1]):
+    root = Path(__file__).resolve().parents[1]
+    artifacts = build(root)
+    for artifact in (*artifacts, build_setup(root, artifacts[0])):
         print(artifact)

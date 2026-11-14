@@ -23,16 +23,22 @@
 - マニフェストの最低バージョンはThunderbird 140。ただし140での実機検証は未実施。
 - Python 3.10以降、`/usr/bin/python3`。
 - `/usr/bin/clamscan` と更新済みのClamAV定義。1.5.4でローカル検査を確認。
-- ビルドはPython標準ライブラリのみ。JavaScriptのテストにはNode.js 22以降。
+- 検査用の補助プログラムはPython標準ライブラリのみ。
+- GUIセットアップにはGTK 4.10以降とPyGObject（Ubuntuの`python3-gi`、
+  `gir1.2-gtk-4.0`）が必要。確認した環境には導入済み。
+- 配布用GUIセットアップのビルドには`/usr/bin/cc`が必要。起動用の小さな
+  Linux実行ファイルを生成する。利用者側にCコンパイラーは不要。
+- JavaScriptのテストにはNode.js 22以降。
 
-Snap・Flatpak版のNative Messaging連携は未検証です。
+GUIセットアップの対象はUbuntuの通常版Thunderbirdです。
+Snap・Flatpak版のNative Messaging連携は未検証のため、選択すると導入・更新を停止します。
 サンドボックスの権限を広げる設定を自動で追加することはありません。
 Thunderbirdでの実機読み込み、受信イベント、IMAP移動後の再特定は検証待ちです。
 
 ## 構成
 
 `thunderbird/` がMailExtension、`native/host.py` がNative Messaging用の
-補助プログラムです。依存パッケージや常駐HTTPサーバーは不要です。
+補助プログラムです。検査処理には追加のPythonパッケージや常駐HTTPサーバーは不要です。
 拡張から64KiB以下のデータ片を順に渡し、補助プログラムはSHA-256で
 一致を確認してからClamAVを実行します。
 
@@ -61,7 +67,11 @@ python3 scripts/build_mail_check.py
 ```
 
 `dist/clam-mail-check-0.1.0.xpi` と、確認用の補助プログラム・登録JSONを
-`dist/native/` に生成します。生成しただけではインストールされません。
+`dist/native/` に生成します。GUIセットアップ一式は
+`dist/clam-mail-check-setup-0.1.0-linux-<architecture>.tar.gz` に生成します。
+XPI・補助プログラム・GUIを同梱しており、ソースのチェックアウトは不要です。
+生成しただけではインストールされません。起動用実行ファイルはビルドした
+アーキテクチャ向けです。今回の確認対象はUbuntu 26.04 / x86_64です。
 
 実際のClamAVとの接続確認は次のコマンドで実施できます。
 通常メール・EICARの添付・ZIP内EICAR・暗号化メールをメモリ内で生成します。
@@ -81,7 +91,67 @@ python3 scripts/smoke_mail_check.py
 node scripts/smoke_mail_ui.mjs
 ```
 
-## 補助プログラムの登録
+GUIセットアップの実際の画面操作は、独立したヘッドレスWestonとD-Bus、
+分離した設定・一時的な設置先で確認できます。X11・Xwaylandは使いません。
+GTK 4とWeston、dbus-run-sessionが必要です。実ユーザーの登録先は変更しません。
+起動のみ・確認キャンセルで書き込みがないこと、導入・修復・削除、
+Snap選択時の停止、アプリ一覧用Desktop Entryの起動を検証します。
+
+```bash
+python3 -B scripts/smoke_setup_gui.py
+```
+
+## GUIセットアップ（推奨）
+
+**ここからはユーザー環境への導入です。確認画面で承認した時点で変更します。**
+
+1. 配布用のtar.gzをファイル管理画面で展開します。
+2. 展開したフォルダーの`ClamAV-Mail-Check-Setup`を起動します。
+   テキストのスクリプトではなくLinux用実行ファイルです。実行の確認や
+   実行許可の操作が必要な場合は、配布元を確認したうえで行ってください。
+   実際のファイル管理画面でのダブルクリック起動は未検証です。
+3. ClamAVの状態を確認します。Thunderbirdの導入方法が不明な場合は、
+   確認して通常版を選択します。実行パスだけで判定できない場合は推測しません。
+4. 「インストール」を押し、作成先と許可範囲を確認して実行します。
+5. 「同梱XPIのあるフォルダーを開く」からXPIを確認し、Thunderbirdへ読み込みます。
+6. 以後はアプリ一覧の「ClamAV Mail Check セットアップ」で管理できます。
+
+ソースから確認する場合は、先にビルドし、リポジトリのルートで実行します。
+
+```bash
+python3 -B setup.py
+```
+
+セットアップは起動時には状態の読み取りだけを行います。各操作は確認ダイアログを
+表示し、キャンセルを既定の選択にします。root・sudoは不要です。
+許可対象は固定ID`clam-mail-check@local.invalid`の拡張だけです。
+設置先はユーザーのホーム配下です。
+
+```text
+$HOME/.local/lib/clam-mail-check/releases/<release-id>/
+$HOME/.local/lib/clam-mail-check/installation.json
+$HOME/.mozilla/native-messaging-hosts/local.clam_mail_check.json
+$HOME/.local/share/applications/clam-mail-check-setup.desktop
+```
+
+- 「更新／修復」では新しい設置先を用意し、ClamAVとの通信が確認できてから
+  登録を切り替えます。書き込み中の例外では変更済みの登録を元に戻します。
+  電源断など、プロセス自体が中断された場合の完全な自動復旧は未対応です。
+- 修復用の元データも変更されていた場合は、ダウンロードした配布物から
+  セットアップを起動してください。古い版への更新は拒否します。
+- 元のGUIを削除しても、設置済みのコピーをアプリ一覧から起動できます。
+- アンインストールは補助プログラムと接続登録・起動項目を対象にします。
+  ClamAV本体・Thunderbird拡張・メール・拡張の履歴には触れません。
+- 設置記録のハッシュと一致しない手動変更ファイルは削除せず、残った場所を表示します。
+  登録JSONや起動項目が別物の場合は、上書き・削除せず停止します。
+- 排他制御用の小さなロックファイルと空の管理ディレクトリは残る場合があります。
+- 以前のCLI方式で登録した環境は、設置記録が異なるため自動移行しません。
+  既存の登録を確認し、移行方針を決めてから対応してください。
+- 補助プログラムにGUI・OS設定を変更する通信命令は追加していません。
+  更新と削除は、利用者が独立したセットアップ画面から実行します。
+- 自動ダウンロード・自動更新・他OS対応は未実装です。
+
+## 従来のCLI登録（開発用）
 
 **ここからはユーザー環境への導入です。対象を確認してから実行してください。**
 
@@ -107,7 +177,8 @@ $HOME/.mozilla/native-messaging-hosts/local.clam_mail_check.json
 補助プログラムの許可対象は、この拡張の固定ID
 `clam-mail-check@local.invalid`だけです。root・sudoは不要です。
 既存のファイルやシンボリックリンクがある場合は上書きせずに終了します。
-アップデート・アンインストールはまだ自動化していません。
+この旧方式には更新・アンインストール機能がありません。
+GUI方式と混在させず、新規導入にはGUIセットアップを使ってください。
 
 ## Thunderbirdへの読み込み
 
