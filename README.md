@@ -71,11 +71,11 @@ node --check thunderbird/dashboard.js
 python3 scripts/build_mail_check.py
 ```
 
-`dist/clam-mail-check-0.9.1.xpi` と、確認用の補助プログラム・登録JSONを
+`dist/clam-mail-check-0.9.2.xpi` と、確認用の補助プログラム・登録JSONを
 `dist/native/` に生成します。GUI不要の導入用ファイル
-`dist/clam-mail-check-installer-0.9.1.pyz` をXPIに同梱し、単体でも生成します。
+`dist/clam-mail-check-installer-0.9.2.pyz` をXPIに同梱し、単体でも生成します。
 旧GUI配布物も必要な場合だけ `--legacy-gui` を指定します。この場合はCコンパイラーが必要です。
-`dist/clam-mail-check-setup-0.9.1-linux-<architecture>.tar.gz` に生成します。
+`dist/clam-mail-check-setup-0.9.2-linux-<architecture>.tar.gz` に生成します。
 旧GUI配布物にはXPI・補助プログラム・GUIを同梱します。通常配布のXPIにもCLI導入用ファイルが入り、ソースのチェックアウトは不要です。
 生成しただけではインストールされません。旧GUIの起動用実行ファイルはビルドした
 アーキテクチャ向けです。今回の確認対象はUbuntu 26.04 / x86_64です。
@@ -108,6 +108,17 @@ Snap選択時の停止、アプリ一覧用Desktop Entryの起動を検証しま
 python3 -B scripts/smoke_setup_gui.py
 ```
 
+## 保存先を選んで導入用ファイルを保存する（0.9.2）
+
+導入用ファイルの保存は通常リンクではなく、[Thunderbirdのdownloads API](https://webextension-api.thunderbird.net/en/esr-mv2/downloads.html)を使用します。
+「導入用ファイルを保存」「再導入・削除用ファイルを保存」を押すと、初回は任意のファイル保存権限を要求し、
+保存先を選ぶ画面を開きます。許可しなかった場合・保存を中止した場合・失敗した場合も画面に結果を表示します。
+保存開始だけを完了とせず、完了状態を確認して保存パスを表示します。
+保存名が変更された場合は、表示・コピーするTerminalコマンドも保存した名前に合わせます。
+ファイルはXPI同梱の内容で、保存しただけでは設置や削除を行いません。
+追加するdownloads権限は任意で、ボタンを押した時だけ要求します。自分の保存処理のIDだけを照会し、他の保存履歴は検索しません。
+補助プログラムの更新は、この保存UI修正のためには不要です。
+
 ## セットアップ・アンインストールと右端のヘルプ（0.9.1）
 
 タブは「検査｜検査結果｜設定｜セットアップ｜アンインストール｜ヘルプ」の順です。
@@ -134,14 +145,14 @@ Python 3と更新済みClamAVはOS側に必要で、Snap/Flatpakとの連携は�
 導入用ファイルはネットワークからコードを取得せず、同梱内容だけを設置します。
 
 1. XPIを旧版削除なしで上書きインストールし、「セットアップ」タブを開きます。
-2. 「導入用ファイルを保存」で`clam-mail-check-installer-0.9.1.pyz`を保存します。
+2. 「導入用ファイルを保存」で`clam-mail-check-installer-0.9.2.pyz`を保存します。
 3. 保存先のフォルダーをTerminalで開き、アドオンに表示されたコマンドを実行します。
    保存時の名前が変わった場合はコマンドのファイル名も合わせてください。
 4. Terminalに表示される変更先と影響を確認して承認します。root/sudoは不要で、実行を拒否します。
 5. アドオンに戻って「導入を確認」を押します。設置が有効で管理機能に対応した場合は版と状態が表示されます。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.9.1.pyz install
+python3 -I ./clam-mail-check-installer-0.9.2.pyz install
 ```
 
 導入済みなら同じコマンドで更新・修復します。既存の旧GUI方式の設置記録（format 1）も引き継ぎます。
@@ -166,7 +177,7 @@ python3 -I ./clam-mail-check-installer-0.9.1.pyz install
 5. 再びXPIをインストールし、上記の`install`コマンドと「導入を確認」で初回導入を試せます。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.9.1.pyz uninstall
+python3 -I ./clam-mail-check-installer-0.9.2.pyz uninstall
 ```
 
 対応済みならアドオン内の「アンインストール」で補助プログラムを削除し、続いてThunderbirdの確認で拡張自身を削除します。
@@ -181,7 +192,7 @@ python3 -I ./clam-mail-check-installer-0.9.1.pyz uninstall
 状態だけの確認（読み取りのみ）と、隔離した設置先での自動テストは次のとおりです。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.9.1.pyz status
+python3 -I ./clam-mail-check-installer-0.9.2.pyz status
 python3 -B -m unittest discover -s tests -p 'test_cli_setup.py'
 ```
 
@@ -257,7 +268,7 @@ python3 scripts/register_mail_host.py --install
 ユーザーのホーム配下に、次の2ファイルを新規作成します。
 
 ```text
-$HOME/.local/lib/clam-mail-check/0.9.1/host.py
+$HOME/.local/lib/clam-mail-check/0.9.2/host.py
 $HOME/.mozilla/native-messaging-hosts/local.clam_mail_check.json
 ```
 

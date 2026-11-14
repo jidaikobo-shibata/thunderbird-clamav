@@ -107,7 +107,7 @@
       <h3 id="installation-title">補助プログラムの導入・更新</h3>
       <p id="installation-status" role="status">導入状態を確認しています。</p>
       <p>Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。初回登録と接続不能時の修復は、同梱ファイルを保存してTerminalで実行します。GUIアプリやsudoは不要です。</p>
-      <a id="installer-download" download>導入用ファイルを保存</a>
+      <button type="button" id="installer-download">導入用ファイルを保存</button>
       <p>表示される名前でファイルを保存し、その保存先のフォルダーをTerminalで開いて次のコマンドを実行してください。名前が変わった場合はコマンドも合わせてください。導入済みなら更新・修復します。</p>
       <pre><code id="installer-command"></code></pre><button type="button" id="copy-install">導入コマンドをコピー</button>
       <div class="actions"><button type="button" id="helper-check">導入を確認</button><button type="button" id="helper-update" disabled>同梱版へ更新・修復</button></div>
@@ -125,7 +125,7 @@
     <div id="uninstall-steps" hidden>
       <h3>補助プログラムの削除</h3>
       <p id="uninstall-status" role="status"></p>
-      <a id="uninstall-download" download>再導入・削除用ファイルを保存</a>
+      <button type="button" id="uninstall-download">再導入・削除用ファイルを保存</button>
       <button type="button" id="helper-uninstall" class="danger" disabled>補助プログラムを削除して次へ</button>
       <div id="cli-uninstall-guide" hidden>
         <p>この環境では、先にTerminalで補助プログラムを削除します。上のファイルを保存し、その保存先のフォルダーをTerminalで開いて次のコマンドを実行してください。名前が変わった場合はコマンドも合わせてください。</p>

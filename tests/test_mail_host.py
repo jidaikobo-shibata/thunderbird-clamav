@@ -257,6 +257,8 @@ class PackagingTests(unittest.TestCase):
                 extension = json.loads(archive.read("manifest.json"))
                 self.assertNotIn("messagesDelete", extension["permissions"])
                 self.assertIn("messagesDelete", extension["optional_permissions"])
+                self.assertNotIn("downloads", extension["permissions"])
+                self.assertIn("downloads", extension["optional_permissions"])
                 self.assertNotIn("messagesMove", extension["permissions"])
             self.assertTrue(Path(json.loads(manifest.read_text())["path"]).is_file())
             home = Path(temp) / "home"

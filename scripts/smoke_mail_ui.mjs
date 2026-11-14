@@ -17,7 +17,7 @@ const server = createServer(async (request, response) => {
   }
   const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript", ".svg": "image/svg+xml", ".pyz": "application/octet-stream" };
   response.setHeader("Content-Type", types[path.extname(name)]);
-  response.end(await readFile(name === "installer.pyz" ? path.join(root, "dist", "clam-mail-check-installer-0.9.1.pyz") : path.join(root, "thunderbird", name)));
+  response.end(await readFile(name === "installer.pyz" ? path.join(root, "dist", "clam-mail-check-installer-0.9.2.pyz") : path.join(root, "thunderbird", name)));
 });
 await new Promise((resolve, reject) => {
   server.once("error", reject);
@@ -72,6 +72,9 @@ try {
     window.permissionGranted = true;
     window.failSettings = false;
     window.cancelUninstall = true;
+    window.failSave = false;
+    window.customSaveName = null;
+    const downloadItems = new Map(), downloadListeners = new Set();
     window.confirm = () => confirmResult;
     const makeRecord = (key, status, accountId = "test") => ({ key, status, sha256: "test",
       updatedAt: new Date(Date.UTC(2026, 10, 14, 9) - Number(key.replace(/[^0-9]/g, '') || 0) * 1000).toISOString(),
@@ -80,7 +83,7 @@ try {
       locator: { accountId, author: key === "r0" ? '<img src=x onerror="window.bad=true">' : "送信者",
         subject: key === "r0" ? "テスト添付メール" : "メール " + key, folder: { path: "/Inbox" } } });
     window.testState = { ok: true, issue: "", batch: null, folderJob: null, folderRequest: null,
-      installation: { state: sessionStorage.getItem("fixture-installation") || "managed", version: "0.9.1", healthy: true, detail: "導入済み" },
+      installation: { state: sessionStorage.getItem("fixture-installation") || "managed", version: "0.9.2", healthy: true, detail: "導入済み" },
       settings: { enabled: false, accountIds: [], notifications: true },
       accounts: [{ id: "test", name: "テストアカウント", type: "imap" }, { id: "other", name: "別アカウント", type: "imap" }],
       records: [makeRecord("r0", "detected"), makeRecord("r1", "detected", "other"),
@@ -91,16 +94,16 @@ try {
       return { key, author: record.locator.author, subject: record.locator.subject,
         folder: "/Inbox", accountId: record.locator.accountId, status: record.status, signatures: record.signatures }; };
     let batchKeys = [];
-    window.messenger = { runtime: { getManifest: () => ({ version: "0.9.1" }), getURL: name => "/" + name, sendMessage: async request => {
+    window.messenger = { runtime: { getManifest: () => ({ version: "0.9.2" }), getURL: name => "/" + name, sendMessage: async request => {
       testCalls.push(request);
       if (request.type === "state") return structuredClone(testState);
       if (request.type === "helperInfo") return { ok: true, installation: testState.installation };
       if (request.type === "helperPlan") { testState.maintenance = true; testState.maintenanceOperation = request.operation; return { ok: true,
-        plan: { token: "maintenance-token", operation: request.operation, version: "0.9.1", paths: ["/synthetic/home/.local/lib/clam-mail-check"] } }; }
+        plan: { token: "maintenance-token", operation: request.operation, version: "0.9.2", paths: ["/synthetic/home/.local/lib/clam-mail-check"] } }; }
       if (request.type === "helperCancel") testState.maintenance = false;
       if (request.type === "helperApply") { testState.maintenance = false;
         testState.helperRemoved = testState.maintenanceOperation === "uninstall";
-        testState.installation = { state: testState.helperRemoved ? "removed" : "managed", version: "0.9.1", healthy: true,
+        testState.installation = { state: testState.helperRemoved ? "removed" : "managed", version: "0.9.2", healthy: true,
           detail: testState.helperRemoved ? "補助プログラムを削除しました。" : "補助プログラムを更新しました。", retained: [] };
         return { ok: true, installation: testState.installation }; }
       if (request.type === "helperMarkRemoved") { testState.helperRemoved = true; testState.installation = { state: "removed" }; }
@@ -151,7 +154,21 @@ try {
     } }, management: { uninstallSelf: async options => {
       testCalls.push({ type: "uninstallSelf", ...options });
       if (cancelUninstall) throw new Error("synthetic cancel");
-    } }, permissions: { request: async value => { testCalls.push({ type: "permission", ...value }); return permissionGranted; } } };
+    } }, downloads: {
+      onChanged: { addListener: listener => downloadListeners.add(listener), removeListener: listener => downloadListeners.delete(listener) },
+      search: async query => downloadItems.has(query.id) ? [downloadItems.get(query.id)] : [],
+      cancel: async id => { downloadItems.get(id).state = "interrupted"; },
+      download: async options => {
+        testCalls.push({ type: "saveDownload", ...options });
+        if (failSave) throw new Error("synthetic save dialog canceled");
+        const name = customSaveName || options.filename;
+        const anchor = document.createElement("a"); anchor.href = options.url; anchor.download = name;
+        document.body.append(anchor); anchor.click(); anchor.remove();
+        const id = downloadItems.size + 1;
+        downloadItems.set(id, { id, state: "complete", filename: "/synthetic/downloads/" + name });
+        return id;
+      }
+    }, permissions: { request: async value => { testCalls.push({ type: "permission", ...value }); return permissionGranted; } } };
   ` });
   const until = expression => evaluate(`new Promise((resolve, reject) => {
     const timer = setInterval(() => { if (${expression}) { clearInterval(timer); clearTimeout(deadline); resolve(true); } }, 20);
@@ -357,19 +374,28 @@ try {
   await call("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   assert.equal(await evaluate("document.documentElement.scrollWidth <= window.innerWidth"), true);
   await evaluate("document.getElementById('tab-setup').click()");
-  assert.match(await evaluate("document.getElementById('installer-command').textContent"), /python3 -I.*0.9.1.*install/);
-  assert.equal(await evaluate("document.getElementById('installer-download').download"), "clam-mail-check-installer-0.9.1.pyz");
+  assert.match(await evaluate("document.getElementById('installer-command').textContent"), /python3 -I.*0.9.2.*install/);
+  assert.equal(await evaluate("document.getElementById('installer-download').tagName"), "BUTTON");
   const downloads = path.join(profile, "downloads");
   await mkdir(downloads, { recursive: true });
   await cdp("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: downloads });
-  await evaluate("document.getElementById('installer-download').click()");
+  await evaluate("permissionGranted = false; document.getElementById('installer-download').click()");
+  await until("document.getElementById('installation-report').textContent.includes('許可されなかった') && !document.getElementById('installer-download').disabled");
+  assert.equal(await evaluate("testCalls.some(call => call.type === 'saveDownload')"), false);
+  await evaluate("permissionGranted = true; failSave = true; document.getElementById('installer-download').click()");
+  await until("document.getElementById('installation-report').textContent.includes('保存できません') && !document.getElementById('installer-download').disabled");
+  await evaluate("failSave = false; document.getElementById('installer-download').click()");
+  await until("document.getElementById('installation-report').textContent.includes('保存しました') && !document.getElementById('installer-download').disabled");
+  assert.equal(await evaluate("testCalls.filter(call => call.type === 'permission').some(call => call.permissions.includes('downloads'))"), true);
+  assert.equal(await evaluate("testCalls.find(call => call.type === 'saveDownload').saveAs"), true);
+
   let downloaded;
   for (let attempt = 0; attempt < 100; attempt++) {
-    downloaded = await readFile(path.join(downloads, "clam-mail-check-installer-0.9.1.pyz")).catch(() => null);
+    downloaded = await readFile(path.join(downloads, "clam-mail-check-installer-0.9.2.pyz")).catch(() => null);
     if (downloaded) break;
     await new Promise(resolve => setTimeout(resolve, 25));
   }
-  assert.deepEqual(downloaded, await readFile(path.join(root, "dist/clam-mail-check-installer-0.9.1.pyz")));
+  assert.deepEqual(downloaded, await readFile(path.join(root, "dist/clam-mail-check-installer-0.9.2.pyz")));
   await evaluate("document.getElementById('installation-title').scrollIntoView()");
   const installationImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
   await writeFile(path.join(root, "dist/ui-installation.png"), Buffer.from(installationImage.data, "base64"));
@@ -389,6 +415,11 @@ try {
   assert.equal(await evaluate("document.getElementById('uninstall-steps').hidden"), true);
   await evaluate("document.getElementById('uninstall-start').click()");
   await until("!document.getElementById('uninstall-steps').hidden && !document.getElementById('helper-uninstall').disabled");
+  await evaluate("customSaveName = 'saved installer.pyz'; document.getElementById('uninstall-download').click()");
+  await until("document.getElementById('uninstall-report').textContent.includes('保存しました') && !document.getElementById('uninstall-download').disabled");
+  assert.match(await evaluate("document.getElementById('uninstall-report').textContent"), /synthetic.*saved installer.pyz/);
+  assert.equal(await evaluate("document.getElementById('uninstaller-command').textContent"), "python3 -I './saved installer.pyz' uninstall");
+
   await evaluate("document.getElementById('helper-uninstall').click()");
   await until("document.getElementById('helper-dialog').open");
   assert.equal(await evaluate("document.activeElement.id"), "helper-cancel");

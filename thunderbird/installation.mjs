@@ -4,14 +4,68 @@ export function installationUI({ request, action, latest, busy }) {
   const $ = id => document.getElementById(id);
   const version = messenger.runtime.getManifest().version;
   const filename = `clam-mail-check-installer-${version}.pyz`;
-  const command = operation => `python3 -I ./${filename} ${operation}`;
-  let uninstallStarted = false;
-  for (const id of ["installer-download", "uninstall-download"]) {
-    $(id).href = messenger.runtime.getURL("installer.pyz");
-    $(id).download = filename;
+  let savedName = filename, saving = false, uninstallStarted = false;
+  const quote = value => /^[a-zA-Z0-9._/-]+$/.test(value) ? value : "'" + value.replaceAll("'", "'\"'\"'") + "'";
+  const command = operation => `python3 -I ${quote("./" + savedName)} ${operation}`;
+  function updateCommands() {
+    $("installer-command").textContent = command("install");
+    $("uninstaller-command").textContent = command("uninstall");
   }
-  $("installer-command").textContent = command("install");
-  $("uninstaller-command").textContent = command("uninstall");
+  updateCommands();
+  function completedDownload(id) {
+    return new Promise((resolve, reject) => {
+      let finished = false;
+      const cleanup = () => { finished = true; clearTimeout(timer); messenger.downloads.onChanged.removeListener(changed); };
+      const check = async () => {
+        try {
+          const item = (await messenger.downloads.search({ id }))[0];
+          if (finished) return;
+          if (!item || item.state === "interrupted") {
+            cleanup(); reject(new Error("保存が中止されたか、完了できませんでした。"));
+          } else if (item.state === "complete") { cleanup(); resolve(item); }
+        } catch (error) { if (!finished) { cleanup(); reject(error); } }
+      };
+      const changed = delta => { if (delta.id === id) void check(); };
+      const timer = setTimeout(() => {
+        cleanup();
+        void messenger.downloads.cancel(id).catch(() => {});
+        reject(new Error("保存の完了を確認できませんでした。もう一度お試しください。"));
+      }, 120000);
+      messenger.downloads.onChanged.addListener(changed);
+      void check();
+    });
+  }
+  async function saveInstaller(reportId) {
+    if (saving || busy()) return;
+    const report = $(reportId);
+    saving = true; render();
+    let url;
+    try {
+      // Request immediately from the user's click; never during page load.
+      const granted = await messenger.permissions.request({ permissions: ["downloads"] });
+      if (!granted) {
+        report.textContent = "ファイル保存が許可されなかったため、保存していません。保存ボタンから再度許可できます。";
+        return;
+      }
+      report.textContent = "保存先を選択してください。ファイルの保存だけで設置や削除は行いません。";
+      const response = await fetch(messenger.runtime.getURL("installer.pyz"));
+      if (!response.ok) throw new Error("同梱の導入用ファイルを読み取れません。");
+      url = URL.createObjectURL(new Blob([await response.arrayBuffer()], { type: "application/octet-stream" }));
+      const id = await messenger.downloads.download({ url, filename, saveAs: true, conflictAction: "uniquify" });
+      report.textContent = "ファイルを保存しています。";
+      const item = await completedDownload(id);
+      savedName = item.filename.split("/").at(-1);
+      updateCommands();
+      report.textContent = `保存しました：${item.filename}。この保存先のフォルダーをTerminalで開いて、表示されたコマンドを実行してください。`;
+    } catch (error) {
+      report.textContent = "保存できませんでした。保存画面を中止した場合は変更ありません。再試行できます。 " + error.message;
+    } finally {
+      if (url) URL.revokeObjectURL(url);
+      saving = false; render();
+    }
+  }
+  $("installer-download").addEventListener("click", () => { void saveInstaller("installation-report"); });
+  $("uninstall-download").addEventListener("click", () => { void saveInstaller("uninstall-report"); });
   for (const [id, operation] of [["copy-install", "install"], ["copy-uninstall", "uninstall"]]) {
     $(id).addEventListener("click", () => {
       const report = $(operation === "uninstall" ? "uninstall-report" : "installation-report");
@@ -21,7 +75,8 @@ export function installationUI({ request, action, latest, busy }) {
     });
   }
   function render() {
-    const state = latest(), info = state?.installation, locked = busy() || state?.maintenance;
+    const state = latest(), info = state?.installation, locked = busy() || state?.maintenance || saving;
+    for (const id of ["installer-download", "uninstall-download"]) $(id).disabled = Boolean(locked);
     const working = state?.batch?.active || state?.folderJob && ["collecting", "running", "stopping"].includes(state.folderJob.status) || state?.records.some(record => record.status === "scanning");
     $("installation-status").textContent = !info ? "まだ確認していません。「導入を確認」を押してください。" :
       info.state === "managed" ? `導入済み：${info.version} ／ ${info.healthy ? "設置ファイルは一致しています" : "修復が必要です"}` :
