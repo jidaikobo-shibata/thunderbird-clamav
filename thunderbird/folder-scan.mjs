@@ -1,4 +1,4 @@
-import { messagePages } from "./core.mjs";
+import { messagePages, locator, sha256 } from "./core.mjs";
 
 export const FOLDER_STATES = Object.freeze({
   collecting: "対象メールを確認中", running: "検査中", stopping: "中止しています",
@@ -18,25 +18,57 @@ function targetOf(message) {
     headersOnly: message.headersOnly, size: message.size, external: message.external };
 }
 
+export function checkpointHint(saved) {
+  return sha256(new TextEncoder().encode(JSON.stringify([
+    saved.accountId, saved.folder?.path, saved.headerMessageId || "",
+    saved.author || "", saved.subject || "", saved.date || ""
+  ])));
+}
+const CHECKPOINT_VERSION = 1;
+const RESUMABLE = ["stopped", "interrupted", "blocked", "error"];
+
 /** Runtime targets are never persisted: Thunderbird IDs are session-scoped. */
 export class FolderScan {
   constructor(api, { changed = async () => {}, wake = () => {}, finished = async () => {},
+    digestOf = async () => null,
     pause = () => new Promise(resolve => setTimeout(resolve, 0)), maxTargets = 100000 } = {}) {
-    Object.assign(this, { api, changed, wake, finished, pause, maxTargets });
+    Object.assign(this, { api, changed, wake, finished, pause, maxTargets, digestOf });
     this.job = null;
     this.targets = [];
     this.cursor = 0;
+    this.checkpoints = new Map();
   }
-  get active() { return ACTIVE.includes(this.job?.status); }
+  get resumable() { return Boolean(this.job && RESUMABLE.includes(this.job.status)); }
+  checkpointState() {
+    return this.job ? { version: CHECKPOINT_VERSION, id: this.job.id,
+      entries: [...this.checkpoints].map(([key, count]) => [key, count]) } : null;
+  }
+  remember(hint, digest, count = 1) {
+    if (!/^[a-f0-9]{64}$/.test(hint) || !/^[a-f0-9]{64}$/.test(digest)) return;
+    const key = hint + ":" + digest;
+    if (!this.checkpoints.has(key) && this.checkpoints.size >= this.maxTargets) return;
+    this.checkpoints.set(key, Math.min(this.maxTargets, (this.checkpoints.get(key) || 0) + count));
+  }
+  get active() { return Boolean(this.removing) || ACTIVE.includes(this.job?.status); }
   snapshot() { return this.job ? structuredClone(this.job) : null; }
-  restore(saved) {
+  restore(saved, checkpoint) {
+    this.checkpoints.clear();
+    if (checkpoint?.version === CHECKPOINT_VERSION && checkpoint.id === saved?.id &&
+        Array.isArray(checkpoint.entries) && checkpoint.entries.length <= this.maxTargets) {
+      for (const entry of checkpoint.entries) {
+        if (Array.isArray(entry) && typeof entry[0] === "string" && /^[a-f0-9]{64}:[a-f0-9]{64}$/.test(entry[0]) &&
+            Number.isSafeInteger(entry[1]) && entry[1] > 0 && entry[1] <= this.maxTargets) {
+          this.checkpoints.set(entry[0], entry[1]);
+        }
+      }
+    }
     this.targets = [];
     this.cursor = 0;
     this.job = saved || null;
     if (this.active) {
       this.job.status = "interrupted";
       this.job.scanning = 0;
-      this.job.detail = "Thunderbirdの終了または拡張の更新で中断しました。再検査する場合は改めて開始してください。";
+      this.job.detail = "Thunderbirdの終了または拡張の更新で中断しました。「再開」すると処理済みメールを照合して続行できます。";
       this.job.finishedAt = new Date().toISOString();
     }
   }
@@ -47,6 +79,7 @@ export class FolderScan {
     }
     this.targets = [];
     this.cursor = 0;
+    this.checkpoints.clear();
     this.job = { id: crypto.randomUUID(), folder: { id: folder.id, accountId: folder.accountId,
       path: folder.path, name: folder.name || folder.path }, includeSubfolders,
       status: "collecting", startedAt: new Date().toISOString(), finishedAt: null,
@@ -59,11 +92,43 @@ export class FolderScan {
       this.job.finishedAt = new Date().toISOString();
       throw error;
     }
-    const job = this.job;
-    this.collecting = this.collect(folder).catch(error => this.job === job ? this.finish("error", error.message || "対象一覧の取得に失敗しました。") : undefined);
+    this.launch(folder);
     return this.snapshot();
   }
-  async collect(root) {
+  launch(folder, resume = false) {
+    const job = this.job;
+    this.collecting = this.collect(folder, resume).catch(error => this.job === job ? this.finish("error", error.message || "対象一覧の取得に失敗しました。") : undefined);
+  }
+  async resume(folder) {
+    if (!this.resumable || this.active) throw new Error("このフォルダー検査は再開できません。");
+    if (!realFolder(folder) || keyOf(folder) !== keyOf(this.job.folder)) throw new Error("元のフォルダーが見つからないか、場所が変わりました。");
+    const previous = this.snapshot();
+    this.targets = [];
+    this.cursor = 0;
+    Object.assign(this.job, { status: "collecting", scanning: 0, total: null, discovered: 0,
+      ignored: 0, skippedFolders: 0, resumedMatched: 0, finishedAt: null,
+      resumeCount: (this.job.resumeCount || 0) + 1,
+      detail: "処理済みメールと照合しています。新着・変更されたメールも確認します。" });
+    try { await this.changed(); }
+    catch (error) { this.job = previous; throw error; }
+    this.launch(folder, true);
+    return this.snapshot();
+  }
+  async remove() {
+    if (this.active) throw new Error("実行中の検査は削除できません。先に中止してください。");
+    const previous = this.job, checkpoints = this.checkpoints;
+    this.removing = true;
+    this.job = null;
+    this.checkpoints = new Map();
+    this.targets = [];
+    this.cursor = 0;
+    try { await this.changed(); }
+    catch (error) { this.job = previous; this.checkpoints = checkpoints; throw error; }
+    finally { this.removing = false; }
+  }
+  async collect(root, resume = false) {
+    const remaining = resume ? new Map(this.checkpoints) : new Map();
+    const hints = new Set([...remaining.keys()].map(key => key.slice(0, 64)));
     const folders = [root], seenFolders = new Set(), seenMessages = new Set();
     while (folders.length) {
       if (this.job.status === "stopping") return this.finish("stopped", "対象一覧の取得中に中止しました。");
@@ -78,23 +143,39 @@ export class FolderScan {
         if (message.external || !message.folder || keyOf(message.folder) !== identity || seenMessages.has(message.id)) {
           this.job.ignored++; continue;
         }
-        if (this.targets.length >= this.maxTargets) {
+        if (seenMessages.size >= this.maxTargets) {
           return this.finish("blocked", "対象メール数の上限に達しました。フォルダーを分けて検査してください。");
         }
         seenMessages.add(message.id);
-        this.targets.push(targetOf(message));
-        this.job.discovered = this.targets.length;
-        if (this.targets.length % 100 === 0) { await this.changed(); await this.pause(); }
+        this.job.discovered++;
+        let matched = false;
+        if (resume && hints.size) {
+          const hint = await checkpointHint(locator(message));
+          if (hints.has(hint)) {
+            try {
+              const digest = await this.digestOf(message);
+              const key = hint + ":" + digest, count = remaining.get(key) || 0;
+              if (count > 0) {
+                remaining.set(key, count - 1);
+                this.job.resumedMatched++;
+                matched = true;
+              }
+            } catch { /* Unverifiable mail must be scanned, never silently skipped. */ }
+          }
+        }
+        if (!matched) this.targets.push(targetOf(message));
+        if (this.job.discovered % 100 === 0) { await this.changed(); await this.pause(); }
       }
       if (this.job.includeSubfolders && this.job.status !== "stopping") {
         folders.push(...await this.api.folders.getSubFolders(ref(folder), false));
       }
     }
     if (this.job.status === "stopping") return this.finish("stopped", "対象一覧の取得中に中止しました。");
-    this.job.total = this.targets.length;
-    if (!this.targets.length) return this.finish("completed", "対象メールはありませんでした。");
+    this.job.total = this.job.completed + this.targets.length;
+    if (!this.targets.length) return this.finish("completed", "未処理の対象メールはありませんでした。");
     this.job.status = "running";
-    this.job.detail = "新着・手動検査を優先しながら1通ずつ検査します。";
+    this.job.detail = (resume ? `前回の処理済み${this.job.resumedMatched}件を照合しました。` : "") +
+      "新着・手動検査を優先しながら1通ずつ検査します。";
     await this.changed();
     this.wake();
   }
@@ -106,8 +187,9 @@ export class FolderScan {
     this.targets[this.cursor++] = null;
     return target;
   }
-  async complete(status) {
+  async complete(status, checkpoint) {
     if (!this.job?.scanning || !Object.hasOwn(this.job.counts, status)) throw new Error("フォルダー検査の結果状態が不正です。");
+    if (checkpoint) this.remember(checkpoint.hint, checkpoint.digest);
     this.job.scanning = 0;
     this.job.completed++;
     this.job.counts[status]++;

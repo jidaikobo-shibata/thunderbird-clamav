@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { FolderScan } from "../thunderbird/folder-scan.mjs";
+import { locator } from "../thunderbird/core.mjs";
+import { FolderScan, checkpointHint } from "../thunderbird/folder-scan.mjs";
 
 const root = { id: "root", accountId: "one", path: "/Inbox", name: "受信トレイ" };
 const child = { id: "child", accountId: "one", path: "/Inbox/Child", name: "子" };
@@ -132,4 +133,88 @@ test("a completed run notification keeps its own summary when a new run starts d
   assert.equal(notifications[0].id, oldId);
   assert.equal(notifications[0].status, "completed");
   assert.equal(notifications[0].completed, 2);
+});
+
+
+test("resume restores hashed checkpoints across changed runtime IDs and includes fresh/changed mail", async () => {
+  const { scan, api } = fixture();
+  const original = [mail(1), mail(2)];
+  let listed = original;
+  api.messages.list = async () => ({ messages: listed });
+  const digest = "a".repeat(64);
+  await scan.start(root, false); await scan.collecting;
+  scan.take(); await scan.stop();
+  await scan.complete("clean", { hint: await checkpointHint(locator(original[0])), digest });
+  const saved = scan.snapshot(), checkpoint = scan.checkpointState();
+  const next = new FolderScan(api, { digestOf: async () => digest });
+  next.restore(saved, checkpoint);
+  listed = [{ ...original[0], id: 101 }, { ...original[1], id: 102 }, mail(103)];
+  await next.resume(root); await next.collecting;
+  assert.equal(next.job.id, saved.id);
+  assert.equal(next.job.completed, 1);
+  assert.equal(next.job.resumedMatched, 1);
+  assert.equal(next.job.total, 3);
+  assert.equal(next.take().id, 102);
+  await next.stop(); await next.complete("clean");
+  next.digestOf = async () => "b".repeat(64);
+  await next.resume(root); await next.collecting;
+  assert.equal(next.job.resumedMatched, 0);
+  assert.equal(next.take().id, 101); // Same headers, changed body: must inspect again.
+  assert.equal(JSON.stringify(checkpoint).includes("sender"), false);
+  assert.equal(JSON.stringify(checkpoint).includes("mail"), false);
+});
+
+test("resume treats identical copies as a multiset and never skips failed identity reads", async () => {
+  const { scan, api } = fixture();
+  const original = mail(1), duplicate = { ...original, id: 2 };
+  api.messages.list = async () => ({ messages: [original, duplicate] });
+  await scan.start(root, false); await scan.collecting;
+  scan.take(); await scan.stop();
+  await scan.complete("detected", { hint: await checkpointHint(locator(original)), digest: "a".repeat(64) });
+  scan.digestOf = async () => "a".repeat(64);
+  await scan.resume(root); await scan.collecting;
+  assert.equal(scan.job.resumedMatched, 1);
+  assert.equal(scan.targets.length, 1);
+  await scan.stop();
+  scan.digestOf = async () => { throw new Error("offline"); };
+  await scan.resume(root); await scan.collecting;
+  assert.equal(scan.job.resumedMatched, 0);
+  assert.equal(scan.targets.length, 2);
+  await assert.rejects(scan.resume(root), /再開できません/);
+  await assert.rejects(scan.remove(), /実行中/);
+});
+
+test("removing a stopped summary clears resume data and handles persistence failure", async () => {
+  const { scan } = fixture();
+  await scan.start(root, false); await scan.collecting;
+  await scan.stop();
+  scan.remember("a".repeat(64), "b".repeat(64));
+  const saved = scan.snapshot();
+  scan.changed = async () => { throw new Error("quota"); };
+  await assert.rejects(scan.resume(root), /quota/);
+  assert.deepEqual(scan.snapshot(), saved);
+  await assert.rejects(scan.remove(), /quota/);
+  assert.deepEqual(scan.snapshot(), saved);
+  assert.equal(scan.checkpointState().entries.length, 1);
+  scan.changed = async () => {};
+  await scan.remove();
+  assert.equal(scan.snapshot(), null);
+  assert.equal(scan.checkpointState(), null);
+  assert.equal(scan.targets.length, 0);
+  await assert.rejects(scan.resume(root), /再開できません/);
+});
+
+test("resume re-enumeration can be cancelled and rejects a moved root", async () => {
+  const { scan, api } = fixture();
+  await scan.start(root, false); await scan.collecting;
+  await scan.stop();
+  await assert.rejects(scan.resume({ ...root, path: "/Moved" }), /元のフォルダー/);
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  api.messages.list = async () => { await gate; return { messages: [mail(5)], id: "resume-page" }; };
+  await scan.resume(root);
+  await scan.stop();
+  assert.equal(scan.job.status, "stopping");
+  release(); await scan.collecting;
+  assert.equal(scan.job.status, "stopped");
 });

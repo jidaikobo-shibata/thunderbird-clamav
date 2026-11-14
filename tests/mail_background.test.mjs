@@ -536,3 +536,61 @@ test("continuous scans share one native host and release it when drained", async
   assert.equal(h.nativePorts.length, 2);
   assert.ok(h.nativePorts[1].disconnected);
 });
+
+
+test("stopped folder resumes after reload using legacy history and never deletes messages when discarded", async () => {
+  let entered, release;
+  const started = new Promise(resolve => { entered = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  const mails = [mail(1), mail(2), mail(3)];
+  const h = await harness({ mails, scanGate: async id => { if (id === 1) { entered(); await gate; } } });
+  const jobId = await startFolder(h);
+  await started;
+  assert.equal((await h.send("folderDelete", { jobId })).ok, false);
+  await h.send("folderStop", { jobId }); release();
+  await settledFolder(h, "stopped");
+  const saved = structuredClone(h.stored());
+  assert.equal(saved.folderCheckpoint.entries.length, 1);
+  delete saved.folderCheckpoint; // Upgrading 0.4/0.5: rebuild from retained results.
+  const next = await harness({ saved, mails: mails.map(message => ({ ...message, id: message.id + 100 })) });
+  assert.equal((await next.send("folderResume", { jobId: "wrong" })).ok, false);
+  assert.equal((await next.send("folderResume", { jobId })).ok, true);
+  const state = await settledFolder(next, "completed");
+  assert.equal(state.folderJob.resumedMatched, 1);
+  assert.equal(state.folderJob.completed, 3);
+  assert.equal(state.folderJob.total, 3);
+  assert.equal(state.records.filter(record => record.folderJobId === jobId).length, 3);
+  assert.deepEqual(next.rawReads, [101, 102, 103]); // First read only verifies already-scanned bytes.
+  assert.equal(next.nativePorts.length, 1);
+  const retained = JSON.parse(JSON.stringify(state.records));
+  assert.equal((await next.send("folderDelete", { jobId: "wrong" })).ok, false);
+  assert.equal((await next.send("folderDelete", { jobId })).ok, true);
+  assert.equal((await next.send("state")).folderJob, null);
+  assert.equal(next.stored().folderCheckpoint, null);
+  assert.deepEqual(next.stored().records, retained);
+  assert.deepEqual(next.deleted, []);
+});
+
+test("persisted checkpoints survive cleared history and a restart during active work", async () => {
+  let entered, release;
+  const started = new Promise(resolve => { entered = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  const mails = [mail(1), mail(2), mail(3)];
+  const h = await harness({ mails, scanGate: async id => { if (id === 2) { entered(); await gate; } } });
+  const jobId = await startFolder(h);
+  await started;
+  const saved = structuredClone(h.stored());
+  assert.equal(saved.folderJob.completed, 1);
+  assert.equal(saved.folderCheckpoint.entries.length, 1);
+  saved.records = []; // Progress must not depend on the bounded result history.
+  await h.send("folderStop", { jobId }); release(); await settledFolder(h, "stopped");
+  const next = await harness({ saved, mails: mails.map(message => ({ ...message, id: message.id + 10 })) });
+  assert.equal((await next.send("state")).folderJob.status, "interrupted");
+  assert.equal(next.nativePorts.length, 0); // No automatic resume.
+  await next.send("folderResume", { jobId });
+  const state = await settledFolder(next, "completed");
+  assert.equal(state.folderJob.resumedMatched, 1);
+  assert.equal(state.folderJob.completed, 3);
+  assert.equal(state.records.length, 2);
+  assert.deepEqual(next.rawReads, [11, 12, 13]);
+});

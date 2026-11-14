@@ -36,6 +36,9 @@ function updateControls() {
   const folderActive = job && ["collecting", "running", "stopping"].includes(job.status);
   $("scan-folder").disabled = locked || Boolean(folderActive);
   $("folder-stop").disabled = locked || !folderActive || job.status === "stopping";
+  $("folder-resume").hidden = !job || !["stopped", "interrupted", "blocked", "error"].includes(job.status);
+  $("folder-resume").disabled = locked || Boolean(folderActive);
+  $("folder-delete").disabled = locked || !job || Boolean(folderActive);
   $("folder-results").disabled = locked || !job;
   $("folder-only").disabled = locked || !job;
   for (const input of $("settings-form").querySelectorAll("input, button")) input.disabled = locked;
@@ -90,7 +93,10 @@ function renderFolder() {
   const job = latest.folderJob;
   $("folder-progress").hidden = !job;
   $("folder-only-label").hidden = !job;
-  if (!job) return;
+  if (!job) {
+    folderFilterId = null; $("folder-only").checked = false;
+    return;
+  }
   if (folderFilterId && folderFilterId !== job.id) {
     folderFilterId = null; $("folder-only").checked = false; selected.clear(); page = 0;
   }
@@ -115,7 +121,7 @@ function renderFolder() {
     folderAnnouncement = milestone;
     setText($("folder-announcement"), `フォルダー検査 ${FOLDER_STATES[job.status]}。処理済み${job.completed}件${job.total === null ? "" : `、対象${job.total}件`}。`);
   }
-  setText($("folder-detail"), job.detail + (job.skippedFolders ? ` 対象外のフォルダー：${job.skippedFolders}件。` : ""));
+  setText($("folder-detail"), job.detail + (job.resumeCount ? " 再開時は現在のフォルダーと照合します。総件数はこれまでの処理済み件数と、今回の未処理件数の合計です。" : "") + (job.skippedFolders ? ` 対象外のフォルダー：${job.skippedFolders}件。` : ""));
   const retained = latest.records.filter(record => record.folderJobId === job.id).length;
   setText($("folder-retained"), `この検査の履歴を${retained}件保持しています。履歴上限は1000件ですが、進捗の処理件数は別に保持します。検出・未検査・失敗の履歴で上限に達した場合は停止します。`);
 }
@@ -154,6 +160,22 @@ $("scan-folder").addEventListener("click", () => {
 $("folder-stop").addEventListener("click", () => {
   const jobId = latest?.folderJob?.id;
   void action(() => request("folderStop", { jobId }), "中止を受け付けました。実行中の処理を終えて停止します。");
+});
+$("folder-resume").addEventListener("click", () => {
+  const jobId = latest?.folderJob?.id;
+  void action(() => request("folderResume", { jobId }), "再開を受け付けました。処理済みメールと照合しています。");
+});
+$("folder-delete").addEventListener("click", () => {
+  if (blocked() || !latest?.folderJob) return;
+  const job = latest.folderJob, dialog = $("folder-delete-dialog");
+  setText($("folder-delete-target"), `${job.folder.path} ／ 処理済み${job.completed}件`);
+  dialog.returnValue = "cancel";
+  dialog.onclose = () => {
+    if (dialog.returnValue !== "delete") return;
+    void action(() => request("folderDelete", { jobId: job.id }), "フォルダー検査の記録を削除しました。メールと検査結果は残っています。");
+  };
+  dialog.showModal();
+  $("folder-delete-cancel").focus();
 });
 $("folder-results").addEventListener("click", () => {
   folderFilterId = latest.folderJob.id; $("folder-only").checked = true;
@@ -326,7 +348,7 @@ async function refresh() {
     setText($("issue"), latest.issue || "");
     renderRecords();
     if (latest.folderRequest && latest.folderRequest.token !== seenFolderRequest && !blocked() &&
-        !$("delete-dialog").open && !$("folder-dialog").open) showFolderDialog(latest.folderRequest);
+        !$("delete-dialog").open && !$("folder-dialog").open && !$("folder-delete-dialog").open) showFolderDialog(latest.folderRequest);
   } finally { refreshing = false; }
 }
 

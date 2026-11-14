@@ -103,6 +103,11 @@ try {
           startedAt: new Date().toISOString(), finishedAt: null, ignored: 0, skippedFolders: 0 };
         return { ok: true, job: testState.folderJob };
       }
+      if (request.type === "folderResume") {
+        testState.folderJob.status = "collecting"; testState.folderJob.total = null;
+        testState.folderJob.finishedAt = null; testState.folderJob.detail = "処理済みメールと照合中";
+      }
+      if (request.type === "folderDelete") testState.folderJob = null;
       if (request.type === "folderStop") { testState.folderJob.status = "stopped"; testState.folderJob.scanning = 0;
         testState.folderJob.finishedAt = new Date().toISOString(); testState.folderJob.detail = "中止しました。"; }
 
@@ -227,9 +232,29 @@ try {
   assert.match(await evaluate("document.getElementById('folder-status').textContent"), /未処理75件/);
   await evaluate("testState.folderJob.status = 'interrupted'; document.getElementById('health').click()");
   await until("document.getElementById('folder-status').textContent.includes('中断')");
+  assert.equal(await evaluate("document.getElementById('folder-resume').hidden"), false);
+  await evaluate("document.getElementById('folder-resume').click()");
+  await until("document.getElementById('folder-status').textContent.includes('対象メールを確認中')");
+  assert.equal(await evaluate("document.getElementById('folder-delete').disabled"), true);
+  assert.equal(await evaluate("testCalls.filter(call => call.type === 'folderResume').length"), 1);
+  await evaluate("testState.folderJob.status = 'stopped'; document.getElementById('health').click()");
+  await until("!document.getElementById('folder-delete').disabled");
+  await evaluate("document.getElementById('folder-delete').click()");
+  await until("document.getElementById('folder-delete-dialog').open");
+  assert.equal(await evaluate("document.activeElement.id"), "folder-delete-cancel");
+  assert.match(await evaluate("document.getElementById('folder-delete-warning').textContent"), /メール本体.*削除しません/);
+  await evaluate("document.getElementById('folder-delete-cancel').click()");
+  await until("!document.getElementById('folder-delete-dialog').open");
+  assert.equal(await evaluate("testCalls.some(call => call.type === 'folderDelete')"), false);
+  await evaluate("document.getElementById('folder-delete').click()");
+  await until("document.getElementById('folder-delete-dialog').open");
+  await evaluate("document.getElementById('folder-delete-confirm').click()");
+  await until("document.getElementById('folder-progress').hidden");
+  assert.equal(await evaluate("document.getElementById('folder-only').checked"), false);
+  assert.equal(await evaluate("document.querySelectorAll('#results tr').length > 0"), true);
   await call("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   assert.equal(await evaluate("document.documentElement.scrollWidth <= window.innerWidth"), true);
-  console.log("UI smoke: passed (tabs, filters, bulk actions, folder start/cancel/subfolders, progress counters, run filter, stop/interruption, desktop/mobile)");
+  console.log("UI smoke: passed (tabs, filters, bulk actions, folder start/cancel/subfolders, progress counters, run filter, stop/interruption/resume/delete, desktop/mobile)");
 } finally {
   for (const waiter of pending.values()) clearTimeout(waiter.timer);
   chrome.kill();

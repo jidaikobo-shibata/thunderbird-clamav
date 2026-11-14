@@ -24,7 +24,7 @@
       <p id="folder-status"></p><p id="folder-announcement" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></p>
       <progress id="folder-bar" max="1" aria-label="フォルダー検査の処理済み件数"></progress>
       <p id="folder-counts"></p><p id="folder-detail"></p>
-      <div class="actions"><button type="button" id="folder-results">この検査の結果を表示</button><button type="button" id="folder-stop">中止</button></div>
+      <div class="actions"><button type="button" id="folder-results">この検査の結果を表示</button><button type="button" id="folder-stop">中止</button><button type="button" id="folder-resume">再開</button><button type="button" id="folder-delete">検査記録を削除</button></div>
       <p id="folder-retained" class="hint"></p>
     </section>
     <div class="filters">
@@ -90,8 +90,16 @@
     <p id="folder-target"></p>
     <label><input type="checkbox" id="folder-subfolders"> サブフォルダーも含める</label>
     <p id="folder-warning">先にThunderbirdの受信・同期を完了してください。対象一覧を取得してから1通ずつ検査します。IMAPでは本文の取得に通信が発生する場合があります。大きなフォルダーは時間がかかります。</p>
-    <p>進捗は検査結果タブに表示します。中止時は実行中の処理を終えて停止します。Thunderbird終了後は自動再開しません。</p>
+    <p>進捗は検査結果タブに表示します。中止時は実行中の処理を終えて停止します。Thunderbird終了後は自動再開しません。「再開」で処理済みメールを照合して続行できます。新しい検査を開始すると、前回の再開情報を置き換えます。</p>
     <div class="actions"><button id="folder-cancel" value="cancel" autofocus>キャンセル</button><button id="folder-confirm" value="start">検査を開始</button></div>
+  </form>
+</dialog>
+<dialog id="folder-delete-dialog" aria-labelledby="folder-delete-title" aria-describedby="folder-delete-warning">
+  <form method="dialog">
+    <h2 id="folder-delete-title">フォルダー検査の記録を削除</h2>
+    <p id="folder-delete-target"></p>
+    <p id="folder-delete-warning">進捗と再開用の記録を削除します。この検査は再開できなくなります。メール本体と各メールの検査結果は削除しません。</p>
+    <div class="actions"><button id="folder-delete-cancel" value="cancel" autofocus>キャンセル</button><button id="folder-delete-confirm" value="delete">検査記録を削除</button></div>
   </form>
 </dialog>
 <dialog id="delete-dialog" aria-labelledby="delete-title" aria-describedby="delete-warning">

@@ -2,7 +2,7 @@ import {
   MAX_BYTES, DEFAULTS, LABELS, NativeClient, accountOf, locator, sameEnvelope,
   validateSettings, messagePages, sha256, needsAttention
 } from "./core.mjs";
-import { FolderScan, FOLDER_STATES, realFolder } from "./folder-scan.mjs";
+import { FolderScan, FOLDER_STATES, realFolder, checkpointHint } from "./folder-scan.mjs";
 
 const api = messenger;
 const session = crypto.randomUUID();
@@ -20,6 +20,10 @@ const batchTickets = new Map();
 let batchProgress = null;
 let folderRequest = null;
 const folderScan = new FolderScan(api, {
+  digestOf: async message => {
+    if (message.headersOnly || message.external) return null;
+    return sha256(await rawBytes(message.id));
+  },
   changed: () => save(), wake: () => { void drain().catch(report); },
   finished: async job => {
     if (!settings.notifications) return;
@@ -144,7 +148,7 @@ function report(error) {
 function save() {
   // Take a snapshot now, then serialize storage writes so an older snapshot
   // cannot overwrite a later scan result.
-  const value = JSON.parse(JSON.stringify({ settings, records, issue, folderJob: folderScan.snapshot() }));
+  const value = JSON.parse(JSON.stringify({ settings, records, issue, folderJob: folderScan.snapshot(), folderCheckpoint: folderScan.checkpointState() }));
   writes = writes.catch(() => {}).then(() => api.storage.local.set(value));
   return writes;
 }
@@ -335,7 +339,9 @@ async function drain() {
           folderScan.job[flag] = true;
           void notify(record);
         }
-        await folderScan.complete(record.status);
+        await folderScan.complete(record.status, record.sha256 ? {
+          hint: await checkpointHint(record.locator), digest: record.sha256
+        } : null);
       }
       await save();
       if (!fromFolder) await notify(record);
@@ -369,11 +375,20 @@ async function scanSelection() {
 }
 
 const ready = (async () => {
-  const data = await api.storage.local.get(["settings", "records", "issue", "folderJob"]);
+  const data = await api.storage.local.get(["settings", "records", "issue", "folderJob", "folderCheckpoint"]);
   settings = { ...DEFAULTS, ...data.settings };
   records = Array.isArray(data.records) ? data.records : [];
   issue = typeof data.issue === "string" ? data.issue : "";
-  folderScan.restore(data.folderJob);
+  folderScan.restore(data.folderJob, data.folderCheckpoint);
+  // Old versions kept only summary/history. Recover verifiable progress from retained results.
+  if (data.folderJob && !data.folderCheckpoint) {
+    for (const record of records) {
+      if (record.folderJobId === data.folderJob.id && record.sha256 &&
+          !["queued", "scanning"].includes(record.status)) {
+        folderScan.remember(await checkpointHint(record.locator), record.sha256);
+      }
+    }
+  }
   for (const record of records) {
     record.messageId = null;
     record.session = null;
@@ -456,6 +471,20 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         void folderScan.collecting.catch(report);
         return { ok: true, job };
       }
+      case "folderResume": {
+        if (request.jobId !== folderScan.job?.id || !folderScan.resumable) throw new Error("この検査は再開できません。画面を更新してください。");
+        const job = folderScan.job, folder = job.folder;
+        const current = folder.id ? await api.folders.get(folder.id, false) : folder;
+        if (folderScan.job !== job || !realFolder(current) || current.accountId !== folder.accountId || current.path !== folder.path) throw new Error("元のフォルダーが見つからないか、場所が変わりました。");
+        await folderScan.resume(current);
+        void folderScan.collecting.catch(report);
+        return { ok: true };
+      }
+      case "folderDelete":
+        if (!folderScan.job || request.jobId !== folderScan.job.id) throw new Error("検査の対象が変わりました。画面を更新してください。");
+        await folderScan.remove();
+        folderRequest = null;
+        return { ok: true };
       case "folderStop":
         if (request.jobId !== folderScan.job?.id) throw new Error("検査の対象が変わりました。画面を更新してください。");
         await folderScan.stop();
