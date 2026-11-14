@@ -17,7 +17,7 @@ const server = createServer(async (request, response) => {
   }
   const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript", ".svg": "image/svg+xml", ".pyz": "application/octet-stream" };
   response.setHeader("Content-Type", types[path.extname(name)]);
-  response.end(await readFile(name === "installer.pyz" ? path.join(root, "dist", "clam-mail-check-installer-0.9.0.pyz") : path.join(root, "thunderbird", name)));
+  response.end(await readFile(name === "installer.pyz" ? path.join(root, "dist", "clam-mail-check-installer-0.9.1.pyz") : path.join(root, "thunderbird", name)));
 });
 await new Promise((resolve, reject) => {
   server.once("error", reject);
@@ -80,7 +80,7 @@ try {
       locator: { accountId, author: key === "r0" ? '<img src=x onerror="window.bad=true">' : "送信者",
         subject: key === "r0" ? "テスト添付メール" : "メール " + key, folder: { path: "/Inbox" } } });
     window.testState = { ok: true, issue: "", batch: null, folderJob: null, folderRequest: null,
-      installation: { state: "managed", version: "0.9.0", healthy: true, detail: "導入済み" },
+      installation: { state: sessionStorage.getItem("fixture-installation") || "managed", version: "0.9.1", healthy: true, detail: "導入済み" },
       settings: { enabled: false, accountIds: [], notifications: true },
       accounts: [{ id: "test", name: "テストアカウント", type: "imap" }, { id: "other", name: "別アカウント", type: "imap" }],
       records: [makeRecord("r0", "detected"), makeRecord("r1", "detected", "other"),
@@ -91,16 +91,16 @@ try {
       return { key, author: record.locator.author, subject: record.locator.subject,
         folder: "/Inbox", accountId: record.locator.accountId, status: record.status, signatures: record.signatures }; };
     let batchKeys = [];
-    window.messenger = { runtime: { getManifest: () => ({ version: "0.9.0" }), getURL: name => "/" + name, sendMessage: async request => {
+    window.messenger = { runtime: { getManifest: () => ({ version: "0.9.1" }), getURL: name => "/" + name, sendMessage: async request => {
       testCalls.push(request);
       if (request.type === "state") return structuredClone(testState);
       if (request.type === "helperInfo") return { ok: true, installation: testState.installation };
       if (request.type === "helperPlan") { testState.maintenance = true; testState.maintenanceOperation = request.operation; return { ok: true,
-        plan: { token: "maintenance-token", operation: request.operation, version: "0.9.0", paths: ["/synthetic/home/.local/lib/clam-mail-check"] } }; }
+        plan: { token: "maintenance-token", operation: request.operation, version: "0.9.1", paths: ["/synthetic/home/.local/lib/clam-mail-check"] } }; }
       if (request.type === "helperCancel") testState.maintenance = false;
       if (request.type === "helperApply") { testState.maintenance = false;
         testState.helperRemoved = testState.maintenanceOperation === "uninstall";
-        testState.installation = { state: testState.helperRemoved ? "removed" : "managed", version: "0.9.0", healthy: true,
+        testState.installation = { state: testState.helperRemoved ? "removed" : "managed", version: "0.9.1", healthy: true,
           detail: testState.helperRemoved ? "補助プログラムを削除しました。" : "補助プログラムを更新しました。", retained: [] };
         return { ok: true, installation: testState.installation }; }
       if (request.type === "helperMarkRemoved") { testState.helperRemoved = true; testState.installation = { state: "removed" }; }
@@ -162,11 +162,21 @@ try {
   await call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
   await call("Page.navigate", { url: `http://127.0.0.1:${server.address().port}/dashboard.html` });
   await until("document.querySelectorAll('#results tr').length === 50");
-  assert.equal(await evaluate("document.querySelectorAll('[role=tab]').length"), 4);
+  assert.equal(await evaluate("document.querySelectorAll('[role=tab]').length"), 6);
+  assert.deepEqual(await evaluate("[...document.querySelectorAll('[role=tab]')].map(tab => tab.id)"),
+    ["tab-scan", "tab-results", "tab-settings", "tab-setup", "tab-uninstall", "tab-help"]);
   assert.equal(await evaluate("document.getElementById('panel-scan').hidden"), false);
   assert.equal(await evaluate("document.getElementById('scan-selection')"), null);
   await evaluate("document.getElementById('tab-help').click()");
   assert.match(await evaluate("document.getElementById('panel-help').textContent"), /検査範囲/);
+  assert.match(await evaluate("document.getElementById('panel-help').textContent"), /セットアップ/);
+  assert.match(await evaluate("document.getElementById('panel-help').textContent"), /アンインストール/);
+  await evaluate("document.querySelector('[data-open-tab=uninstall]').click()");
+  assert.equal(await evaluate("document.getElementById('panel-uninstall').hidden"), false);
+  assert.equal(await evaluate("document.getElementById('uninstall-steps').hidden"), true);
+  assert.equal(await evaluate("testCalls.some(call => call.type === 'helperPlan' || call.type === 'helperApply')"), false);
+  await evaluate("document.getElementById('tab-uninstall').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))");
+  assert.equal(await evaluate("document.activeElement.id"), "tab-help");
   await evaluate("document.getElementById('tab-help').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))");
   assert.equal(await evaluate("document.activeElement.id"), "tab-scan");
   await evaluate("document.getElementById('tab-results').click()");
@@ -201,8 +211,10 @@ try {
   await evaluate("document.getElementById('tab-results').focus(); document.getElementById('tab-results').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))");
   assert.equal(await evaluate("document.getElementById('panel-results').hidden"), true);
   assert.equal(await evaluate("document.activeElement.id"), "tab-settings");
-  await evaluate("document.getElementById('health').click()");
+  assert.equal(await evaluate("document.querySelector('#panel-settings #health')"), null);
+  await evaluate("document.getElementById('tab-setup').click(); document.getElementById('health').click()");
   await until("document.getElementById('health-result').textContent.includes('ClamAV test') && !document.getElementById('health').disabled");
+  await evaluate("document.getElementById('tab-settings').click()");
   assert.equal(await evaluate("document.querySelector('#settings-form button[type=submit]')"), null);
   assert.equal(await evaluate("document.getElementById('enabled').disabled"), true);
   await evaluate("document.querySelector('#accounts input').click()");
@@ -216,7 +228,7 @@ try {
   await until("!testState.settings.enabled && testState.settings.accountIds.length === 0 && !document.getElementById('notifications').disabled");
   assert.equal(await evaluate("document.getElementById('enabled').disabled"), true);
   assert.match(await evaluate("document.getElementById('health-result').textContent"), /最終接続確認.*応答あり/);
-  await evaluate("testState.lastScan = { checkedAt: new Date().toISOString(), engine: 'ClamAV actual (clamd)', status: 'clean' }; document.getElementById('health').click()");
+  await evaluate("testState.lastScan = { checkedAt: new Date().toISOString(), engine: 'ClamAV actual (clamd)', status: 'clean' }; document.getElementById('tab-setup').click(); document.getElementById('health').click()");
   await until("document.getElementById('last-scan-result').textContent.includes('clamd') && !document.getElementById('health').disabled");
   await mkdir(path.join(root, "dist"), { recursive: true });
   const settingsImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
@@ -344,20 +356,20 @@ try {
   assert.equal(await evaluate("document.querySelectorAll('#results tr').length > 0"), true);
   await call("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   assert.equal(await evaluate("document.documentElement.scrollWidth <= window.innerWidth"), true);
-  await evaluate("document.getElementById('tab-settings').click()");
-  assert.match(await evaluate("document.getElementById('installer-command').textContent"), /python3 -I.*0.9.0.*install/);
-  assert.equal(await evaluate("document.getElementById('installer-download').download"), "clam-mail-check-installer-0.9.0.pyz");
+  await evaluate("document.getElementById('tab-setup').click()");
+  assert.match(await evaluate("document.getElementById('installer-command').textContent"), /python3 -I.*0.9.1.*install/);
+  assert.equal(await evaluate("document.getElementById('installer-download').download"), "clam-mail-check-installer-0.9.1.pyz");
   const downloads = path.join(profile, "downloads");
   await mkdir(downloads, { recursive: true });
   await cdp("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: downloads });
   await evaluate("document.getElementById('installer-download').click()");
   let downloaded;
   for (let attempt = 0; attempt < 100; attempt++) {
-    downloaded = await readFile(path.join(downloads, "clam-mail-check-installer-0.9.0.pyz")).catch(() => null);
+    downloaded = await readFile(path.join(downloads, "clam-mail-check-installer-0.9.1.pyz")).catch(() => null);
     if (downloaded) break;
     await new Promise(resolve => setTimeout(resolve, 25));
   }
-  assert.deepEqual(downloaded, await readFile(path.join(root, "dist/clam-mail-check-installer-0.9.0.pyz")));
+  assert.deepEqual(downloaded, await readFile(path.join(root, "dist/clam-mail-check-installer-0.9.1.pyz")));
   await evaluate("document.getElementById('installation-title').scrollIntoView()");
   const installationImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
   await writeFile(path.join(root, "dist/ui-installation.png"), Buffer.from(installationImage.data, "base64"));
@@ -373,6 +385,10 @@ try {
   await until("document.getElementById('installation-report').textContent.includes('更新しました') && !document.getElementById('helper-update').disabled");
   assert.equal(await evaluate("testCalls.some(call => call.type === 'uninstallSelf')"), false);
 
+  await evaluate("document.getElementById('tab-uninstall').click()");
+  assert.equal(await evaluate("document.getElementById('uninstall-steps').hidden"), true);
+  await evaluate("document.getElementById('uninstall-start').click()");
+  await until("!document.getElementById('uninstall-steps').hidden && !document.getElementById('helper-uninstall').disabled");
   await evaluate("document.getElementById('helper-uninstall').click()");
   await until("document.getElementById('helper-dialog').open");
   assert.equal(await evaluate("document.activeElement.id"), "helper-cancel");
@@ -385,15 +401,21 @@ try {
   await evaluate("document.getElementById('helper-ack').click(); document.getElementById('helper-confirm').click()");
   await until("testCalls.some(call => call.type === 'uninstallSelf') && !document.getElementById('remove-extension').hidden && !document.getElementById('remove-extension').disabled");
   assert.equal(await evaluate("testCalls.find(call => call.type === 'uninstallSelf').showConfirmDialog"), true);
-  assert.match(await evaluate("document.getElementById('installation-report').textContent"), /完了していません/);
+  assert.match(await evaluate("document.getElementById('uninstall-report').textContent"), /完了していません/);
   await evaluate("cancelUninstall = false; document.getElementById('remove-extension').click()");
   await until("testCalls.filter(call => call.type === 'uninstallSelf').length === 2 && !document.getElementById('remove-extension').disabled");
-  await evaluate("testState.installation = { state: 'legacy' }; testState.helperRemoved = false; document.getElementById('helper-check').click()");
-  await until("document.getElementById('installation-status').textContent.includes('未対応') && !document.getElementById('helper-check').disabled");
-  assert.equal(await evaluate("document.getElementById('helper-uninstall').disabled"), true);
-  await evaluate("document.getElementById('cli-uninstall-guide').open = true; document.getElementById('manual-uninstall-ack').click(); document.getElementById('finish-manual-uninstall').click()");
+  await evaluate("testState.installation = { state: 'legacy' }; testState.helperRemoved = false; document.getElementById('uninstall-start').click()");
+  await until("document.getElementById('installation-status').textContent.includes('未対応') && !document.getElementById('uninstall-start').disabled");
+  assert.equal(await evaluate("document.getElementById('helper-uninstall').hidden"), true);
+  assert.equal(await evaluate("document.getElementById('cli-uninstall-guide').hidden"), false);
+  await evaluate("document.getElementById('manual-uninstall-ack').click(); document.getElementById('finish-manual-uninstall').click()");
   await until("testCalls.some(call => call.type === 'helperMarkRemoved' && call.acknowledged === true) && testCalls.filter(call => call.type === 'uninstallSelf').length === 3");
-  console.log("UI smoke: passed (four tabs, folder picker, autosave/rollback, connection history, filters, bulk actions, folder start/cancel/subfolders, progress counters, run filter, stop/interruption/resume/delete, desktop/mobile)");
+  await evaluate("sessionStorage.setItem('fixture-installation', 'unavailable')");
+  await call("Page.reload");
+  await until("!document.getElementById('panel-setup').hidden && document.getElementById('installation-status').textContent.includes('接続できません')");
+  assert.equal(await evaluate("testCalls.some(call => call.type === 'helperApply' || call.type === 'helperMarkRemoved' || call.type === 'uninstallSelf')"), false);
+  assert.equal(await evaluate("document.documentElement.scrollWidth <= window.innerWidth"), true);
+  console.log("UI smoke: passed (six tabs, help/setup/uninstall navigation, folder picker, autosave/rollback, connection history, filters, bulk actions, folder start/cancel/subfolders, progress counters, run filter, stop/interruption/resume/delete, desktop/mobile)");
 } finally {
   for (const waiter of pending.values()) clearTimeout(waiter.timer);
   chrome.kill();

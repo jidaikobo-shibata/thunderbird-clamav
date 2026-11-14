@@ -9,7 +9,8 @@ let visible = [];
 const rows = new Map(), selected = new Set();
 let folderFilterId = null, seenFolderRequest = null;
 let folderAnnouncement = null, seenResultsRequest = null;
-const TABS = ["scan", "results", "settings", "help"];
+const TABS = ["scan", "results", "settings", "setup", "uninstall", "help"];
+let userNavigated = false;
 let folderChoices = [], foldersLoading = false, settingsSaving = false;
 
 async function request(type, values = {}) {
@@ -194,14 +195,19 @@ $("folder-only").addEventListener("change", () => {
   folderFilterId = $("folder-only").checked ? latest?.folderJob?.id : null; resetSelection();
 });
 for (const [index, name] of TABS.entries()) {
-  $("tab-" + name).addEventListener("click", () => activateTab(name));
+  $("tab-" + name).addEventListener("click", () => { userNavigated = true; activateTab(name); });
   $("tab-" + name).addEventListener("keydown", event => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
+    userNavigated = true;
     const next = event.key === "Home" ? 0 : event.key === "End" ? TABS.length - 1 :
       (index + (event.key === "ArrowRight" ? 1 : -1) + TABS.length) % TABS.length;
     activateTab(TABS[next], true);
   });
+}
+
+for (const button of document.querySelectorAll("[data-open-tab]")) {
+  button.addEventListener("click", () => { userNavigated = true; activateTab(button.dataset.openTab, true); });
 }
 
 function confirmDeletion(targets) {
@@ -351,6 +357,9 @@ async function refresh() {
       void loadFolders();
       void request("helperInfo").then(response => {
         latest.installation = response.installation; installer.render();
+        if (!userNavigated && !latest.folderRequest && !latest.resultsRequest && response.installation?.state !== "managed") {
+          activateTab(response.installation?.state === "removed" ? "uninstall" : "setup");
+        }
       }).catch(error => setText($("installation-status"), error.message));
     }
     // Add history-only accounts as well; don't reset the current filter.

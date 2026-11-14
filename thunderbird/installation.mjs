@@ -5,15 +5,19 @@ export function installationUI({ request, action, latest, busy }) {
   const version = messenger.runtime.getManifest().version;
   const filename = `clam-mail-check-installer-${version}.pyz`;
   const command = operation => `python3 -I ./${filename} ${operation}`;
-  $("installer-download").href = messenger.runtime.getURL("installer.pyz");
-  $("installer-download").download = filename;
+  let uninstallStarted = false;
+  for (const id of ["installer-download", "uninstall-download"]) {
+    $(id).href = messenger.runtime.getURL("installer.pyz");
+    $(id).download = filename;
+  }
   $("installer-command").textContent = command("install");
   $("uninstaller-command").textContent = command("uninstall");
   for (const [id, operation] of [["copy-install", "install"], ["copy-uninstall", "uninstall"]]) {
     $(id).addEventListener("click", () => {
+      const report = $(operation === "uninstall" ? "uninstall-report" : "installation-report");
       void navigator.clipboard.writeText(command(operation)).then(() => {
-        $("installation-report").textContent = "コマンドをコピーしました。保存先のフォルダーのTerminalで実行してください。";
-      }).catch(() => { $("installation-report").textContent = "コピーできませんでした。表示されたコマンドを選択してコピーしてください。"; });
+        report.textContent = "コマンドをコピーしました。保存先のフォルダーのTerminalで実行してください。";
+      }).catch(() => { report.textContent = "コピーできませんでした。表示されたコマンドを選択してコピーしてください。"; });
     });
   }
   function render() {
@@ -25,8 +29,15 @@ export function installationUI({ request, action, latest, busy }) {
       info.state === "removed" ? "補助プログラムを削除済みです。拡張の削除を続けられます。" :
       "補助プログラムに接続できません。同梱ファイルで導入・修復し、「導入を確認」を押してください。";
     $("helper-check").disabled = Boolean(locked);
-    for (const id of ["helper-update", "helper-uninstall"]) $(id).disabled = Boolean(locked || working || info?.state !== "managed");
-    $("remove-extension").hidden = info?.state !== "removed";
+    $("helper-update").disabled = Boolean(locked || working || info?.state !== "managed");
+    $("uninstall-start").disabled = Boolean(locked || working);
+    $("uninstall-steps").hidden = !uninstallStarted;
+    $("helper-uninstall").hidden = !uninstallStarted || info?.state !== "managed";
+    $("helper-uninstall").disabled = Boolean(locked || working || info?.state !== "managed");
+    $("cli-uninstall-guide").hidden = !uninstallStarted || ["managed", "removed"].includes(info?.state);
+    $("uninstall-status").textContent = info?.state === "managed" ? "画面内で補助プログラムを削除できます。次のボタンから対象を確認してください。" :
+      info?.state === "removed" ? "補助プログラムの削除を確認済みです。拡張の削除を続けられます。" : "補助プログラムの削除には、次のTerminalの手順が必要です。";
+    $("remove-extension").hidden = !uninstallStarted || info?.state !== "removed";
     $("remove-extension").disabled = Boolean(locked || working);
     $("manual-uninstall-ack").disabled = Boolean(locked || working);
     $("finish-manual-uninstall").disabled = Boolean(locked || working || !$("manual-uninstall-ack").checked);
@@ -36,7 +47,7 @@ export function installationUI({ request, action, latest, busy }) {
       await messenger.management.uninstallSelf({ showConfirmDialog: true,
         dialogMessage: "ClamAV Mail Checkを削除します。設定・検査履歴・再開情報は失われる可能性があります。メールとClamAVは残ります。" });
     } catch {
-      $("installation-report").textContent = "拡張の削除は完了していません。削除を取り消した場合はこのまま残り、「拡張の削除を続ける」で再試行できます。再利用には同梱ファイルで補助プログラムを導入してください。";
+      $("uninstall-report").textContent = "拡張の削除は完了していません。削除を取り消した場合はこのまま残り、「拡張の削除を続ける」で再試行できます。再利用には同梱ファイルで補助プログラムを導入してください。";
     }
   }
   function confirmPlan(plan) {
@@ -73,13 +84,22 @@ export function installationUI({ request, action, latest, busy }) {
           const response = await request("helperApply", { token: plan.token });
           applied = true;
           const retained = response.installation.retained || [];
-          $("installation-report").textContent = response.installation.detail + (retained.length ? " 残したファイル：" + retained.join(" ／ ") : "");
+          $(operation === "uninstall" ? "uninstall-report" : "installation-report").textContent = response.installation.detail + (retained.length ? " 残したファイル：" + retained.join(" ／ ") : "");
           if (operation === "uninstall") await removeExtension();
           return response.installation.detail;
         } finally { if (!applied) await request("helperCancel", { token: plan.token }); }
       });
     });
   }
+  $("uninstall-start").addEventListener("click", () => {
+    void action(async () => {
+      const response = await request("helperInfo");
+      latest().installation = response.installation;
+      uninstallStarted = true;
+      render();
+      return "導入状態に応じた削除手順を表示しました。まだ削除は行っていません。";
+    });
+  });
   $("helper-check").addEventListener("click", () => { void action(() => request("helperInfo"), "導入状態を確認しました。"); });
   $("manual-uninstall-ack").addEventListener("change", render);
   $("finish-manual-uninstall").addEventListener("click", () => {

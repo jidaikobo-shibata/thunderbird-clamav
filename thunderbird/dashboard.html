@@ -14,6 +14,8 @@
     <button type="button" role="tab" id="tab-scan" aria-selected="true" aria-controls="panel-scan">検査</button>
     <button type="button" role="tab" id="tab-results" aria-selected="false" aria-controls="panel-results" tabindex="-1">検査結果</button>
     <button type="button" role="tab" id="tab-settings" aria-selected="false" aria-controls="panel-settings" tabindex="-1">設定</button>
+    <button type="button" role="tab" id="tab-setup" aria-selected="false" aria-controls="panel-setup" tabindex="-1">セットアップ</button>
+    <button type="button" role="tab" id="tab-uninstall" aria-selected="false" aria-controls="panel-uninstall" tabindex="-1">アンインストール</button>
     <button type="button" role="tab" id="tab-help" aria-selected="false" aria-controls="panel-help" tabindex="-1">ヘルプ</button>
   </div>
   <p id="action-status" role="status" aria-live="polite"></p>
@@ -86,6 +88,14 @@
       <p class="hint">通知には差出人・件名を表示しません。変更後に届いた新着が対象です。</p>
       <p id="settings-status" role="status" aria-live="polite">変更すると自動的に保存します。</p>
     </form>
+    <h3>検査履歴</h3>
+    <p>最大1000件を保持します。上限時は古い未検出・完全削除済みの結果から置き換えます。差出人・件名・検査結果をローカルに保存し、本文と添付は履歴に保存しません。</p>
+    <button type="button" id="clear">完了した検査履歴を消去</button>
+    <p class="hint">履歴の消去では、メール自体は削除されません。</p>
+
+  </section>
+  <section id="panel-setup" role="tabpanel" aria-labelledby="tab-setup" tabindex="0" hidden>
+    <h2>セットアップ</h2>
     <section class="connection-status" aria-labelledby="connection-title">
       <h3 id="connection-title">ClamAVの状態</h3>
       <p id="health-result">接続はまだ確認していません。</p>
@@ -94,32 +104,60 @@
       <p class="hint">接続確認ではメールの検査は行いません。表示は確認時点の結果です。</p>
     </section>
     <section class="connection-status" aria-labelledby="installation-title">
-      <h3 id="installation-title">補助プログラムの導入・管理</h3>
+      <h3 id="installation-title">補助プログラムの導入・更新</h3>
       <p id="installation-status" role="status">導入状態を確認しています。</p>
       <p>Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。初回登録と接続不能時の修復は、同梱ファイルを保存してTerminalで実行します。GUIアプリやsudoは不要です。</p>
       <a id="installer-download" download>導入用ファイルを保存</a>
       <p>表示される名前でファイルを保存し、その保存先のフォルダーをTerminalで開いて次のコマンドを実行してください。名前が変わった場合はコマンドも合わせてください。導入済みなら更新・修復します。</p>
       <pre><code id="installer-command"></code></pre><button type="button" id="copy-install">導入コマンドをコピー</button>
-      <div class="actions"><button type="button" id="helper-check">導入を確認</button><button type="button" id="helper-update" disabled>同梱版へ更新・修復</button><button type="button" id="helper-uninstall" class="danger" disabled>アンインストール</button></div>
+      <div class="actions"><button type="button" id="helper-check">導入を確認</button><button type="button" id="helper-update" disabled>同梱版へ更新・修復</button></div>
       <p id="installation-report"></p>
-      <details id="cli-uninstall-guide"><summary>Terminalで補助プログラムを削除する場合</summary>
-        <p>古い補助プログラムなど、アドオンから削除できない場合に使います。先に新着メールの自動検査をオフにし、検査を中止して停止を待ち、上の導入用ファイルを保存して、その保存先のフォルダーで実行してください。</p>
+
+    </section>
+  </section>
+  <section id="panel-uninstall" role="tabpanel" aria-labelledby="tab-uninstall" tabindex="0" hidden>
+    <h2>アンインストール</h2>
+    <p>この拡張と補助プログラムを取り除く手順を案内します。このタブを開いただけでは、削除や設定変更は行いません。</p>
+    <h3>削除するもの・残すもの</h3>
+    <p>補助プログラムと接続登録を削除し、続いてThunderbirdの確認で拡張を削除します。拡張の設定・検査履歴・再開情報は失われる可能性があります。メール本体・アカウント・ClamAVは残ります。</p>
+    <p>先に自動検査をオフにし、実行中の検査を中止して停止を待ってください。再導入したい場合は、手順内で導入用ファイルを保存しておいてください。</p>
+    <button type="button" id="uninstall-start">アンインストールの手順へ</button>
+    <div id="uninstall-steps" hidden>
+      <h3>補助プログラムの削除</h3>
+      <p id="uninstall-status" role="status"></p>
+      <a id="uninstall-download" download>再導入・削除用ファイルを保存</a>
+      <button type="button" id="helper-uninstall" class="danger" disabled>補助プログラムを削除して次へ</button>
+      <div id="cli-uninstall-guide" hidden>
+        <p>この環境では、先にTerminalで補助プログラムを削除します。上のファイルを保存し、その保存先のフォルダーをTerminalで開いて次のコマンドを実行してください。名前が変わった場合はコマンドも合わせてください。</p>
         <pre><code id="uninstaller-command"></code></pre><button type="button" id="copy-uninstall">削除コマンドをコピー</button>
-        <p>実行結果で削除の完了を確認した後、チェックを入れて拡張の削除を続けられます。接続できないだけでは、削除済みとは判断しません。</p>
+        <p>Terminalに表示される変更内容を確認して承認してください。削除完了の表示を確認した後、下のチェックを入れて拡張の削除へ進みます。接続できないだけでは、削除済みとは判断しません。</p>
         <label><input type="checkbox" id="manual-uninstall-ack">Terminalで補助プログラムの削除が完了したことを確認した</label>
         <button type="button" id="finish-manual-uninstall" disabled>拡張の削除へ進む</button>
-      </details>
+      </div>
       <button type="button" id="remove-extension" hidden>拡張の削除を続ける</button>
-      <p class="hint">アンインストールでは、この拡張と補助プログラムを取り除きます。拡張の設定・履歴・再開情報は失われる可能性があります。メール本体・アカウント・ClamAVは残ります。再導入する場合に備え、先に導入用ファイルを保存してください。</p>
-    </section>
-    <h3>検査履歴</h3>
-    <p>最大1000件を保持します。上限時は古い未検出・完全削除済みの結果から置き換えます。差出人・件名・検査結果をローカルに保存し、本文と添付は履歴に保存しません。</p>
-    <button type="button" id="clear">完了した検査履歴を消去</button>
-    <p class="hint">履歴の消去では、メール自体は削除されません。</p>
-
+    </div>
+    <p id="uninstall-report" role="status"></p>
   </section>
   <section id="panel-help" role="tabpanel" aria-labelledby="tab-help" tabindex="0" hidden>
     <h2>ヘルプ</h2>
+    <h3>セットアップ</h3>
+    <ol>
+      <li>「セットアップ」タブで補助プログラムの導入状態を確認します。</li>
+      <li>初回または接続できない場合は、導入用ファイルを保存し、その保存先のフォルダーをTerminalで開いて表示されたコマンドを実行します。</li>
+      <li>変更内容を確認して承認し、完了後に「導入を確認」を押します。対応済みなら、以後の更新・修復はアドオン内で実行できます。</li>
+    </ol>
+    <p>Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。ファイルの保存だけでは設置・削除は行いません。sudoは不要です。</p>
+    <button type="button" data-open-tab="setup">セットアップを開く</button>
+    <h3>アンインストール</h3>
+    <ol>
+      <li>自動検査をオフにし、実行中の検査を中止して停止を待ちます。</li>
+      <li>「アンインストール」タブで削除するもの・残すものを確認し、「アンインストールの手順へ」を押します。</li>
+      <li>対応済みの補助プログラムは画面内で確認して削除します。旧版などの場合だけ、手順の途中でTerminalの操作を案内します。</li>
+      <li>補助プログラムの削除後、Thunderbirdの確認画面で拡張を削除します。取り消した場合は同じタブから再試行できます。</li>
+    </ol>
+    <p>拡張の設定・履歴・再開情報は失われる可能性があります。メール・アカウント・ClamAVは残ります。補助プログラムはこのOSユーザー共通のため、他のThunderbirdプロファイルも接続できなくなります。再導入用のファイルを先に保存しておけます。</p>
+    <p>Thunderbirdのアドオン一覧で直接拡張を削除しても、補助プログラムは残ります。両方を取り除く場合は、この拡張の「アンインストール」タブから進めてください。通常のバージョンアップでは旧版を削除せず、XPIを上書きインストールします。</p>
+    <button type="button" data-open-tab="uninstall">アンインストールを開く</button>
     <h3>検査範囲</h3>
     <p>受信後にメール全体を検査します。検査完了前の閲覧や添付操作は止めません。メール本文・添付は外部サービスに送信しません。暗号化メールは復号せず、未検査として扱います。</p>
     <p>上限は1通25MiB、展開後の合計100MiB、検査時間は最大120秒です。専用clamdの初回起動には、別に最大60秒かかります。ClamAVの定義が3日超古い場合は検査失敗として扱います。URLの評判によるフィッシング判定は無効です。</p>
