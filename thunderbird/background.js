@@ -243,7 +243,7 @@ function enqueue(first, source) {
       if (existing && source === "automatic") continue;
       // Only discard old non-alert results when the bounded history is full.
       if (!existing && records.length >= MAX_RECORDS) {
-        const index = records.findIndex(record => record.status === "clean");
+        const index = records.findIndex(record => ["clean", "deleted"].includes(record.status));
         if (index === -1) { overflow = true; continue; }
         records.splice(index, 1);
       }
@@ -276,7 +276,7 @@ async function drain() {
         records.find(item => item.status === "queued" && item.source === "manual");
       if (!record && folderScan.available()) {
         if (records.length >= MAX_RECORDS) {
-          const index = records.findIndex(item => item.status === "clean");
+          const index = records.findIndex(item => ["clean", "deleted"].includes(item.status));
           if (index === -1) {
             await folderScan.finish("blocked", "検出・未検査・失敗などの履歴で上限1000件に達したため停止しました。履歴を確認・整理し、改めて開始してください。");
             continue;

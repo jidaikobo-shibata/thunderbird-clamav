@@ -594,3 +594,35 @@ test("persisted checkpoints survive cleared history and a restart during active 
   assert.equal(state.records.length, 2);
   assert.deepEqual(next.rawReads, [11, 12, 13]);
 });
+
+
+test("capacity replaces oldest clean/deleted history while preserving attention and resume checkpoints", async () => {
+  const protectedRecords = Array.from({ length: 998 }, (_, i) => ({ key: "protected" + i,
+    status: ["detected", "incomplete", "error"][i % 3], locator: { accountId: "one" } }));
+  const h = await harness({ saved: { records: [
+    ...protectedRecords, { key: "deleted-old", status: "deleted", locator: { accountId: "one" } },
+    { key: "clean-new", status: "clean", locator: { accountId: "one" } }
+  ] }, mails: [mail(1)], scanResult: { status: "detected" } });
+  await startFolder(h);
+  const state = await settledFolder(h, "completed");
+  assert.equal(state.records.length, 1000);
+  assert.equal(state.folderJob.completed, 1);
+  assert.equal(state.records.some(record => record.key === "deleted-old"), false);
+  assert.equal(state.records.some(record => record.key === "clean-new"), true);
+  assert.ok(protectedRecords.every(original => state.records.some(record => record.key === original.key && record.status === original.status)));
+  assert.equal(h.stored().folderCheckpoint.entries.length, 1);
+  assert.deepEqual(h.deleted, []);
+});
+
+test("manual enqueue can also replace a deleted result at capacity", async () => {
+  const records = Array.from({ length: 999 }, (_, i) => ({ key: "warning" + i,
+    status: "detected", locator: { accountId: "one" } }));
+  records.push({ key: "deleted", status: "deleted", locator: { accountId: "one" } });
+  const h = await harness({ saved: { records }, mails: [mail(1)] });
+  await h.send("scanSelection");
+  const state = await settle(h, value => value.records.some(record => record.messageId === 1 && record.status === "clean"));
+  assert.equal(state.records.length, 1000);
+  assert.equal(state.records.some(record => record.key === "deleted"), false);
+  assert.equal(state.records.filter(record => record.status === "detected").length, 999);
+  assert.deepEqual(h.deleted, []);
+});

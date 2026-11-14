@@ -123,7 +123,7 @@ function renderFolder() {
   }
   setText($("folder-detail"), job.detail + (job.resumeCount ? " 再開時は現在のフォルダーと照合します。総件数はこれまでの処理済み件数と、今回の未処理件数の合計です。" : "") + (job.skippedFolders ? ` 対象外のフォルダー：${job.skippedFolders}件。` : ""));
   const retained = latest.records.filter(record => record.folderJobId === job.id).length;
-  setText($("folder-retained"), `この検査の履歴を${retained}件保持しています。履歴上限は1000件ですが、進捗の処理件数は別に保持します。検出・未検査・失敗の履歴で上限に達した場合は停止します。`);
+  setText($("folder-retained"), `この検査の履歴を${retained}件保持しています。履歴上限は1000件で、未検出・完全削除済みの古い履歴から入れ替えます。進捗の処理件数は別に保持します。検出・未検査・失敗の履歴で上限に達した場合は停止します。`);
 }
 
 function showFolderDialog(context) {
