@@ -1,3 +1,4 @@
+import { installationUI } from "./installation.mjs";
 import { LABELS, needsAttention } from "./core.mjs";
 import { selectable, canDelete, filterRecords, resultPage } from "./results.mjs";
 import { FOLDER_STATES } from "./folder-scan.mjs";
@@ -19,10 +20,11 @@ async function request(type, values = {}) {
 function setText(element, text) {
   if (element.textContent !== text) element.textContent = text;
 }
-function blocked() { return busy || Boolean(latest?.batch?.active); }
+function blocked() { return busy || Boolean(latest?.batch?.active) || Boolean(latest?.maintenance); }
+const installer = installationUI({ request, action, latest: () => latest, busy: () => blocked() });
 function selection() { return visible.filter(record => selected.has(record.key)); }
 function updateControls() {
-  const locked = blocked(), chosen = selection();
+  const locked = blocked() || Boolean(latest?.helperRemoved), chosen = selection();
   setText($("selected-count"), `選択${chosen.length}件`);
   $("retry-selected").disabled = locked || !chosen.length;
   $("delete-selected").disabled = locked || !chosen.length || !chosen.every(canDelete);
@@ -36,7 +38,7 @@ function updateControls() {
   }
   const job = latest?.folderJob;
   const folderActive = job && ["collecting", "running", "stopping"].includes(job.status);
-  $("scan-folder").disabled = locked || Boolean(folderActive) || foldersLoading || !$("scan-target").value;
+  $("scan-folder").disabled = locked || latest?.helperRemoved || Boolean(folderActive) || foldersLoading || !$("scan-target").value;
   for (const id of ["scan-account", "scan-target", "reload-folders"]) $(id).disabled = locked || foldersLoading;
   $("scan-target").disabled ||= !$("scan-account").value;
   $("folder-stop").disabled = locked || !folderActive || job.status === "stopping";
@@ -45,8 +47,8 @@ function updateControls() {
   $("folder-delete").disabled = locked || !job || Boolean(folderActive);
   $("folder-results").disabled = locked || !job;
   $("folder-only").disabled = locked || !job;
-  for (const input of $("settings-form").querySelectorAll("input, button")) input.disabled = locked;
-  $("enabled").disabled = locked || !$("accounts").querySelector("input:checked");
+  for (const input of $("settings-form").querySelectorAll("input, button")) input.disabled = locked || latest?.helperRemoved;
+  $("enabled").disabled = locked || latest?.helperRemoved || !$("accounts").querySelector("input:checked");
   for (const record of visible) {
     const entry = rows.get(record.key);
     entry.checkbox.disabled = locked || !selectable(record);
@@ -58,6 +60,7 @@ function updateControls() {
   }
   $("previous-page").disabled = locked || page === 0;
   $("next-page").disabled = locked || page + 1 >= Number($("page-label").dataset.pages || 1);
+  installer.render();
 }
 async function action(callback, success) {
   if (blocked()) return;
@@ -346,6 +349,9 @@ async function refresh() {
     if (!initialized) {
       initialized = true;
       void loadFolders();
+      void request("helperInfo").then(response => {
+        latest.installation = response.installation; installer.render();
+      }).catch(error => setText($("installation-status"), error.message));
     }
     // Add history-only accounts as well; don't reset the current filter.
     const accounts = new Map(latest.accounts.map(account => [account.id, account.name]));

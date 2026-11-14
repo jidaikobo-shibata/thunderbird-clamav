@@ -15,8 +15,13 @@ import uuid
 
 PRODUCT = "local.clam_mail_check"
 EXTENSION = "clam-mail-check@local.invalid"
-PAYLOAD = ("setup.py", "setup/__init__.py", "setup/manager.py", "setup/gui.py",
+LEGACY_PAYLOAD = ("setup.py", "setup/__init__.py", "setup/manager.py", "setup/gui.py",
            "native/host.py", "thunderbird/manifest.json", "extension.xpi")
+PAYLOAD = (*LEGACY_PAYLOAD, "setup/cli.py")
+
+
+CLI_PAYLOAD = ("setup/__init__.py", "setup/manager.py", "setup/cli.py",
+               "native/host.py", "thunderbird/manifest.json")
 
 
 class SetupError(Exception):
@@ -117,7 +122,9 @@ def environment():
 
 
 class Manager:
-    def __init__(self, root, home):
+    def __init__(self, root, home, headless=False):
+        self.headless = headless
+        self.payload = CLI_PAYLOAD if headless else PAYLOAD
         self.root = Path(root).absolute()
         self.layout = Layout(home)
         manifest = json.loads((self.root / "thunderbird/manifest.json").read_text())
@@ -132,17 +139,22 @@ class Manager:
             return None
         try:
             value = json.loads(data)
-            if value["product"] != PRODUCT or value["format"] != 1:
+            if value["product"] != PRODUCT or value["format"] not in (1, 2):
                 raise ValueError("identity")
             if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", value["version"]):
                 raise ValueError("version")
             if not re.fullmatch(r"releases/[0-9a-f]{32}", value["release"]):
                 raise ValueError("release")
-            if set(value["files"]) != set(PAYLOAD):
+            allowed = [set(PAYLOAD), set(LEGACY_PAYLOAD)] if value["format"] == 1 else [set(CLI_PAYLOAD)]
+            if set(value["files"]) not in allowed:
                 raise ValueError("files")
             if any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in
-                   [*value["files"].values(), value["registration"], value["desktop"]]):
+                   [*value["files"].values(), value["registration"], *([value["desktop"]] if value["desktop"] is not None else [])]):
                 raise ValueError("hash")
+            if value["format"] == 1 and value["desktop"] is None:
+                raise ValueError("desktop")
+            if value["format"] == 2 and value["desktop"] is not None:
+                raise ValueError("desktop")
             return value
         except (ValueError, TypeError, KeyError) as exc:
             raise SetupError("設置記録を確認できません。既存ファイルは変更しません。") from exc
@@ -167,7 +179,7 @@ class Manager:
             data = self.layout.read(release / name)
             if data is None or digest(data) != expected:
                 healthy = False
-        if any(self.layout.read(path) is None for path, _ in controls):
+        if any(self.layout.read(path) is None and receipt[key] is not None for path, key in controls):
             healthy = False
         return {"installed": True, "healthy": healthy, "version": receipt["version"]}
 
@@ -287,7 +299,7 @@ class Manager:
             committed = False
             try:
                 files = {}
-                for name in PAYLOAD:
+                for name in self.payload:
                     source = self.root / name
                     if name == "extension.xpi" and not source.exists():
                         source = self.root / "dist" / ("clam-mail-check-" + self.version + ".xpi")
@@ -308,9 +320,11 @@ class Manager:
                            "Comment=補助プログラムの状態確認・更新・削除\n"
                            "Exec=/usr/bin/python3 -B -I " + desktop_argument(str(release / "setup.py")) +
                            "\nIcon=application-x-executable\nTerminal=false\nCategories=Utility;\n").encode()
-                receipt = {"format": 1, "product": PRODUCT, "version": self.version,
+                if self.headless:
+                    desktop = None
+                receipt = {"format": 2 if self.headless else 1, "product": PRODUCT, "version": self.version,
                            "release": str(release.relative_to(self.layout.base)), "files": files,
-                           "registration": digest(registration), "desktop": digest(desktop)}
+                           "registration": digest(registration), "desktop": digest(desktop) if desktop is not None else None}
                 if self.snapshot() != token:
                     raise SetupError("処理中に設置状態が変わりました。変更を確定しません。")
                 self.transaction([(self.layout.registration, registration, 0o600),

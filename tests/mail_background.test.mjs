@@ -744,3 +744,92 @@ test("settings save failure preserves the last effective settings", async () => 
   assert.equal(response.ok, false);
   assert.deepEqual((await h.send("state")).settings, original);
 });
+
+function installAdminMock(h, { failApply = false, gate = null } = {}) {
+  const calls = [];
+  let operation;
+  h.api.runtime.connectNative = () => {
+    const port = { onMessage: event(), onDisconnect: event(), disconnect() {},
+      postMessage(request) {
+        calls.push(request);
+        queueMicrotask(async () => {
+          if (request.op === "manageApply" && gate) await gate;
+          let result;
+          if (request.op === "manageInfo") result = { status: "managed", version: "0.9.0", healthy: true };
+          else if (request.op === "managePlan") {
+            operation = request.operation;
+            result = { status: "prepared", operation, token: "admin-ticket", version: "0.9.0", paths: ["/synthetic"] };
+          } else result = failApply ? { status: "error", detail: "synthetic removal failure" } :
+            { status: operation === "uninstall" ? "removed" : "updated", version: "0.9.0", retained: [] };
+          port.onMessage.listeners[0]({ id: request.id, ...result });
+        });
+      } };
+    return port;
+  };
+  return calls;
+}
+
+test("management cancellation does not remove helper and old helpers offer CLI fallback", async () => {
+  const legacy = await harness();
+  assert.equal((await legacy.send("helperInfo")).installation.state, "legacy");
+  assert.equal((await legacy.send("helperPlan", { operation: "uninstall" })).ok, false);
+  assert.equal((await legacy.send("state")).maintenance, false);
+  const h = await harness(); const calls = installAdminMock(h);
+  const plan = await h.send("helperPlan", { operation: "uninstall" });
+  assert.equal((await h.send("settings", { settings: { enabled: false, accountIds: [], notifications: false } })).ok, false);
+  await h.send("helperCancel", { token: plan.plan.token });
+  assert.equal(calls.some(call => call.op === "manageApply"), false);
+  assert.equal((await h.send("state")).helperRemoved, false);
+  assert.equal((await h.send("state")).maintenance, false);
+});
+
+test("uninstall marks helper removed, disables auto scans and requires fresh confirmation", async () => {
+  const h = await harness({ saved: { settings: { enabled: true, accountIds: ["one"], notifications: true } } });
+  const calls = installAdminMock(h);
+  const prepared = await h.send("helperPlan", { operation: "uninstall" });
+  assert.equal((await h.send("helperApply", { token: "wrong" })).ok, false);
+  assert.equal((await h.send("helperApply", { token: prepared.plan.token })).ok, true);
+  const state = await h.send("state");
+  assert.equal(state.helperRemoved, true); assert.equal(state.settings.enabled, false);
+  assert.equal(state.installation.state, "removed");
+  assert.equal(calls.filter(call => call.op === "manageApply").length, 1);
+  assert.equal((await h.send("helperApply", { token: prepared.plan.token })).ok, false);
+  assert.equal((await h.send("scanSelection")).ok, false);
+  const restored = await harness({ saved: structuredClone(h.stored()) });
+  assert.equal((await restored.send("state")).helperRemoved, true);
+  assert.equal(restored.nativePorts.length, 0);
+  installAdminMock(restored);
+  await restored.send("helperInfo"); // A fresh terminal installation can recover.
+  assert.equal((await restored.send("state")).helperRemoved, false);
+});
+
+test("incomplete removal remains paused and concurrent apply cannot run twice", async () => {
+  const h = await harness();
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const calls = installAdminMock(h, { failApply: true, gate });
+  const prepared = await h.send("helperPlan", { operation: "uninstall" });
+  const applying = h.send("helperApply", { token: prepared.plan.token });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await h.send("helperApply", { token: prepared.plan.token })).ok, false);
+  await h.send("helperCancel", { token: prepared.plan.token });
+  assert.equal((await h.send("state")).maintenance, true);
+  release(); assert.equal((await applying).ok, false);
+  const state = await h.send("state");
+  assert.equal(state.helperRemoved, true);
+  assert.equal(state.installation.state, "unavailable");
+  assert.equal(state.settings.enabled, false);
+  assert.equal(calls.filter(call => call.op === "manageApply").length, 1);
+});
+
+
+test("addon update preserves enabled settings and returns a managed installation", async () => {
+  const h = await harness({ saved: { settings: { enabled: true, accountIds: ["one"], notifications: false } } });
+  const calls = installAdminMock(h);
+  const prepared = await h.send("helperPlan", { operation: "repair", package: "synthetic-package" });
+  const response = await h.send("helperApply", { token: prepared.plan.token });
+  assert.equal(response.installation.state, "managed");
+  assert.equal((await h.send("state")).settings.enabled, true);
+  assert.equal((await h.send("state")).helperRemoved, false);
+  assert.equal(calls.find(call => call.op === "managePlan").package, "synthetic-package");
+});

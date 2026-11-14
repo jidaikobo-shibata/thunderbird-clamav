@@ -250,6 +250,7 @@ class PackagingTests(unittest.TestCase):
             import shutil
             shutil.copytree(root / "thunderbird", stage / "thunderbird")
             shutil.copytree(root / "native", stage / "native", ignore=shutil.ignore_patterns("__pycache__"))
+            shutil.copytree(root / "setup", stage / "setup", ignore=shutil.ignore_patterns("__pycache__"))
             xpi, manifest = build(stage)
             with zipfile.ZipFile(xpi) as archive:
                 self.assertIn("manifest.json", archive.namelist())

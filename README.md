@@ -71,11 +71,13 @@ node --check thunderbird/dashboard.js
 python3 scripts/build_mail_check.py
 ```
 
-`dist/clam-mail-check-0.8.1.xpi` と、確認用の補助プログラム・登録JSONを
-`dist/native/` に生成します。GUIセットアップ一式は
-`dist/clam-mail-check-setup-0.8.1-linux-<architecture>.tar.gz` に生成します。
-XPI・補助プログラム・GUIを同梱しており、ソースのチェックアウトは不要です。
-生成しただけではインストールされません。起動用実行ファイルはビルドした
+`dist/clam-mail-check-0.9.0.xpi` と、確認用の補助プログラム・登録JSONを
+`dist/native/` に生成します。GUI不要の導入用ファイル
+`dist/clam-mail-check-installer-0.9.0.pyz` をXPIに同梱し、単体でも生成します。
+旧GUI配布物も必要な場合だけ `--legacy-gui` を指定します。この場合はCコンパイラーが必要です。
+`dist/clam-mail-check-setup-0.9.0-linux-<architecture>.tar.gz` に生成します。
+旧GUI配布物にはXPI・補助プログラム・GUIを同梱します。通常配布のXPIにもCLI導入用ファイルが入り、ソースのチェックアウトは不要です。
+生成しただけではインストールされません。旧GUIの起動用実行ファイルはビルドした
 アーキテクチャ向けです。今回の確認対象はUbuntu 26.04 / x86_64です。
 
 実際のClamAVとの接続確認は次のコマンドで実施できます。
@@ -106,7 +108,69 @@ Snap選択時の停止、アプリ一覧用Desktop Entryの起動を検証しま
 python3 -B scripts/smoke_setup_gui.py
 ```
 
-## GUIセットアップ（推奨）
+## アドオンから導入・管理する（0.9.0、推奨）
+
+配布するXPIに、Python標準ライブラリだけで実行できる導入用ファイル`installer.pyz`を同梱します。
+通常配布に別のGUIアプリ・GTK・CPU別の起動バイナリは不要です。現在はLinuxの通常版Thunderbird向けです。
+Python 3と更新済みClamAVはOS側に必要で、Snap/Flatpakとの連携は未検証です。
+導入用ファイルはネットワークからコードを取得せず、同梱内容だけを設置します。
+
+1. XPIを旧版削除なしで上書きインストールし、設定の「補助プログラムの導入・管理」を開きます。
+2. 「導入用ファイルを保存」で`clam-mail-check-installer-0.9.0.pyz`を保存します。
+3. 保存先のフォルダーをTerminalで開き、アドオンに表示されたコマンドを実行します。
+   保存時の名前が変わった場合はコマンドのファイル名も合わせてください。
+4. Terminalに表示される変更先と影響を確認して承認します。root/sudoは不要で、実行を拒否します。
+5. アドオンに戻って「導入を確認」を押します。設置が有効で管理機能に対応した場合は版と状態が表示されます。
+
+```bash
+python3 -I ./clam-mail-check-installer-0.9.0.pyz install
+```
+
+導入済みなら同じコマンドで更新・修復します。既存の旧GUI方式の設置記録（format 1）も引き継ぎます。
+新方式はformat 2で管理し、GUIアプリとアプリ一覧の起動項目は設置しません。
+以前の起動項目は管理記録と一致した場合だけ取り除きます。メール・拡張・拡張の設定と履歴は変更しません。
+未知の登録・手動変更した登録・シンボリックリンクは上書きせず停止します。
+
+対応済みの補助プログラムがあれば「同梱版へ更新・修復」「アンインストール」をアドオンから実行できます。
+対象パス・影響の確認を要求し、確認チケットは5分・1回限り。同梱ファイルの固定構成・サイズ上限・版を確認し、
+古い版への更新や確認後の登録変更は拒否します。管理中は検査・削除の新規実行を止めます。
+検査・削除が実行中の場合は管理操作を始められないため、先に停止してください。
+
+### アンインストールから導入テストする
+
+現在の旧補助プログラム（0.6等）には管理機能がないため、最初の削除はTerminal経由です。
+アドオンが「未対応」と表示した場合は設定内の「Terminalで補助プログラムを削除する場合」を開きます。
+
+1. 新着メールの自動検査をオフにし、検査を中止して停止を待ちます。再導入用に同梱の導入用ファイルを先に保存します。
+2. 保存先のフォルダーで次のコマンドを実行し、削除内容を確認して承認します。
+3. Terminalで削除の完了を確認し、アドオン内で確認チェックを入れて「拡張の削除へ進む」を押します。
+4. Thunderbirdの自己削除確認で承認します。設定・検査履歴・再開情報は失われる可能性があります。
+5. 再びXPIをインストールし、上記の`install`コマンドと「導入を確認」で初回導入を試せます。
+
+```bash
+python3 -I ./clam-mail-check-installer-0.9.0.pyz uninstall
+```
+
+対応済みならアドオン内の「アンインストール」で補助プログラムを削除し、続いてThunderbirdの確認で拡張自身を削除します。
+補助プログラムはこのOSユーザーで共通なので、他のThunderbirdプロファイルからの接続も失われます。
+削除対象は管理記録に一致したファイルと接続登録だけ。メール・アカウント・ClamAVは残し、手動変更や未知のファイルは残して表示します。
+拡張の削除を取り消した場合は、アドオン内の「拡張の削除を続ける」で再試行できます。
+補助プログラムを再導入する場合は保存済みのCLIファイルを使ってください。
+接続不能だけでは削除済みと断定せず、Terminalでの完了確認を求めます。
+削除の応答が失われた場合は完了未確認として検査を停止し、状態確認・CLIからの修復に進めます。
+拡張の削除には[ThunderbirdのuninstallSelf](https://webextension-api.thunderbird.net/en/esr-mv2/management.html#uninstallself-options)を使い、追加のmanagement権限は要求しません。
+
+状態だけの確認（読み取りのみ）と、隔離した設置先での自動テストは次のとおりです。
+
+```bash
+python3 -I ./clam-mail-check-installer-0.9.0.pyz status
+python3 -B -m unittest discover -s tests -p 'test_cli_setup.py'
+```
+
+CLIの自動テストは一時的なホーム相当ディレクトリで導入・更新・削除を3回繰り返します。
+実ユーザー環境は変更しません。Thunderbird自身の削除確認は模擬APIで検証し、実環境での操作は利用者が行います。
+
+## 旧GUIセットアップ（互換経路）
 
 **ここからはユーザー環境への導入です。確認画面で承認した時点で変更します。**
 
@@ -175,7 +239,7 @@ python3 scripts/register_mail_host.py --install
 ユーザーのホーム配下に、次の2ファイルを新規作成します。
 
 ```text
-$HOME/.local/lib/clam-mail-check/0.8.1/host.py
+$HOME/.local/lib/clam-mail-check/0.9.0/host.py
 $HOME/.mozilla/native-messaging-hosts/local.clam_mail_check.json
 ```
 

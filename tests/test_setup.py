@@ -64,11 +64,11 @@ class SetupTests(unittest.TestCase):
         self.apply("install")
         manifest = self.root / "thunderbird/manifest.json"
         value = json.loads(manifest.read_text())
-        value["version"] = "0.9.0"
+        value["version"] = "0.10.0"
         manifest.write_text(json.dumps(value))
         newer = Manager(self.root, self.home)
         newer.apply("repair", newer.plan("repair")["token"])
-        self.assertEqual(newer.state()["version"], "0.9.0")
+        self.assertEqual(newer.state()["version"], "0.10.0")
         with self.assertRaises(SetupError):
             self.manager.plan("repair")
 
@@ -190,6 +190,7 @@ class SetupTests(unittest.TestCase):
     def test_bundle_is_self_contained_and_launcher_finds_neighbor_without_shell(self):
         shutil.copytree(ROOT / "thunderbird", self.root / "thunderbird", dirs_exist_ok=True)
         shutil.copyfile(ROOT / "setup/launcher.c", self.root / "setup/launcher.c")
+        shutil.copyfile(ROOT / "setup/cli.py", self.root / "setup/cli.py")
         shutil.copyfile(ROOT / "README.md", self.root / "README.md")
         xpi, _ = build(self.root)
         bundle = build_setup(self.root, xpi)

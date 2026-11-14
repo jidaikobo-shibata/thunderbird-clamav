@@ -22,6 +22,32 @@ let batchProgress = null;
 let folderRequest = null;
 let lastHealth = null, lastScan = null;
 let resultsRequest = null;
+let installation = null, helperRemoved = false, pendingMaintenance = null, maintenanceGeneration = 0;
+const maintenanceActive = () => Boolean(pendingMaintenance);
+function releaseMaintenance() {
+  pendingMaintenance?.client.close();
+  pendingMaintenance = null;
+}
+async function helperInfo() {
+  if (maintenanceActive()) return installation;
+  const generation = maintenanceGeneration;
+  const client = new NativeClient(api.runtime);
+  try {
+    const info = await client.request("manageInfo");
+    if (generation !== maintenanceGeneration) return installation;
+    installation = { state: info.status === "managed" ? "managed" : "legacy",
+      version: info.version || null, healthy: info.healthy, detail: info.detail || "連携用の更新が必要です。" };
+    if (installation.state === "managed" && helperRemoved && !maintenanceActive()) {
+      helperRemoved = false;
+      await save();
+    }
+  } catch (error) {
+    if (generation !== maintenanceGeneration) return installation;
+    installation = { state: helperRemoved && installation?.state === "removed" ? "removed" : "unavailable", detail: error.message };
+  } finally { client.close(); }
+  return installation;
+}
+
 const folderScan = new FolderScan(api, {
   digestOf: async message => {
     if (message.headersOnly || message.external) return null;
@@ -39,6 +65,7 @@ const folderScan = new FolderScan(api, {
 });
 
 async function chooseFolder(folder) {
+  if (maintenanceActive() || helperRemoved) throw new Error("補助プログラムの管理が完了してから操作してください。");
   if (folderScan.active) throw new Error("フォルダー検査は既に実行中です。");
   const current = folder?.id ? await api.folders.get(folder.id, false) : folder;
   if (!realFolder(current)) throw new Error("通常のメールフォルダーを1つ選択してください。統合・検索・タグの仮想フォルダーは対象外です。");
@@ -177,7 +204,7 @@ function report(error) {
 function save() {
   // Take a snapshot now, then serialize storage writes so an older snapshot
   // cannot overwrite a later scan result.
-  const value = JSON.parse(JSON.stringify({ settings, records, issue, lastHealth, lastScan, folderJob: folderScan.snapshot(), folderCheckpoint: folderScan.checkpointState() }));
+  const value = JSON.parse(JSON.stringify({ settings, records, issue, lastHealth, lastScan, helperRemoved, installation, folderJob: folderScan.snapshot(), folderCheckpoint: folderScan.checkpointState() }));
   writes = writes.catch(() => {}).then(() => api.storage.local.set(value));
   return writes;
 }
@@ -263,6 +290,7 @@ function enqueue(first, source) {
   const work = async () => {
     let overflow = false;
     for await (const message of messagePages(api.messages, first)) {
+      if (source === "manual" && helperRemoved) throw new Error("補助プログラムの導入を確認してから検査してください。");
       if (message.external || !message.folder) continue;
       if (source === "automatic" && (!settings.enabled ||
           !settings.accountIds.includes(accountOf(message)))) continue;
@@ -294,7 +322,7 @@ function enqueue(first, source) {
 }
 
 async function drain() {
-  if (running) return;
+  if (running || maintenanceActive() || helperRemoved) return;
   running = true;
   let client, engine;
   try {
@@ -406,11 +434,13 @@ async function scanSelection() {
 }
 
 const ready = (async () => {
-  const data = await api.storage.local.get(["settings", "records", "issue", "folderJob", "folderCheckpoint", "lastHealth", "lastScan"]);
+  const data = await api.storage.local.get(["settings", "records", "issue", "folderJob", "folderCheckpoint", "lastHealth", "lastScan", "helperRemoved", "installation"]);
   settings = { ...DEFAULTS, ...data.settings };
   records = Array.isArray(data.records) ? data.records : [];
   issue = typeof data.issue === "string" ? data.issue : "";
   lastHealth = data.lastHealth || null;
+  helperRemoved = data.helperRemoved === true;
+  installation = data.installation || null;
   lastScan = data.lastScan || records.filter(record => record.engine &&
     ["clean", "detected", "incomplete", "deleted"].includes(record.status))
     .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))[0] || null;
@@ -471,12 +501,71 @@ api.runtime.onMessage.addListener(async (request, sender) => {
   if (sender.id !== api.runtime.id || sender.url !== api.runtime.getURL("dashboard.html")) return undefined;
   await ready;
   try {
+    if ((maintenanceActive() || helperRemoved) && !["state", "helperInfo", "helperApply", "helperCancel", "helperMarkRemoved", "health"].includes(request.type)) {
+      throw new Error("補助プログラムの管理中か削除後です。導入を確認してから操作してください。");
+    }
     switch (request.type) {
       case "state":
-        return { ok: true, settings, records, issue, lastHealth, lastScan, resultsRequest, batch: batchProgress, folderRequest,
+        return { ok: true, settings, records, issue, lastHealth, lastScan, resultsRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
           folderJob: folderScan.snapshot(), accounts: (await api.accounts.list())
           .filter(account => ["imap", "pop3", "none"].includes(account.type))
           .map(account => ({ id: account.id, name: account.name, type: account.type })) };
+      case "helperInfo":
+        return { ok: true, installation: await helperInfo() };
+      case "helperPlan": {
+        if (running || folderScan.active || batchProgress?.active || deleting.size) throw new Error("検査・削除の処理が終了してから操作してください。フォルダー検査中は先に中止してください。");
+        maintenanceGeneration++;
+        const client = new NativeClient(api.runtime);
+        pendingMaintenance = { client, token: null, expires: Date.now() + 300000, operation: request.operation };
+        try {
+          const plan = await client.request("managePlan", { operation: request.operation, package: request.package });
+          if (plan.status !== "prepared" || !plan.token) throw new Error(plan.detail || "管理機能が未対応です。同梱のCLIファイルを利用してください。");
+          pendingMaintenance.token = plan.token;
+          return { ok: true, plan };
+        } catch (error) { releaseMaintenance(); void drain().catch(report); throw error; }
+      }
+      case "helperCancel":
+        if (pendingMaintenance && request.token === pendingMaintenance.token && !pendingMaintenance.applying) {
+          releaseMaintenance(); void drain().catch(report);
+        }
+        return { ok: true };
+      case "helperApply": {
+        const pending = pendingMaintenance;
+        if (!pending || request.token !== pending.token) throw new Error("管理操作の確認が無効です。");
+        if (pending.applying) throw new Error("管理操作は既に実行中です。");
+        if (Date.now() > pending.expires) {
+          releaseMaintenance(); throw new Error("管理操作の確認が期限切れです。");
+        }
+        pending.applying = true;
+        const removing = pending.operation === "uninstall";
+        try {
+          if (removing) {
+            helperRemoved = true;
+            settings = { ...settings, enabled: false };
+            await save();
+          }
+          const result = await pending.client.request("manageApply", { token: pending.token }, 60000);
+          if (!["removed", "updated"].includes(result.status)) throw new Error(result.detail || "補助プログラムの処理を完了できませんでした。");
+          installation = { state: result.status === "removed" ? "removed" : "managed",
+            version: result.version, healthy: true, retained: result.retained || [],
+            detail: result.status === "removed" ? "補助プログラムを削除しました。拡張の削除を続けられます。" : "補助プログラムを更新・修復しました。" };
+          try { await save(); } catch { installation.detail += " 状態の保存に失敗したため、この画面で結果を確認してください。"; }
+          return { ok: true, installation };
+        } catch (error) {
+          if (removing) {
+            installation = { state: "unavailable", detail: "削除の完了を確認できませんでした。導入を確認するか、CLIのstatus/uninstallで状態を確認してください。" };
+            await save().catch(report);
+          }
+          throw error;
+        } finally { releaseMaintenance(); void drain().catch(report); }
+      }
+      case "helperMarkRemoved":
+        if (request.acknowledged !== true || running || folderScan.active || batchProgress?.active || deleting.size) throw new Error("処理を停止し、Terminalで補助プログラムの削除が完了したことを確認してください。");
+        helperRemoved = true;
+        settings = { ...settings, enabled: false };
+        installation = { state: "removed", detail: "Terminalでの削除完了を利用者が確認しました。" };
+        await save();
+        return { ok: true };
       case "settings": {
         const ids = (await api.accounts.list()).map(account => account.id);
         const previous = settings;
@@ -668,6 +757,8 @@ api.runtime.onMessage.addListener(async (request, sender) => {
 // uses persisted records, not timers or Thunderbird's ephemeral numeric IDs.
 setInterval(() => {
   void ready.then(async () => {
+    if (pendingMaintenance && !pendingMaintenance.applying && Date.now() > pendingMaintenance.expires) releaseMaintenance();
+    if (maintenanceActive() || helperRemoved) return;
     for (const record of records) {
       if (record.status === "error" && record.nextRetry && record.nextRetry <= Date.now() &&
           (record.source === "manual" || (settings.enabled && settings.accountIds.includes(record.locator.accountId)))) {

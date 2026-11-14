@@ -26,6 +26,7 @@ CLAMSCAN = "/usr/bin/clamscan"
 TIMEOUT = 120
 CLAMD = "/usr/sbin/clamd"
 START_TIMEOUT = 60
+sys.dont_write_bytecode = True
 
 
 class ProtocolError(Exception):
@@ -366,10 +367,13 @@ class Session:
         self.expected = 0
         self.sequence = 0
         self.scanner = MailDaemon()
+        self.administration = None
 
     def close(self):
         self.reset()
         self.scanner.close()
+        if self.administration is not None:
+            self.administration.close()
 
     def reset(self):
         if self.buffer is not None:
@@ -382,6 +386,28 @@ class Session:
         operation = request.get("op")
         if operation == "health":
             return health()
+        if operation in {"manageInfo", "managePlan", "manageApply"}:
+            if self.buffer is not None:
+                raise ProtocolError("メール転送中は管理操作を実行できません。")
+            try:
+                if self.administration is None:
+                    root = Path(__file__).resolve().parents[1]
+                    sys.path.insert(0, str(root))
+                    from setup.cli import Administration
+                    self.administration = Administration(root)
+                if operation == "manageInfo":
+                    return self.administration.info()
+                if operation == "managePlan":
+                    return self.administration.prepare(request.get("operation"), request.get("package"))
+                self.scanner.close()
+                return self.administration.apply(request.get("token"))
+            except (ImportError, OSError, ValueError) as error:
+                raise ProtocolError("管理機能を利用できません。CLIで導入・修復してください。" + str(error)) from error
+            except Exception as error:
+                # SetupError is imported lazily: scanning has no setup dependency.
+                if error.__class__.__name__ == "SetupError":
+                    raise ProtocolError(str(error)) from error
+                raise
         if operation == "begin":
             if self.buffer is not None:
                 raise ProtocolError("検査データの受信中です。")

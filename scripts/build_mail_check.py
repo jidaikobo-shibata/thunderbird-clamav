@@ -2,13 +2,30 @@
 """Package the extension and prepare (but never register) its native host."""
 
 import json
+import argparse
+import io
 from pathlib import Path
 import platform
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import zipfile
+
+
+def installer_bytes(root):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from setup.manager import CLI_PAYLOAD
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name in (*CLI_PAYLOAD, "__main__.py"):
+            data = ((root / name).read_bytes() if name != "__main__.py" else
+                    b"from setup.cli import main\nraise SystemExit(main())\n")
+            info = zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, data)
+    return stream.getvalue()
 
 
 def build(root):
@@ -31,7 +48,13 @@ def build(root):
         json.dumps(host_manifest, ensure_ascii=False, indent=2) + "\n"
     )
     target = output / ("clam-mail-check-" + manifest["version"] + ".xpi")
+    installer = installer_bytes(root)
+    (output / ("clam-mail-check-installer-" + manifest["version"] + ".pyz")).write_bytes(installer)
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        installer_info = zipfile.ZipInfo("installer.pyz", (2026, 1, 1, 0, 0, 0))
+        installer_info.external_attr = 0o100644 << 16
+        installer_info.compress_type = zipfile.ZIP_DEFLATED
+        archive.writestr(installer_info, installer)
         for path in sorted(source.iterdir()):
             if path.suffix not in {".html", ".js", ".mjs", ".css", ".json", ".svg"}:
                 continue
@@ -50,7 +73,7 @@ def build_setup(root, xpi):
     output = root / "dist" / (name + ".tar.gz")
     with tempfile.TemporaryDirectory(prefix="clam-setup-build-") as temp:
         bundle = Path(temp) / name
-        files = ["setup.py", "setup/__init__.py", "setup/manager.py", "setup/gui.py",
+        files = ["setup.py", "setup/__init__.py", "setup/manager.py", "setup/gui.py", "setup/cli.py",
                  "native/host.py", "thunderbird/manifest.json", "README.md"]
         for name_in_bundle in files:
             target = bundle / name_in_bundle
@@ -71,6 +94,12 @@ def build_setup(root, xpi):
 
 if __name__ == "__main__":
     root = Path(__file__).resolve().parents[1]
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--legacy-gui", action="store_true", help="互換用の旧GUI配布物も作成")
+    args = parser.parse_args()
     artifacts = build(root)
-    for artifact in (*artifacts, build_setup(root, artifacts[0])):
+    version = json.loads((root / "thunderbird/manifest.json").read_text())["version"]
+    for artifact in (*artifacts, root / "dist" / ("clam-mail-check-installer-" + version + ".pyz")):
         print(artifact)
+    if args.legacy_gui:
+        print(build_setup(root, artifacts[0]))

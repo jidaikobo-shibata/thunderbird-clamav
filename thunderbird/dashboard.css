@@ -66,3 +66,8 @@ dialog .actions { margin-top: 20px; }
 @media (max-width: 600px) { .scan-picker { grid-template-columns: 1fr; } [role="tab"] { min-width: 0; flex: 1; } }
 
 @media (max-width: 600px) { [role="tab"] { padding: 6px; font-size: .9rem; } #tab-results { flex: 2; } }
+
+pre { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid GrayText; padding: 12px; }
+#installation-report, #helper-paths, #helper-dialog-detail { overflow-wrap: anywhere; }
+#installer-download { display: inline-block; padding: 8px 12px; min-height: 28px; border: 1px solid GrayText; border-radius: 4px; }
+#cli-uninstall-guide { margin: 16px 0; }

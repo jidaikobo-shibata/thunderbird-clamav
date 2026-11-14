@@ -93,6 +93,25 @@
       <button type="button" id="health">接続を再確認</button>
       <p class="hint">接続確認ではメールの検査は行いません。表示は確認時点の結果です。</p>
     </section>
+    <section class="connection-status" aria-labelledby="installation-title">
+      <h3 id="installation-title">補助プログラムの導入・管理</h3>
+      <p id="installation-status" role="status">導入状態を確認しています。</p>
+      <p>Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。初回登録と接続不能時の修復は、同梱ファイルを保存してTerminalで実行します。GUIアプリやsudoは不要です。</p>
+      <a id="installer-download" download>導入用ファイルを保存</a>
+      <p>表示される名前でファイルを保存し、その保存先のフォルダーをTerminalで開いて次のコマンドを実行してください。名前が変わった場合はコマンドも合わせてください。導入済みなら更新・修復します。</p>
+      <pre><code id="installer-command"></code></pre><button type="button" id="copy-install">導入コマンドをコピー</button>
+      <div class="actions"><button type="button" id="helper-check">導入を確認</button><button type="button" id="helper-update" disabled>同梱版へ更新・修復</button><button type="button" id="helper-uninstall" class="danger" disabled>アンインストール</button></div>
+      <p id="installation-report"></p>
+      <details id="cli-uninstall-guide"><summary>Terminalで補助プログラムを削除する場合</summary>
+        <p>古い補助プログラムなど、アドオンから削除できない場合に使います。先に新着メールの自動検査をオフにし、検査を中止して停止を待ち、上の導入用ファイルを保存して、その保存先のフォルダーで実行してください。</p>
+        <pre><code id="uninstaller-command"></code></pre><button type="button" id="copy-uninstall">削除コマンドをコピー</button>
+        <p>実行結果で削除の完了を確認した後、チェックを入れて拡張の削除を続けられます。接続できないだけでは、削除済みとは判断しません。</p>
+        <label><input type="checkbox" id="manual-uninstall-ack">Terminalで補助プログラムの削除が完了したことを確認した</label>
+        <button type="button" id="finish-manual-uninstall" disabled>拡張の削除へ進む</button>
+      </details>
+      <button type="button" id="remove-extension" hidden>拡張の削除を続ける</button>
+      <p class="hint">アンインストールでは、この拡張と補助プログラムを取り除きます。拡張の設定・履歴・再開情報は失われる可能性があります。メール本体・アカウント・ClamAVは残ります。再導入する場合に備え、先に導入用ファイルを保存してください。</p>
+    </section>
     <h3>検査履歴</h3>
     <p>最大1000件を保持します。上限時は古い未検出・完全削除済みの結果から置き換えます。差出人・件名・検査結果をローカルに保存し、本文と添付は履歴に保存しません。</p>
     <button type="button" id="clear">完了した検査履歴を消去</button>
@@ -112,6 +131,12 @@
   </section>
 
 </main>
+<dialog id="helper-dialog" aria-labelledby="helper-dialog-title" aria-describedby="helper-dialog-detail">
+  <form method="dialog"><h2 id="helper-dialog-title"></h2><p id="helper-dialog-detail"></p>
+    <ul id="helper-paths"></ul><label><input type="checkbox" id="helper-ack">対象と影響を確認した</label>
+    <div class="actions"><button id="helper-cancel" value="cancel" autofocus>キャンセル</button><button id="helper-confirm" value="apply" disabled>実行</button></div>
+  </form>
+</dialog>
 <dialog id="folder-dialog" aria-labelledby="folder-dialog-title" aria-describedby="folder-warning">
   <form method="dialog">
     <h2 id="folder-dialog-title">フォルダーを検査</h2>
