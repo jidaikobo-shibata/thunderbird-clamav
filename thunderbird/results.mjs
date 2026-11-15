@@ -10,8 +10,9 @@ export function filterRecords(records, { status = "all", account = "all", search
   return records.filter(record => {
     if (folderJobId && record.folderJobId !== folderJobId) return false;
     if (status === "attention" && !needsAttention(record)) return false;
+    if (status === "automatic-excluded" && !(record.status === "incomplete" && record.unscannedReason === "automaticExcluded")) return false;
     if (status === "pending" && !["queued", "scanning"].includes(record.status)) return false;
-    if (!["all", "attention", "pending"].includes(status) && record.status !== status) return false;
+    if (!["all", "attention", "pending", "automatic-excluded"].includes(status) && record.status !== status) return false;
     if (account !== "all" && record.locator.accountId !== account) return false;
     if (query && ![record.locator.author, record.locator.subject, record.locator.folder?.path, folderLabel(record.locator.folder, folders, record.locator.accountId),
       localizeDetail(record), ...(record.signatures || [])].join("\n").toLocaleLowerCase().includes(query)) return false;

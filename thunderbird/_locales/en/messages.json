@@ -911,12 +911,12 @@
     "description": "接続の確認結果を更新しました。"
   },
   "mail172": {
-    "message": "Clear completed scan history, including detections and failures? Messages themselves will not be deleted.",
-    "description": "検出・失敗を含む、完了した検査履歴を消去します。メール自体は削除しません。続けますか？"
+    "message": "Clear scan history, including detections, unscanned messages, and failures? Queued and running entries and messages themselves will be kept.",
+    "description": "検出・未検査・失敗を含む検査履歴を消去します。検査待ち・検査中の記録とメール本体は残します。続けますか？"
   },
   "mail173": {
-    "message": "Completed scan history cleared.",
-    "description": "完了した検査履歴を消去しました。"
+    "message": "Scan history cleared.",
+    "description": "検査履歴を消去しました。"
   },
   "mail174": {
     "message": "Finding target messages",
@@ -1470,8 +1470,8 @@
     "description": "最大1000件を保持します。上限時は古い未検出・完全削除済みの結果から置き換えます。差出人・件名・検査結果をローカルに保存し、本文と添付は履歴に保存しません。"
   },
   "mail301": {
-    "message": "Clear completed scan history",
-    "description": "完了した検査履歴を消去"
+    "message": "Clear scan history",
+    "description": "検査履歴を消去"
   },
   "mail302": {
     "message": "Clearing history does not delete messages themselves.",
@@ -2229,5 +2229,26 @@
   "autoAccountsStopped": {
     "message": "Automatic scanning is stopped.",
     "description": "自動検査は停止しています。"
+  },
+  "automaticExcludedFilter": {
+    "message": "Unscanned: removed from automatic scanning",
+    "description": "未検査：自動検査の対象から除外"
+  },
+  "automaticExcludedDetail": {
+    "message": "Not scanned because this account was removed from automatic scanning while the message was queued. Rescan it if needed.",
+    "description": "検査待ちの間に自動検査の対象から外れたため、検査していません。必要に応じて再検査してください。"
+  },
+  "automaticExcludedPrevious": {
+    "message": "Previous details: $ARG1$",
+    "description": "前回の説明：$1",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "notificationHeading": {
+    "message": "Notifications",
+    "description": "通知"
   }
 }

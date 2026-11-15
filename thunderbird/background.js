@@ -159,6 +159,31 @@ async function verified(record, expectedFingerprint = null) {
   return { message, fingerprint };
 }
 
+function excludePausedAutomatic() {
+  const changes = [];
+  for (const record of records) {
+    if (!pausedAutomatic(record, settings)) continue;
+    const before = { ...record };
+    record.status = "incomplete";
+    record.unscannedReason = "automaticExcluded";
+    record.detail = t("automaticExcludedDetail", "検査待ちの間に自動検査の対象から外れたため、検査していません。必要に応じて再検査してください。") +
+      ((record.attempts || 0) > 0 && before.detail ? " " + t("automaticExcludedPrevious", "前回の説明：$1", [before.detail]) : "");
+    delete record.detailMessages;
+    record.nextRetry = null;
+    record.updatedAt = new Date().toISOString();
+    changes.push({ record, before, updatedAt: record.updatedAt });
+  }
+  return changes;
+}
+
+function restoreExcluded(changes) {
+  for (const { record, before, updatedAt } of changes) {
+    if (record.status !== "incomplete" || record.unscannedReason !== "automaticExcluded" || record.updatedAt !== updatedAt) continue;
+    for (const key of Object.keys(record)) if (!Object.hasOwn(before, key)) delete record[key];
+    Object.assign(record, before);
+  }
+}
+
 function requestedKeys(keys) {
   if (!Array.isArray(keys) || !keys.length || keys.length > 100 ||
       keys.some(key => typeof key !== "string") || new Set(keys).size !== keys.length) {
@@ -215,6 +240,7 @@ async function executeDeletion(ticket) {
       throw new Error(t("mail027", "確認後にメールの場所や検査結果が変わりました。再確認してください。"));
     }
     await api.messages.delete([current.id], { deletePermanently: true, isUserAction: true });
+    delete record.unscannedReason;
     record.status = "deleted";
     record.deletedAt = new Date().toISOString();
     record.updatedAt = record.deletedAt;
@@ -345,7 +371,7 @@ function enqueue(first, source) {
       const record = existing || { key: crypto.randomUUID(), createdAt: new Date().toISOString() };
       Object.assign(record, {
         messageId: message.id, session, locator: locator(message), source,
-        status: "queued", detail: t("mail038", "検査を待っています。"), signatures: [],
+        unscannedReason: null, status: "queued", detail: t("mail038", "検査を待っています。"), signatures: [],
         sha256: null, engine: null, attempts: 0, nextRetry: null, folderJobId: null, updatedAt: new Date().toISOString()
       });
       if (!existing) records.push(record);
@@ -390,6 +416,7 @@ async function drain() {
       }
       if (!record) break;
       const fromFolder = record.source === "folder";
+      delete record.unscannedReason;
       record.status = "scanning";
       delete record.detailMessages;
       record.detail = t("mail042", "メールを取得して検査しています。");
@@ -508,6 +535,7 @@ const ready = (async () => {
       if (record.source === "folder") record.nextRetry = null;
     }
   }
+  excludePausedAutomatic();
   await api.menus.removeAll();
   api.menus.create({ id: "scan", title: t("mail051", "ClamAVで選択メールを検査"), contexts: ["message_list"] });
   api.menus.create({ id: "scan-folder", title: t("mail052", "ClamAVでフォルダーを検査"), contexts: ["folder_pane"] });
@@ -592,6 +620,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
           if (removing) {
             helperRemoved = true;
             settings = { ...settings, enabled: false, accountIds: [] };
+            excludePausedAutomatic();
             await save();
           }
           const result = await pending.client.request("manageApply", { token: pending.token }, 60000);
@@ -613,6 +642,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         if (request.acknowledged !== true || running || folderScan.active || batchProgress?.active || deleting.size) throw new Error(t("mail065", "処理を停止し、Terminalで補助プログラムの削除が完了したことを確認してください。"));
         helperRemoved = true;
         settings = { ...settings, enabled: false, accountIds: [] };
+        excludePausedAutomatic();
         installation = { state: "removed", detail: t("mail066", "Terminalでの削除完了を利用者が確認しました。") };
         await save();
         return { ok: true };
@@ -620,8 +650,9 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         const ids = (await api.accounts.list()).map(account => account.id);
         const previous = settings;
         settings = validateSettings(request.settings, ids);
+        const excluded = excludePausedAutomatic();
         try { await save(); }
-        catch (error) { settings = previous; throw error; }
+        catch (error) { settings = previous; restoreExcluded(excluded); await updateBadge().catch(() => {}); throw error; }
         void drain().catch(report);
         return { ok: true };
       }
@@ -688,6 +719,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
           throw new Error(t("mail074", "この結果は再検査できません。"));
         }
         record.status = "queued";
+        delete record.unscannedReason;
         record.source = "manual";
         record.attempts = 0;
         record.nextRetry = null;
@@ -704,7 +736,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
           throw new Error(t("mail075", "再検査できない結果が含まれています。選び直してください。"));
         }
         for (const record of targets) {
-          Object.assign(record, { status: "queued", source: "manual", attempts: 0, nextRetry: null, folderJobId: null });
+          Object.assign(record, { unscannedReason: null, status: "queued", source: "manual", attempts: 0, nextRetry: null, folderJobId: null });
         }
         await save();
         void drain().catch(report);
@@ -775,29 +807,6 @@ api.runtime.onMessage.addListener(async (request, sender) => {
           throw new Error(t("mail081", "削除確認が無効か期限切れです。もう一度操作してください。"));
         }
         return await executeDeletion(ticket);
-      }
-      case "cancelPausedQueue": {
-        if (request.acknowledged !== true) throw new Error(t("queueConfirmRequired", "待機の取り消しには確認が必要です。"));
-        const work = async () => {
-          let count = 0;
-          records = records.filter(record => {
-            if (!pausedAutomatic(record, settings)) return true;
-            count++;
-            if ((record.attempts || 0) > 0 || record.sha256 || record.signatures?.length) {
-              record.status = "error";
-              record.nextRetry = null;
-              record.updatedAt = new Date().toISOString();
-              record.detail = t("queueRetryCancelled", "自動再試行の待機を取り消しました。前回の失敗内容：") + (record.detail || "");
-              delete record.detailMessages;
-              return true;
-            }
-            return false;
-          });
-          await save();
-          return { ok: true, count };
-        };
-        mutations = mutations.catch(() => {}).then(work);
-        return await mutations;
       }
       case "clear":
         // This removes only generated results, never messages. The page asks

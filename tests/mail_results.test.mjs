@@ -51,3 +51,11 @@ test("folder searches match displayed Unicode hierarchy and isolate account name
   assert.equal(filterRecords([record], { search: "親の名前", folders }).length, 1);
   assert.equal(filterRecords([record], { search: "別アカウント", folders }).length, 0);
 });
+
+test("excluded automatic mail is reviewable in attention, incomplete and dedicated filters", () => {
+  const excluded = { key: "excluded", status: "incomplete", unscannedReason: "automaticExcluded", locator: {} };
+  const other = { key: "other", status: "incomplete", locator: {} };
+  for (const status of ["attention", "incomplete"]) assert.equal(filterRecords([excluded, other], { status }).length, 2);
+  assert.deepEqual(filterRecords([excluded, other], { status: "automatic-excluded" }).map(record => record.key), ["excluded"]);
+  assert.equal(selectable(excluded), true);
+});

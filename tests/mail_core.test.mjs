@@ -89,7 +89,7 @@ test("native mismatched digest is rejected", async () => {
   client.close();
 });
 
-test("only paused automatic queued work is cancellable", async () => {
+test("only paused automatic queued work is eligible for an excluded result", async () => {
   const { pausedAutomatic } = await import("../thunderbird/core.mjs");
   const queued = { source: "automatic", status: "queued", locator: { accountId: "one" } };
   assert.equal(pausedAutomatic(queued, { enabled: false, accountIds: ["one"] }), true);

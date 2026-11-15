@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { sha256 } from "../thunderbird/core.mjs";
+import { sha256, locator } from "../thunderbird/core.mjs";
 
 function event() {
   const listeners = [];
@@ -685,8 +685,9 @@ test("oversized unscanned mail is fingerprinted in bounded chunks for deletion",
 test("queued, scanning, deleted and unresolvable results cannot be deleted", async () => {
   const { records, mails } = await batchFixture();
   for (const status of ["queued", "scanning", "deleted", "unknown"]) {
-    const h = await harness({ saved: { records: [{ ...records[0], status, source: "automatic" }] },
+    const h = await harness({ saved: { records: [{ ...records[0], status: "clean", source: "automatic" }] },
       mails, deleteAllowed: true });
+    (await h.send("state")).records[0].status = status; // Test action guards independently of restart migration.
     assert.equal((await h.send("prepareDelete", { key: "k1" })).ok, false);
     assert.equal((await h.send("prepareDeleteBatch", { keys: ["k1"] })).ok, false);
     assert.equal(h.deleted.length, 0);
@@ -866,16 +867,20 @@ test("multi-folder confirmation scans the verified set and rejects changes or in
   assert.deepEqual(h.rawReads, [1, 2]);
 });
 
-test("canceling a disabled automatic queue frees capacity without deleting mail", async () => {
+test("legacy paused queue becomes reviewable incomplete history and is not silently evicted", async () => {
   const pending = Array.from({ length: 1000 }, (_, index) => ({ key: "q" + index, source: "automatic", status: "queued",
     attempts: 0, locator: { accountId: "one" }, updatedAt: new Date().toISOString() }));
   const h = await harness({ saved: { settings: { enabled: false, accountIds: ["one"], notifications: false }, records: pending }, mails: [mail(1)] });
   assert.equal((await h.send("cancelPausedQueue")).ok, false);
   assert.equal((await h.send("state")).records.length, 1000);
-  const result = await h.send("cancelPausedQueue", { acknowledged: true });
-  assert.equal(result.count, 1000);
-  assert.equal((await h.send("state")).records.length, 0);
+  assert.ok((await h.send("state")).records.every(record => record.status === "incomplete" && record.unscannedReason === "automaticExcluded"));
   assert.equal(h.deleted.length, 0);
+  const blockedContext = await h.send("folderContext", { folderId: "inbox" });
+  await h.send("folderStart", { token: blockedContext.token, includeSubfolders: false });
+  await settledFolder(h, "blocked");
+  assert.equal((await h.send("state")).records.length, 1000);
+  await h.send("clear");
+  assert.equal((await h.send("state")).records.length, 0);
   const context = await h.send("folderContext", { folderId: "inbox" });
   await h.send("folderStart", { token: context.token, includeSubfolders: false });
   const state = await settledFolder(h, "completed");
@@ -883,20 +888,19 @@ test("canceling a disabled automatic queue frees capacity without deleting mail"
   assert.deepEqual(h.rawReads, [1]);
 });
 
-test("canceling automatic retries preserves previous failures and alert history", async () => {
+test("excluded automatic retries keep previous failure details and other alert history", async () => {
   const records = [{ key: "retry", source: "automatic", status: "queued", attempts: 1, nextRetry: 1,
     locator: { accountId: "one" }, detail: "previous scan failed", updatedAt: new Date().toISOString() },
     ...["detected", "incomplete", "error"].map(status => ({ key: status, source: "automatic", status,
       locator: { accountId: "one" }, detail: status }))];
   const h = await harness({ saved: { settings: { enabled: false, accountIds: ["one"], notifications: false }, records } });
-  assert.equal((await h.send("cancelPausedQueue", { acknowledged: true })).count, 1);
   const state = await h.send("state");
   assert.equal(state.records.length, 4);
-  assert.equal(state.records[0].status, "error");
+  assert.equal(state.records[0].status, "incomplete");
   assert.equal(state.records[0].nextRetry, null);
   assert.match(state.records[0].detail, /previous scan failed/);
   await h.timers[0]();
-  assert.equal((await h.send("state")).records[0].status, "error");
+  assert.equal((await h.send("state")).records[0].status, "incomplete");
   assert.equal(h.deleted.length, 0);
 });
 
@@ -919,4 +923,66 @@ test("legacy ON retains selected accounts and continues automatic scanning", asy
   h.events.newMail.listeners[0](messages[0].folder, { messages });
   await settle(h, state => state.records.some(record => record.status === "clean"));
   assert.deepEqual(h.rawReads, [1]);
+});
+
+test("unchecking one account excludes its queued mail, finishes active mail and keeps manual work", async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const mails = [mail(1), mail(2, "two"), mail(3), mail(4)];
+  const records = mails.map((message, index) => ({ key: "q" + message.id, source: index === 3 ? "manual" : "automatic",
+    status: "queued", attempts: 0, locator: locator(message) }));
+  const h = await harness({ saved: { settings: { enabled: true, accountIds: ["one", "two"], notifications: false }, records },
+    mails, scanGate: id => id === 1 ? gate : undefined });
+  await settle(h, state => state.records[0].status === "scanning" && h.rawReads.length === 1);
+  await h.send("settings", { settings: { enabled: true, accountIds: ["two"], notifications: false } });
+  const during = await h.send("state");
+  assert.equal(during.records[0].status, "scanning");
+  assert.equal(during.records[1].status, "queued");
+  assert.equal(during.records[2].status, "incomplete");
+  assert.equal(during.records[2].unscannedReason, "automaticExcluded");
+  assert.equal(during.records[3].status, "queued");
+  release();
+  await settle(h, state => state.records.filter(record => record.status === "clean").length === 3);
+  assert.deepEqual(h.rawReads, [1, 2, 4]);
+  await h.send("settings", { settings: { enabled: true, accountIds: ["one", "two"], notifications: false } });
+  assert.equal((await h.send("state")).records[2].status, "incomplete");
+  await h.send("retry", { key: "q3" });
+  const done = await settle(h, state => state.records[2].status === "clean");
+  assert.equal(done.records[2].unscannedReason, undefined);
+  assert.deepEqual(h.rawReads, [1, 2, 4, 3]);
+});
+
+test("excluded unscanned mail can be permanently deleted with normal confirmation", async () => {
+  const message = mail(1);
+  const h = await harness({ saved: { settings: { enabled: false, accountIds: [], notifications: false },
+    records: [{ key: "unscanned", source: "automatic", status: "queued", attempts: 0, locator: locator(message), sha256: null }] },
+    mails: [message], deleteAllowed: true });
+  const prepared = await h.send("prepareDelete", { key: "unscanned" });
+  assert.equal(prepared.ok, true);
+  assert.equal((await h.send("deletePermanently", { key: "unscanned", token: prepared.token })).ok, true);
+  const record = (await h.send("state")).records[0];
+  assert.equal(record.status, "deleted");
+  assert.equal(record.unscannedReason, undefined);
+  assert.equal(h.deleted.length, 1);
+});
+
+test("failed account deselection restores queued results as well as settings", async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const mails = [mail(1), mail(2)];
+  const records = mails.map(message => ({ key: "q" + message.id, source: "automatic", status: "queued", attempts: 0, locator: locator(message) }));
+  const h = await harness({ saved: { settings: { enabled: true, accountIds: ["one"], notifications: false }, records }, mails,
+    scanGate: id => id === 1 ? gate : undefined });
+  await settle(h, state => state.records[0].status === "scanning" && h.rawReads.length === 1);
+  const write = h.api.storage.local.set;
+  h.api.storage.local.set = async () => { throw new Error("disk full"); };
+  assert.equal((await h.send("settings", { settings: { enabled: false, accountIds: [], notifications: false } })).ok, false);
+  const failed = await h.send("state");
+  assert.equal(failed.settings.enabled, true);
+  assert.equal(failed.records[1].status, "queued");
+  assert.equal(failed.records[1].unscannedReason, undefined);
+  h.api.storage.local.set = write;
+  release();
+  await settle(h, state => state.records.every(record => record.status === "clean"));
+  assert.deepEqual(h.rawReads, [1, 2]);
 });

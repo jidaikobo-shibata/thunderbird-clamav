@@ -71,11 +71,11 @@ node --check thunderbird/dashboard.js
 python3 scripts/build_mail_check.py
 ```
 
-`dist/clam-mail-check-0.12.1.xpi` と、確認用の補助プログラム・登録JSONを
+`dist/clam-mail-check-0.13.0.xpi` と、確認用の補助プログラム・登録JSONを
 `dist/native/` に生成します。GUI不要の導入用ファイル
-`dist/clam-mail-check-installer-0.12.1.pyz` をXPIに同梱し、単体でも生成します。
+`dist/clam-mail-check-installer-0.13.0.pyz` をXPIに同梱し、単体でも生成します。
 旧GUI配布物も必要な場合だけ `--legacy-gui` を指定します。この場合はCコンパイラーが必要です。
-`dist/clam-mail-check-setup-0.12.1-linux-<architecture>.tar.gz` に生成します。
+`dist/clam-mail-check-setup-0.13.0-linux-<architecture>.tar.gz` に生成します。
 旧GUI配布物にはXPI・補助プログラム・GUIを同梱します。通常配布のXPIにもCLI導入用ファイルが入り、ソースのチェックアウトは不要です。
 生成しただけではインストールされません。旧GUIの起動用実行ファイルはビルドした
 アーキテクチャ向けです。今回の確認対象はUbuntu 26.04 / x86_64です。
@@ -156,14 +156,14 @@ Python 3と更新済みClamAVはOS側に必要で、Snap/Flatpakとの連携は�
 導入用ファイルはネットワークからコードを取得せず、同梱内容だけを設置します。
 
 1. XPIを旧版削除なしで上書きインストールし、「セットアップ」タブを開きます。
-2. 「導入用ファイルを保存」で`clam-mail-check-installer-0.12.1.pyz`を保存します。
+2. 「導入用ファイルを保存」で`clam-mail-check-installer-0.13.0.pyz`を保存します。
 3. 保存先のフォルダーをTerminalで開き、アドオンに表示されたコマンドを実行します。
    保存時の名前が変わった場合はコマンドのファイル名も合わせてください。
 4. Terminalに表示される変更先と影響を確認して承認します。root/sudoは不要で、実行を拒否します。
 5. アドオンに戻って「導入を確認」を押します。設置が有効で管理機能に対応した場合は版と状態が表示されます。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.12.1.pyz install
+python3 -I ./clam-mail-check-installer-0.13.0.pyz install
 ```
 
 導入済みなら同じコマンドで更新・修復します。既存の旧GUI方式の設置記録（format 1）も引き継ぎます。
@@ -188,7 +188,7 @@ python3 -I ./clam-mail-check-installer-0.12.1.pyz install
 5. 再びXPIをインストールし、上記の`install`コマンドと「導入を確認」で初回導入を試せます。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.12.1.pyz uninstall
+python3 -I ./clam-mail-check-installer-0.13.0.pyz uninstall
 ```
 
 対応済みならアドオン内の「アンインストール」で補助プログラムを削除し、続いてThunderbirdの確認で拡張自身を削除します。
@@ -203,7 +203,7 @@ python3 -I ./clam-mail-check-installer-0.12.1.pyz uninstall
 状態だけの確認（読み取りのみ）と、隔離した設置先での自動テストは次のとおりです。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.12.1.pyz status
+python3 -I ./clam-mail-check-installer-0.13.0.pyz status
 python3 -B -m unittest discover -s tests -p 'test_cli_setup.py'
 ```
 
@@ -279,7 +279,7 @@ python3 scripts/register_mail_host.py --install
 ユーザーのホーム配下に、次の2ファイルを新規作成します。
 
 ```text
-$HOME/.local/lib/clam-mail-check/0.12.1/host.py
+$HOME/.local/lib/clam-mail-check/0.13.0/host.py
 $HOME/.mozilla/native-messaging-hosts/local.clam_mail_check.json
 ```
 
@@ -617,3 +617,13 @@ XPIを削除せず上書きし、補助プログラムも更新してくださ�
 
 ## 設定画面の重複説明を削除（0.12.1）
 アカウントのチェックと重複する自動検査の状態表示、アカウント選択の説明、通知の補足、初期表示の自動保存案内を削除しました。変更時の保存中・保存完了・保存失敗のフィードバックは維持します。「停止中の自動検査」は、対象から外れたアカウントなどで残っている自動検査の待機を取り消す機能であり、今回の画面整理では変更していません。
+
+
+## 設定と検査結果の役割を整理（0.13.0）
+設定タブは「新着メールを自動検査するアカウント」と「通知」に限定しました。検査履歴の説明・消去は検査結果タブに移動しています。消去の確認では検出・未検査・失敗も対象であることを明示し、検査待ち・検査中の記録とメール本体を残します。
+
+対象アカウントのチェックを外した時点で残っていた自動検査の待機は、理由付きのincomplete（未検査）に移します。検査結果の「確認が必要」「一部または全部が未検査」に含み、「未検査：自動検査の対象から除外」でも絞り込めます。再検査・完全削除は通常の確認操作で利用できます。対象を再度チェックしても以前の未検査を自動で再試行せず、結果一覧から再検査します。実行中の1通、手動検査待ち、他の対象アカウントの待機には影響しません。
+
+既存の停止中キューも起動時に同じ扱いに移行します。前回の失敗から再試行待ちだった場合は、その説明を併記して残します。記録の自動削除やメール本体の変更は行いません。設定保存が失敗した場合は設定と移行した記録を復元します。旧「停止中の自動検査」の取消しUI/APIは廃止しました。
+
+これらの未検査も、履歴上限で保護する確認対象として扱います。確認対象だけで1000件になった場合はフォルダー検査を停止し、結果を確認・整理してから再開します。履歴の消去は利用者による確認を経て行います。
