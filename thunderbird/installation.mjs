@@ -125,11 +125,22 @@ export function installationUI({ request, action, latest, busy }) {
       t("mail229", "補助プログラムに接続できません。同梱ファイルで導入・修復し、「導入を確認」を押してください。");
     $("helper-check").disabled = Boolean(locked);
     const needed = helperAction(info, version);
+    const terminalNeeded = ["unavailable", "legacy", "removed"].includes(info?.state);
+    const attention = Boolean(needed || terminalNeeded);
+    $("helper-task").classList.toggle("needs-action", attention);
+    $("helper-task").dataset.action = needed || (terminalNeeded ? "install" : "ready");
+    $("installation-title").textContent = needed === "update" ? t("setupUpdateTitle", "補助プログラムを更新してください") :
+      needed === "repair" ? t("setupRepairTitle", "補助プログラムを修復してください") :
+      terminalNeeded ? t("setupInstallTitle", "補助プログラムを導入してください") : t("mail307", "補助プログラムの導入・更新");
+    const steps = $("helper-install-steps");
+    const mode = terminalNeeded ? "install" : "optional";
+    if (steps.dataset.mode !== mode) { steps.open = terminalNeeded; steps.dataset.mode = mode; }
     $("helper-update").hidden = !needed;
     $("helper-update").textContent = needed === "repair" ? t("mail230", "補助プログラムを修復") : t("mail231", "補助プログラムを更新");
     $("helper-update").disabled = Boolean(locked || working || !needed);
     $("helper-action-hint").textContent = needed === "update" ? t("mail232", "同梱の補助プログラム$1へ更新できます。", [version]) :
       needed === "repair" ? t("mail233", "設置ファイルに不整合があるため、修復が必要です。") :
+      terminalNeeded ? t("setupInstallNext", "次の手順で導入用ファイルを保存し、Terminalで実行した後、「導入を確認」を押してください。") :
       info?.state === "managed" && compareHelperVersions(info.version, version) === 1 ?
         t("mail234", "導入済みの版が同梱版より新しいため、この同梱版で更新・修復は行いません。修復には同じ版か新しい版の導入用ファイルを使ってください。") :
       info?.state === "managed" && info.healthy === true ? t("mail235", "更新・修復は不要です。") : "";

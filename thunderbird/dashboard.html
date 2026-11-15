@@ -104,8 +104,23 @@
   </section>
   <section id="panel-setup" role="tabpanel" aria-labelledby="tab-setup" tabindex="0" hidden>
     <h2><span data-i18n="mail106">セットアップ</span></h2>
+    <section id="helper-task" class="connection-status setup-task" aria-labelledby="installation-title">
+      <h3 id="installation-title" tabindex="-1"><span data-i18n="mail307">補助プログラムの導入・更新</span></h3>
+      <p id="installation-status" role="status"><span data-i18n="mail308">導入状態を確認しています。</span></p>
+      <p id="helper-action-hint" class="hint"></p>
+      <button type="button" id="helper-update" class="primary-action" disabled hidden><span data-i18n="mail231">補助プログラムを更新</span></button>
+      <details id="helper-install-steps"><summary data-i18n="setupTerminalSteps">Terminalで導入・再導入する手順</summary>
+      <p><span data-i18n="mail309">Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。初回登録と接続不能時の修復は、同梱ファイルを保存してTerminalで実行します。補助プログラムの導入にGUIアプリやsudoは不要です。</span></p>
+      <button type="button" id="installer-download"><span data-i18n="mail310">導入用ファイルを保存</span></button>
+      <p><span data-i18n="mail311">表示される名前でファイルを保存し、その保存先のフォルダーをTerminalで開いて次のコマンドを実行してください。名前が変わった場合はコマンドも合わせてください。導入済みなら更新・修復します。</span></p>
+      <pre><code id="installer-command"></code></pre><button type="button" id="copy-install"><span data-i18n="mail312">導入コマンドをコピー</span></button>
+      <button type="button" id="helper-check"><span data-i18n="mail313">導入を確認</span></button>
+      </details>
+      <p id="installation-report"></p>
+
+    </section>
     <section class="connection-status" aria-labelledby="connection-title">
-      <h3 id="connection-title"><span data-i18n="mail303">ClamAVの状態</span></h3>
+      <h3 id="connection-title" tabindex="-1"><span data-i18n="mail303">ClamAVの状態</span></h3>
       <p id="health-result"><span data-i18n="mail304">接続はまだ確認していません。</span></p>
       <details id="clamav-install-guide">
         <summary data-i18n="clamavInstallHeading">ClamAVの導入方法（Ubuntu / Debian）</summary>
@@ -118,18 +133,7 @@
       <button type="button" id="health"><span data-i18n="mail305">接続を再確認</span></button>
       <p class="hint"><span data-i18n="mail306">接続確認ではメールの検査は行いません。表示は確認時点の結果です。</span></p>
     </section>
-    <section class="connection-status" aria-labelledby="installation-title">
-      <h3 id="installation-title" tabindex="-1"><span data-i18n="mail307">補助プログラムの導入・更新</span></h3>
-      <p id="installation-status" role="status"><span data-i18n="mail308">導入状態を確認しています。</span></p>
-      <p><span data-i18n="mail309">Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。初回登録と接続不能時の修復は、同梱ファイルを保存してTerminalで実行します。補助プログラムの導入にGUIアプリやsudoは不要です。</span></p>
-      <button type="button" id="installer-download"><span data-i18n="mail310">導入用ファイルを保存</span></button>
-      <p><span data-i18n="mail311">表示される名前でファイルを保存し、その保存先のフォルダーをTerminalで開いて次のコマンドを実行してください。名前が変わった場合はコマンドも合わせてください。導入済みなら更新・修復します。</span></p>
-      <pre><code id="installer-command"></code></pre><button type="button" id="copy-install"><span data-i18n="mail312">導入コマンドをコピー</span></button>
-      <div class="actions"><button type="button" id="helper-check"><span data-i18n="mail313">導入を確認</span></button><button type="button" id="helper-update" disabled hidden><span data-i18n="mail231">補助プログラムを更新</span></button></div>
-      <p id="helper-action-hint" class="hint"></p>
-      <p id="installation-report"></p>
 
-    </section>
   </section>
   <section id="panel-uninstall" role="tabpanel" aria-labelledby="tab-uninstall" tabindex="0" hidden>
     <h2><span data-i18n="mail241">アンインストール</span></h2>

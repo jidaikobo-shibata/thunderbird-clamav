@@ -93,3 +93,8 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid GrayText
 #forget-selected { margin-inline-start: 12px; }
 #selection-expansion:has(button[hidden]) { display: none; }
 #batch-progress { overflow-wrap: anywhere; }
+
+.connection-status.needs-action { border: 2px solid Highlight; border-inline-start-width: 6px; background: color-mix(in srgb, Highlight 7%, Canvas); }
+.setup-task .primary-action { background: Highlight; color: HighlightText; border: 2px solid Highlight; font-weight: bold; margin-block: 4px 16px; }
+.setup-task details { margin-block: 16px 0; }
+.setup-task details summary { font-weight: bold; }

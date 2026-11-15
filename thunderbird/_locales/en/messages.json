@@ -2484,5 +2484,20 @@
   "clamavInstallerUnusable": {
     "message": "Could not verify ClamAV. Check its installation and try again. Changes will not be committed.",
     "description": "ClamAVを確認できませんでした。導入状態を確認してから再実行してください。変更は確定しません。"
+  },
+  "setupTerminalSteps": {
+    "message": "Install or reinstall using Terminal"
+  },
+  "setupUpdateTitle": {
+    "message": "Update the helper"
+  },
+  "setupRepairTitle": {
+    "message": "Repair the helper"
+  },
+  "setupInstallTitle": {
+    "message": "Install the helper"
+  },
+  "setupInstallNext": {
+    "message": "Save the installer and run it in Terminal using the steps below. Then choose “Check installation”."
   }
 }

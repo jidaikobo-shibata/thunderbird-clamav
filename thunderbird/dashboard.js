@@ -112,8 +112,9 @@ function renderHelperNotice() {
 function openSetup() {
   userNavigated = true;
   activateTab("setup");
-  $("installation-title").focus();
-  $("installation-title").scrollIntoView({ block: "start" });
+  const target = ["clamav_missing", "clamav_unusable"].includes(latest?.lastHealth?.code) ? $("connection-title") : $("installation-title");
+  target.focus();
+  target.scrollIntoView({ block: "start" });
 }
 
 function activateTab(name, focus = false) {
@@ -551,6 +552,7 @@ function renderConnection() {
     t("mail153", "最終接続確認：$1 ／ $2。$3 $4", [health.status === "ready" ? t("mail154", "応答あり") : t("mail155", "確認失敗"), new Date(health.checkedAt).toLocaleString(uiLanguage()), health.engine || "", localizeDetail(health)]) :
     t("mail156", "接続はまだ確認していません。「接続を再確認」で確認できます。"));
   const guide = $("clamav-install-guide");
+  $("connection-title").closest("section").classList.toggle("needs-action", ["clamav_missing", "clamav_unusable"].includes(health?.code));
   guide.hidden = health?.status === "ready";
   if (guide.dataset.code !== (health?.code || "unknown")) {
     guide.dataset.code = health?.code || "unknown";

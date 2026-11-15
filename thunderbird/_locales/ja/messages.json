@@ -2484,5 +2484,20 @@
   "clamavInstallerUnusable": {
     "message": "ClamAVを確認できませんでした。導入状態を確認してから再実行してください。変更は確定しません。",
     "description": "ClamAVを確認できませんでした。導入状態を確認してから再実行してください。変更は確定しません。"
+  },
+  "setupTerminalSteps": {
+    "message": "Terminalで導入・再導入する手順"
+  },
+  "setupUpdateTitle": {
+    "message": "補助プログラムを更新してください"
+  },
+  "setupRepairTitle": {
+    "message": "補助プログラムを修復してください"
+  },
+  "setupInstallTitle": {
+    "message": "補助プログラムを導入してください"
+  },
+  "setupInstallNext": {
+    "message": "次の手順で導入用ファイルを保存し、Terminalで実行した後、「導入を確認」を押してください。"
   }
 }
