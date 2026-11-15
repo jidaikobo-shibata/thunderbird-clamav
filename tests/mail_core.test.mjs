@@ -88,3 +88,13 @@ test("native mismatched digest is rejected", async () => {
   await assert.rejects(client.scan(new Uint8Array([1]), "expected"), /照合/);
   client.close();
 });
+
+test("only paused automatic queued work is cancellable", async () => {
+  const { pausedAutomatic } = await import("../thunderbird/core.mjs");
+  const queued = { source: "automatic", status: "queued", locator: { accountId: "one" } };
+  assert.equal(pausedAutomatic(queued, { enabled: false, accountIds: ["one"] }), true);
+  assert.equal(pausedAutomatic(queued, { enabled: true, accountIds: [] }), true);
+  assert.equal(pausedAutomatic(queued, { enabled: true, accountIds: ["one"] }), false);
+  assert.equal(pausedAutomatic({ ...queued, status: "scanning" }, { enabled: false, accountIds: [] }), false);
+  assert.equal(pausedAutomatic({ ...queued, source: "manual" }, { enabled: false, accountIds: [] }), false);
+});

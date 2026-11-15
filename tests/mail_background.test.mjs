@@ -865,3 +865,37 @@ test("multi-folder confirmation scans the verified set and rejects changes or in
   assert.equal(state.folderJob.total, 2);
   assert.deepEqual(h.rawReads, [1, 2]);
 });
+
+test("canceling a disabled automatic queue frees capacity without deleting mail", async () => {
+  const pending = Array.from({ length: 1000 }, (_, index) => ({ key: "q" + index, source: "automatic", status: "queued",
+    attempts: 0, locator: { accountId: "one" }, updatedAt: new Date().toISOString() }));
+  const h = await harness({ saved: { settings: { enabled: false, accountIds: ["one"], notifications: false }, records: pending }, mails: [mail(1)] });
+  assert.equal((await h.send("cancelPausedQueue")).ok, false);
+  assert.equal((await h.send("state")).records.length, 1000);
+  const result = await h.send("cancelPausedQueue", { acknowledged: true });
+  assert.equal(result.count, 1000);
+  assert.equal((await h.send("state")).records.length, 0);
+  assert.equal(h.deleted.length, 0);
+  const context = await h.send("folderContext", { folderId: "inbox" });
+  await h.send("folderStart", { token: context.token, includeSubfolders: false });
+  const state = await settledFolder(h, "completed");
+  assert.equal(state.folderJob.completed, 1);
+  assert.deepEqual(h.rawReads, [1]);
+});
+
+test("canceling automatic retries preserves previous failures and alert history", async () => {
+  const records = [{ key: "retry", source: "automatic", status: "queued", attempts: 1, nextRetry: 1,
+    locator: { accountId: "one" }, detail: "previous scan failed", updatedAt: new Date().toISOString() },
+    ...["detected", "incomplete", "error"].map(status => ({ key: status, source: "automatic", status,
+      locator: { accountId: "one" }, detail: status }))];
+  const h = await harness({ saved: { settings: { enabled: false, accountIds: ["one"], notifications: false }, records } });
+  assert.equal((await h.send("cancelPausedQueue", { acknowledged: true })).count, 1);
+  const state = await h.send("state");
+  assert.equal(state.records.length, 4);
+  assert.equal(state.records[0].status, "error");
+  assert.equal(state.records[0].nextRetry, null);
+  assert.match(state.records[0].detail, /previous scan failed/);
+  await h.timers[0]();
+  assert.equal((await h.send("state")).records[0].status, "error");
+  assert.equal(h.deleted.length, 0);
+});

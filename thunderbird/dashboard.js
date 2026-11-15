@@ -1,7 +1,7 @@
 import { folderLabel } from "./folder-labels.mjs";
 import { t, uiLanguage, localizeDocument, localizeDetail } from "./i18n.mjs";
 import { installationUI, helperNotice } from "./installation.mjs";
-import { LABELS, needsAttention } from "./core.mjs";
+import { LABELS, needsAttention, pausedAutomatic } from "./core.mjs";
 import { selectable, canDelete, filterRecords, resultPage } from "./results.mjs";
 import { FOLDER_STATES } from "./folder-scan.mjs";
 
@@ -42,6 +42,9 @@ function updateControls() {
   for (const id of ["filter", "account-filter", "search", "reset-filters", "clear", "health"]) {
     $(id).disabled = locked;
   }
+  const pausedCount = latest?.records.filter(record => pausedAutomatic(record, latest.settings)).length || 0;
+  $("cancel-paused-queue").disabled = locked || !pausedCount;
+  setText($("paused-queue-count"), t("queuePausedCount", "停止中の待機：$1件", [pausedCount]));
   const job = latest?.folderJob;
   const folderActive = job && ["collecting", "running", "stopping"].includes(job.status);
   $("scan-folder").disabled = locked || latest?.helperRemoved || Boolean(folderActive) || foldersLoading || !selectedFolders.size;
@@ -339,7 +342,7 @@ function makeRow(record) {
 function renderRecords() {
   if (!latest) return;
   renderFolder();
-  const filtered = filterRecords(latest.records, { status: $("filter").value, account: $("account-filter").value, search: $("search").value, folderJobId: folderFilterId });
+  const filtered = filterRecords(latest.records, { status: $("filter").value, account: $("account-filter").value, search: $("search").value, folderJobId: folderFilterId, folders: folderChoices });
   const result = resultPage(filtered, page);
   page = result.page;
   visible = result.records;
@@ -587,6 +590,14 @@ $("health").addEventListener("click", () => {
     renderConnection();
     if (health.status !== "ready") throw new Error(health.detail);
   }, t("mail171", "接続の確認結果を更新しました。"));
+});
+$("cancel-paused-queue").addEventListener("click", () => {
+  const count = latest.records.filter(record => pausedAutomatic(record, latest.settings)).length;
+  if (blocked() || !count || !confirm(t("queueCancelConfirm", "停止中の自動検査$1件の待機を取り消します。未検査の待機記録だけを取り除き、前回の失敗記録は残します。実行中の検査とメール自体には影響しません。続けますか？", [count]))) return;
+  void action(async () => {
+    const response = await request("cancelPausedQueue", { acknowledged: true });
+    return t("queueCancelledCount", "$1件の待機を取り消しました。", [response.count]);
+  });
 });
 $("clear").addEventListener("click", () => {
   if (blocked() || !confirm(t("mail172", "検出・失敗を含む、完了した検査履歴を消去します。メール自体は削除しません。続けますか？"))) return;

@@ -10,6 +10,8 @@ export const LABELS = Object.freeze({
   detected: t("mail087", "脅威候補を検出"), incomplete: t("mail088", "一部または全部が未検査"), error: t("mail089", "検査失敗"),
   deleted: t("mail090", "完全削除済み")
 });
+export const pausedAutomatic = (record, settings) => record.source === "automatic" && record.status === "queued" &&
+  (!settings.enabled || !settings.accountIds.includes(record.locator.accountId));
 export const needsAttention = record => ["detected", "incomplete", "error"].includes(record.status);
 
 export function accountOf(message) {

@@ -268,6 +268,7 @@ class MailDaemon:
         self.disabled = False
         self.engine = None
         self.diagnostics = None
+        self.diagnostic_offset = 0
 
     def exchange(self, command, data=None, timeout=TIMEOUT):
         deadline = time.monotonic() + timeout
@@ -381,8 +382,11 @@ class MailDaemon:
         value["engine"] = version + " (clamd)"
         if self.diagnostics is not None:
             size = os.fstat(self.diagnostics.fileno()).st_size
-            diagnostic = os.pread(self.diagnostics.fileno(), min(size, MAX_FRAME), 0).upper()
-            if size > MAX_FRAME or b"WARNING" in diagnostic or b"ERROR" in diagnostic:
+            offset = min(self.diagnostic_offset, size)
+            length = size - offset
+            diagnostic = os.pread(self.diagnostics.fileno(), min(length, MAX_FRAME), offset).upper()
+            self.diagnostic_offset = size
+            if length > MAX_FRAME or b"WARNING" in diagnostic or b"ERROR" in diagnostic:
                 if value["status"] == "clean":
                     value["status"] = "incomplete"
                     value["detail"] = tr('clamdが警告を返しました。検査範囲を確認できません。')
@@ -401,6 +405,7 @@ class MailDaemon:
         if self.diagnostics is not None:
             self.diagnostics.close()
             self.diagnostics = None
+        self.diagnostic_offset = 0
         if self.temp is not None:
             self.temp.cleanup()
             self.temp = None

@@ -34,6 +34,11 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def version_key(version):
+    parts = tuple(map(int, version.split(".")))
+    return parts + (0,) * (4 - len(parts))
+
+
 def encoded(value):
     return (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode()
 
@@ -277,8 +282,8 @@ class Manager:
         if operation != "install" and not state["installed"]:
             raise SetupError(tr('このセットアップで管理する設置記録がありません。'))
         if operation == "repair":
-            current = tuple(map(int, state["version"].split(".")))
-            wanted = tuple(map(int, self.version.split(".")))
+            current = version_key(state["version"])
+            wanted = version_key(self.version)
             if wanted < current:
                 raise SetupError(tr('導入済みより古いセットアップでは更新できません。'))
         return {"token": self.snapshot(), "operation": operation,

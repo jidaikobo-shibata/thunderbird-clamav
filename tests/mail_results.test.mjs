@@ -42,3 +42,12 @@ test("folder job filter combines with account and state without mixing other run
   assert.deepEqual(filterRecords(tagged, { folderJobId: "job-a", status: "detected", account: "a" }).map(record => record.key), ["1"]);
   assert.equal(filterRecords(tagged, { folderJobId: "unknown" }).length, 0);
 });
+
+test("folder searches match displayed Unicode hierarchy and isolate account names", () => {
+  const record = { status: "clean", locator: { accountId: "one", folder: { path: "/INBOX/&ZeVnLIqe-", name: "日本語" } } };
+  assert.equal(filterRecords([record], { search: "日本語" }).length, 1);
+  const folders = [{ accountId: "one", path: record.locator.folder.path, displayNames: ["親の名前", "日本語"] },
+    { accountId: "two", path: record.locator.folder.path, displayNames: ["別アカウント"] }];
+  assert.equal(filterRecords([record], { search: "親の名前", folders }).length, 1);
+  assert.equal(filterRecords([record], { search: "別アカウント", folders }).length, 0);
+});

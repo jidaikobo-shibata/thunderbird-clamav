@@ -1,10 +1,11 @@
+import { folderLabel } from "./folder-labels.mjs";
 import { localizeDetail } from "./i18n.mjs";
 import { needsAttention } from "./core.mjs";
 
 export const selectable = record => ["clean", "detected", "incomplete", "error"].includes(record.status);
 export const canDelete = record => selectable(record);
 
-export function filterRecords(records, { status = "all", account = "all", search = "", folderJobId = null } = {}) {
+export function filterRecords(records, { status = "all", account = "all", search = "", folderJobId = null, folders = [] } = {}) {
   const query = search.trim().toLocaleLowerCase();
   return records.filter(record => {
     if (folderJobId && record.folderJobId !== folderJobId) return false;
@@ -12,7 +13,7 @@ export function filterRecords(records, { status = "all", account = "all", search
     if (status === "pending" && !["queued", "scanning"].includes(record.status)) return false;
     if (!["all", "attention", "pending"].includes(status) && record.status !== status) return false;
     if (account !== "all" && record.locator.accountId !== account) return false;
-    if (query && ![record.locator.author, record.locator.subject, record.locator.folder?.path,
+    if (query && ![record.locator.author, record.locator.subject, record.locator.folder?.path, folderLabel(record.locator.folder, folders, record.locator.accountId),
       localizeDetail(record), ...(record.signatures || [])].join("\n").toLocaleLowerCase().includes(query)) return false;
     return true;
   }).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));

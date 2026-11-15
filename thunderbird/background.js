@@ -2,7 +2,7 @@ import { t } from "./i18n.mjs";
 import { toolbarNotice } from "./installation.mjs";
 import {
   MAX_BYTES, DEFAULTS, LABELS, NativeClient, accountOf, locator, sameEnvelope,
-  validateSettings, messagePages, sha256, needsAttention
+  validateSettings, messagePages, sha256, needsAttention, pausedAutomatic
 } from "./core.mjs";
 import { canDelete } from "./results.mjs";
 import { FolderScan, FOLDER_STATES, realFolder, checkpointHint } from "./folder-scan.mjs";
@@ -775,6 +775,29 @@ api.runtime.onMessage.addListener(async (request, sender) => {
           throw new Error(t("mail081", "削除確認が無効か期限切れです。もう一度操作してください。"));
         }
         return await executeDeletion(ticket);
+      }
+      case "cancelPausedQueue": {
+        if (request.acknowledged !== true) throw new Error(t("queueConfirmRequired", "待機の取り消しには確認が必要です。"));
+        const work = async () => {
+          let count = 0;
+          records = records.filter(record => {
+            if (!pausedAutomatic(record, settings)) return true;
+            count++;
+            if ((record.attempts || 0) > 0 || record.sha256 || record.signatures?.length) {
+              record.status = "error";
+              record.nextRetry = null;
+              record.updatedAt = new Date().toISOString();
+              record.detail = t("queueRetryCancelled", "自動再試行の待機を取り消しました。前回の失敗内容：") + (record.detail || "");
+              delete record.detailMessages;
+              return true;
+            }
+            return false;
+          });
+          await save();
+          return { ok: true, count };
+        };
+        mutations = mutations.catch(() => {}).then(work);
+        return await mutations;
       }
       case "clear":
         // This removes only generated results, never messages. The page asks

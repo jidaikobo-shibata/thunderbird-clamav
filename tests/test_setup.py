@@ -72,6 +72,18 @@ class SetupTests(unittest.TestCase):
         with self.assertRaises(SetupError):
             self.manager.plan("repair")
 
+    def test_equivalent_padded_version_can_be_repaired(self):
+        self.apply("install")
+        manifest = self.root / "thunderbird/manifest.json"
+        value = json.loads(manifest.read_text())
+        value["version"] += ".0"
+        manifest.write_text(json.dumps(value))
+        padded = Manager(self.root, self.home)
+        padded.apply("repair", padded.plan("repair")["token"])
+        self.manager.apply("repair", self.manager.plan("repair")["token"])
+        self.assertTrue(self.manager.state()["healthy"])
+        self.assertEqual(self.manager.state()["version"], self.manager.version)
+
     def test_foreign_registration_and_user_edits_are_not_overwritten(self):
         registration = self.manager.layout.registration
         registration.parent.mkdir(parents=True)

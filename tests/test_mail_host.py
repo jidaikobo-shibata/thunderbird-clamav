@@ -233,6 +233,23 @@ class DaemonTests(unittest.TestCase):
         with patch.object(daemon, "start"), patch.object(daemon, "exchange", side_effect=[self.version(), "stream: OK"]):
             self.assertEqual(host.scan(b"Content-Type: application/pgp-encrypted\r\n\r\nx", daemon)["status"], "incomplete")
 
+    def test_daemon_warnings_apply_only_to_new_diagnostic_bytes(self):
+        daemon = host.MailDaemon()
+        with tempfile.TemporaryFile() as diagnostic:
+            daemon.diagnostics = diagnostic
+            with patch.object(daemon, "start"), patch.object(daemon, "exchange", side_effect=lambda command, *args, **kwargs: self.version() if command == b"VERSION" else "stream: OK"):
+                diagnostic.write(b"WARNING: first scan\n"); diagnostic.flush()
+                self.assertEqual(daemon.scan(b"first")["status"], "incomplete")
+                self.assertEqual(daemon.scan(b"second")["status"], "clean")
+                diagnostic.write(b"ERROR: next scan\n"); diagnostic.flush()
+                self.assertEqual(daemon.scan(b"third")["status"], "incomplete")
+                self.assertEqual(daemon.scan(b"fourth")["status"], "clean")
+                diagnostic.write(b"x" * (host.MAX_FRAME + 1)); diagnostic.flush()
+                self.assertEqual(daemon.scan(b"large log")["status"], "incomplete")
+                self.assertEqual(daemon.scan(b"after large log")["status"], "clean")
+            daemon.close()
+            self.assertEqual(daemon.diagnostic_offset, 0)
+
     def test_session_owns_daemon_until_final_close(self):
         session = host.Session()
         with patch.object(session.scanner, "close") as close:
