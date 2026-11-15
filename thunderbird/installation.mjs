@@ -1,5 +1,24 @@
 import { bytesToBase64 } from "./core.mjs";
 
+export function compareHelperVersions(left, right) {
+  const valid = value => typeof value === "string" && /^[0-9]+(?:\.[0-9]+){1,3}$/.test(value);
+  if (!valid(left) || !valid(right)) return null;
+  const a = left.split(".").map(BigInt), b = right.split(".").map(BigInt);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if ((a[i] || 0n) > (b[i] || 0n)) return 1;
+    if ((a[i] || 0n) < (b[i] || 0n)) return -1;
+  }
+  return 0;
+}
+
+export function helperAction(info, bundledVersion) {
+  if (info?.state !== "managed") return null;
+  const compared = compareHelperVersions(info.version, bundledVersion);
+  if (compared === -1) return "update";
+  if (compared === 0 && info.healthy === false) return "repair";
+  return null;
+}
+
 export function installationUI({ request, action, latest, busy }) {
   const $ = id => document.getElementById(id);
   const version = messenger.runtime.getManifest().version;
@@ -84,7 +103,15 @@ export function installationUI({ request, action, latest, busy }) {
       info.state === "removed" ? "補助プログラムを削除済みです。拡張の削除を続けられます。" :
       "補助プログラムに接続できません。同梱ファイルで導入・修復し、「導入を確認」を押してください。";
     $("helper-check").disabled = Boolean(locked);
-    $("helper-update").disabled = Boolean(locked || working || info?.state !== "managed");
+    const needed = helperAction(info, version);
+    $("helper-update").hidden = !needed;
+    $("helper-update").textContent = needed === "repair" ? "補助プログラムを修復" : "補助プログラムを更新";
+    $("helper-update").disabled = Boolean(locked || working || !needed);
+    $("helper-action-hint").textContent = needed === "update" ? `同梱の補助プログラム${version}へ更新できます。` :
+      needed === "repair" ? "設置ファイルに不整合があるため、修復が必要です。" :
+      info?.state === "managed" && compareHelperVersions(info.version, version) === 1 ?
+        "導入済みの版が同梱版より新しいため、この同梱版で更新・修復は行いません。修復には同じ版か新しい版の導入用ファイルを使ってください。" :
+      info?.state === "managed" && info.healthy === true ? "更新・修復は不要です。" : "";
     $("uninstall-start").disabled = Boolean(locked || working);
     $("uninstall-steps").hidden = !uninstallStarted;
     $("helper-uninstall").hidden = !uninstallStarted || info?.state !== "managed";
@@ -105,12 +132,12 @@ export function installationUI({ request, action, latest, busy }) {
       $("uninstall-report").textContent = "拡張の削除は完了していません。削除を取り消した場合はこのまま残り、「拡張の削除を続ける」で再試行できます。再利用には同梱ファイルで補助プログラムを導入してください。";
     }
   }
-  function confirmPlan(plan) {
+  function confirmPlan(plan, needed) {
     const removing = plan.operation === "uninstall", dialog = $("helper-dialog");
-    $("helper-dialog-title").textContent = removing ? "アンインストール" : "補助プログラムを更新・修復";
+    $("helper-dialog-title").textContent = removing ? "アンインストール" : needed === "repair" ? "補助プログラムを修復" : "補助プログラムを更新";
     $("helper-dialog-detail").textContent = removing ?
       "次の場所の管理対象ファイルと接続登録を削除し、続いてThunderbirdの確認画面で拡張を削除します。設定・検査履歴・再開情報は失われる可能性があります。メール・アカウント・ClamAVは残ります。補助プログラムはこのOSユーザーで共通のため、他のThunderbirdプロファイルも接続できなくなります。変更されたファイルは残して表示します。再導入する場合は、先に導入用ファイルを保存してください。" :
-      `補助プログラムを同梱の${plan.version}へ更新・修復します。メール・設定・検査履歴は残します。次の場所の管理対象ファイルと接続登録を変更します。`;
+      `${needed === "repair" ? `補助プログラム${plan.version}の設置ファイルを修復します。` : `補助プログラムを同梱の${plan.version}へ更新します。`}メール・設定・検査履歴は残します。次の場所の管理対象ファイルと接続登録を変更します。`;
     $("helper-paths").replaceChildren();
     for (const path of plan.paths) { const li = document.createElement("li"); li.textContent = path; $("helper-paths").append(li); }
     $("helper-ack").checked = false; $("helper-confirm").disabled = true;
@@ -123,6 +150,8 @@ export function installationUI({ request, action, latest, busy }) {
   $("helper-ack").addEventListener("change", () => { $("helper-confirm").disabled = !$("helper-ack").checked; });
   for (const [id, operation] of [["helper-update", "repair"], ["helper-uninstall", "uninstall"]]) {
     $(id).addEventListener("click", () => {
+      const needed = helperAction(latest()?.installation, version);
+      if (operation === "repair" && !needed) return;
       void action(async () => {
         let packageData;
         if (operation === "repair") {
@@ -135,7 +164,7 @@ export function installationUI({ request, action, latest, busy }) {
         const { plan } = await request("helperPlan", { operation, package: packageData });
         let applied = false;
         try {
-          if (!await confirmPlan(plan)) return "管理操作をキャンセルしました。";
+          if (!await confirmPlan(plan, needed)) return "管理操作をキャンセルしました。";
           const response = await request("helperApply", { token: plan.token });
           applied = true;
           const retained = response.installation.retained || [];
