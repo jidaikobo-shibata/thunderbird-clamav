@@ -14,8 +14,8 @@ select, input[type="search"] { box-sizing: border-box; width: 100%; }
 button { cursor: pointer; }
 button:disabled { cursor: default; }
 :focus-visible { outline: 3px solid Highlight; outline-offset: 3px; }
-.tabs { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; border-bottom: 1px solid GrayText; position: sticky; top: 0; z-index: 10; background: Canvas; }
-html { scroll-padding-block-start: 9rem; }
+.tabs { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; border-bottom: 1px solid GrayText; background: Canvas; }
+html { scroll-padding-block-start: 18rem; }
 [role="tab"] { border: 0; border-bottom: 4px solid transparent; background: transparent; color: CanvasText; min-width: 0; }
 [role="tab"][aria-selected="true"] { border-bottom-color: Highlight; font-weight: bold; }
 [role="tabpanel"] { padding-top: 8px; }
@@ -64,7 +64,7 @@ dialog .actions { margin-top: 20px; }
 #scan-target-label, #health-result, #last-scan-result { overflow-wrap: anywhere; }
 @media (max-width: 600px) { .scan-picker { grid-template-columns: 1fr; } }
 
-@media (max-width: 600px) { [role="tab"] { padding: 6px 1px; font-size: .9rem; } }
+@media (max-width: 600px) { [role="tab"] { padding: 6px 1px; font-size: .18rem; } }
 
 pre { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid GrayText; padding: 12px; }
 #installation-report, #helper-paths, #helper-dialog-detail { overflow-wrap: anywhere; }
@@ -75,3 +75,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid GrayText
 #uninstall-download { display: inline-block; padding: 8px 12px; min-height: 28px; border: 1px solid GrayText; border-radius: 4px; }
 #uninstall-status, #uninstall-report { overflow-wrap: anywhere; }
 @media (max-width: 850px) { .tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+.sticky-navigation { position: sticky; top: 0; z-index: 10; background: Canvas; }
+#helper-notice { border: 1px solid GrayText; padding: 8px 12px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+#helper-notice-text { flex: 1; }

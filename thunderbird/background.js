@@ -1,3 +1,4 @@
+import { toolbarNotice } from "./installation.mjs";
 import {
   MAX_BYTES, DEFAULTS, LABELS, NativeClient, accountOf, locator, sameEnvelope,
   validateSettings, messagePages, sha256, needsAttention
@@ -21,7 +22,7 @@ const batchTickets = new Map();
 let batchProgress = null;
 let folderRequest = null;
 let lastHealth = null, lastScan = null;
-let resultsRequest = null;
+let resultsRequest = null, setupRequest = null;
 let installation = null, helperRemoved = false, pendingMaintenance = null, maintenanceGeneration = 0;
 const maintenanceActive = () => Boolean(pendingMaintenance);
 function releaseMaintenance() {
@@ -45,6 +46,8 @@ async function helperInfo() {
     if (generation !== maintenanceGeneration) return installation;
     installation = { state: helperRemoved && installation?.state === "removed" ? "removed" : "unavailable", detail: error.message };
   } finally { client.close(); }
+  await save();
+  await updateBadge();
   return installation;
 }
 
@@ -206,13 +209,18 @@ function save() {
   // cannot overwrite a later scan result.
   const value = JSON.parse(JSON.stringify({ settings, records, issue, lastHealth, lastScan, helperRemoved, installation, folderJob: folderScan.snapshot(), folderCheckpoint: folderScan.checkpointState() }));
   writes = writes.catch(() => {}).then(() => api.storage.local.set(value));
+  void updateBadge().catch(() => {});
   return writes;
 }
 
+function toolbarState() {
+  return toolbarNotice(installation, api.runtime.getManifest().version, issue, records.filter(needsAttention).length);
+}
 async function updateBadge() {
-  const count = records.filter(needsAttention).length;
-  await api.browserAction.setBadgeText({ text: issue ? "!" : count ? String(count) : "" });
-  await api.browserAction.setBadgeBackgroundColor({ color: "#9d281b" });
+  const notice = toolbarState();
+  await api.browserAction.setBadgeText({ text: notice.text });
+  await api.browserAction.setBadgeBackgroundColor({ color: notice.color });
+  await api.browserAction.setTitle({ title: notice.title });
 }
 
 async function notify(record) {
@@ -469,6 +477,7 @@ const ready = (async () => {
   api.menus.create({ id: "scan", title: "ClamAVで選択メールを検査", contexts: ["message_list"] });
   api.menus.create({ id: "scan-folder", title: "ClamAVでフォルダーを検査", contexts: ["folder_pane"] });
   await save();
+  await helperInfo();
   await updateBadge();
 })().catch(error => { report(error); throw error; });
 
@@ -493,7 +502,13 @@ api.menus.onClicked.addListener((info, tab) => {
   void ready.then(() => info.selectedMessages ? enqueue(info.selectedMessages, "manual") : scanSelection())
     .then(() => { resultsRequest = crypto.randomUUID(); return openDashboard(); }).catch(report);
 });
-api.browserAction.onClicked.addListener(() => { void openDashboard().catch(report); });
+api.browserAction.onClicked.addListener(() => {
+  void ready.then(async () => {
+    if (toolbarState().setup) setupRequest = crypto.randomUUID();
+    else if (records.some(needsAttention) || issue) resultsRequest = crypto.randomUUID();
+    await openDashboard();
+  }).catch(report);
+});
 api.notifications.onClicked.addListener(() => { void openDashboard().catch(report); });
 api.runtime.onInstalled.addListener(() => { void openDashboard().catch(report); });
 
@@ -506,7 +521,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
     }
     switch (request.type) {
       case "state":
-        return { ok: true, settings, records, issue, lastHealth, lastScan, resultsRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
+        return { ok: true, settings, records, issue, lastHealth, lastScan, resultsRequest, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
           folderJob: folderScan.snapshot(), accounts: (await api.accounts.list())
           .filter(account => ["imap", "pop3", "none"].includes(account.type))
           .map(account => ({ id: account.id, name: account.name, type: account.type })) };

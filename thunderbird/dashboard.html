@@ -10,6 +10,7 @@
 <body>
 <main>
   <header><h1>ClamAV メール検査</h1><p>メールを検査し、結果を確認して必要なメールに対処します。</p></header>
+  <div class="sticky-navigation">
   <div class="tabs" role="tablist" aria-label="メール検査の画面">
     <button type="button" role="tab" id="tab-scan" aria-selected="true" aria-controls="panel-scan">検査</button>
     <button type="button" role="tab" id="tab-results" aria-selected="false" aria-controls="panel-results" tabindex="-1">検査結果</button>
@@ -17,6 +18,11 @@
     <button type="button" role="tab" id="tab-setup" aria-selected="false" aria-controls="panel-setup" tabindex="-1">セットアップ</button>
     <button type="button" role="tab" id="tab-uninstall" aria-selected="false" aria-controls="panel-uninstall" tabindex="-1">アンインストール</button>
     <button type="button" role="tab" id="tab-help" aria-selected="false" aria-controls="panel-help" tabindex="-1">ヘルプ</button>
+  </div>
+  <aside id="helper-notice" hidden aria-label="補助プログラムの案内">
+    <span id="helper-notice-text" role="status"></span>
+    <button type="button" id="helper-notice-open">セットアップを開く</button>
+  </aside>
   </div>
   <p id="action-status" role="status" aria-live="polite"></p>
   <p id="issue" role="alert" hidden></p>
@@ -104,7 +110,7 @@
       <p class="hint">接続確認ではメールの検査は行いません。表示は確認時点の結果です。</p>
     </section>
     <section class="connection-status" aria-labelledby="installation-title">
-      <h3 id="installation-title">補助プログラムの導入・更新</h3>
+      <h3 id="installation-title" tabindex="-1">補助プログラムの導入・更新</h3>
       <p id="installation-status" role="status">導入状態を確認しています。</p>
       <p>Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。初回登録と接続不能時の修復は、同梱ファイルを保存してTerminalで実行します。GUIアプリやsudoは不要です。</p>
       <button type="button" id="installer-download">導入用ファイルを保存</button>

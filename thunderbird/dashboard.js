@@ -1,4 +1,4 @@
-import { installationUI } from "./installation.mjs";
+import { installationUI, helperNotice } from "./installation.mjs";
 import { LABELS, needsAttention } from "./core.mjs";
 import { selectable, canDelete, filterRecords, resultPage } from "./results.mjs";
 import { FOLDER_STATES } from "./folder-scan.mjs";
@@ -10,7 +10,7 @@ const rows = new Map(), selected = new Set();
 let folderFilterId = null, seenFolderRequest = null;
 let folderAnnouncement = null, seenResultsRequest = null;
 const TABS = ["scan", "results", "settings", "setup", "uninstall", "help"];
-let userNavigated = false;
+let userNavigated = false, seenSetupRequest = null;
 let folderChoices = [], foldersLoading = false, settingsSaving = false;
 
 async function request(type, values = {}) {
@@ -61,7 +61,7 @@ function updateControls() {
   }
   $("previous-page").disabled = locked || page === 0;
   $("next-page").disabled = locked || page + 1 >= Number($("page-label").dataset.pages || 1);
-  installer.render();
+  installer.render(); renderHelperNotice();
 }
 async function action(callback, success) {
   if (blocked()) return;
@@ -87,6 +87,21 @@ async function action(callback, success) {
   }
 }
 
+function renderHelperNotice() {
+  const notice = helperNotice(latest?.installation, messenger.runtime.getManifest().version);
+  setText($("tab-setup"), notice ? `セットアップ（${notice.label}）` : "セットアップ");
+  $("helper-notice").hidden = !notice || $("tab-setup").getAttribute("aria-selected") === "true";
+  setText($("helper-notice-text"), notice?.message || "");
+  setText($("helper-notice-open"), notice?.button || "セットアップを開く");
+}
+function openSetup() {
+  userNavigated = true;
+  activateTab("setup");
+  $("installation-title").focus();
+  $("installation-title").scrollIntoView({ block: "start" });
+}
+$("helper-notice-open").addEventListener("click", openSetup);
+
 function activateTab(name, focus = false) {
   for (const id of TABS) {
     const active = id === name;
@@ -96,6 +111,7 @@ function activateTab(name, focus = false) {
     $("panel-" + id).hidden = !active;
     if (active && focus) button.focus();
   }
+  renderHelperNotice();
 }
 
 function renderFolder() {
@@ -356,7 +372,7 @@ async function refresh() {
       initialized = true;
       void loadFolders();
       void request("helperInfo").then(response => {
-        latest.installation = response.installation; installer.render();
+        latest.installation = response.installation; installer.render(); renderHelperNotice();
         if (!userNavigated && !latest.folderRequest && !latest.resultsRequest && response.installation?.state !== "managed") {
           activateTab(response.installation?.state === "removed" ? "uninstall" : "setup");
         }
@@ -373,6 +389,12 @@ async function refresh() {
     $("issue").hidden = !latest.issue;
     setText($("issue"), latest.issue || "");
     renderRecords();
+    renderHelperNotice();
+    if (latest.setupRequest && latest.setupRequest !== seenSetupRequest) {
+      seenSetupRequest = latest.setupRequest;
+      seenResultsRequest = latest.resultsRequest;
+      openSetup();
+    }
     if (latest.resultsRequest && latest.resultsRequest !== seenResultsRequest && !blocked()) {
       seenResultsRequest = latest.resultsRequest;
       activateTab("results");

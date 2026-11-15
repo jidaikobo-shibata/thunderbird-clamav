@@ -9,7 +9,7 @@ function event() {
 
 let caseId = 0;
 async function harness({ saved = {}, mails = [], nativeFailure = false, oversized = false, deleteAllowed = false, deleteFailure = false, deleteFailureIds = [], scanResult = {}, scanGate = null,
-  folderRefs = [{ id: "inbox", accountId: "one", path: "/Inbox", name: "受信トレイ" }] } = {}) {
+  manageInfo = null, folderRefs = [{ id: "inbox", accountId: "one", path: "/Inbox", name: "受信トレイ" }] } = {}) {
   let stored = structuredClone(saved);
   const notifications = [], opened = [], rawReads = [], timers = [], deleted = [], nativePorts = [];
   const events = { newMail: event(), selected: event(), message: event() };
@@ -18,7 +18,7 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
     permissions: { contains: async () => deleteAllowed },
     storage: { local: { get: async () => structuredClone(stored), set: async value => { stored = structuredClone(value); } } },
     runtime: {
-      id: "unit", getURL: path => "moz-extension://unit/" + path,
+      id: "unit", getManifest: () => ({ version: "0.9.4" }), getURL: path => "moz-extension://unit/" + path,
       onMessage: events.message, onInstalled: event(),
       connectNative() {
         const port = { disconnected: false, onMessage: event(), onDisconnect: event(), disconnect() { this.disconnected = true; },
@@ -26,7 +26,7 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
             queueMicrotask(async () => {
               if (request.op === "end" && scanGate) await scanGate(rawReads.at(-1));
               if (nativeFailure) { port.onDisconnect.listeners[0](); return; }
-              const result = request.op === "health" ? { status: "ready", protocol: 1, engine: "test" } :
+              const result = request.op === "manageInfo" && manageInfo ? manageInfo : request.op === "health" ? { status: "ready", protocol: 1, engine: "test" } :
                 request.op === "end" ? { status: "clean", detail: "未検出", sha256: request.sha256, signatures: [],
                   ...(typeof scanResult === "function" ? scanResult(rawReads.at(-1)) : scanResult) } :
                   { status: "accepted", seq: request.seq + 1 };
@@ -65,7 +65,7 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
     mailTabs: { onSelectedMessagesChanged: events.selected, query: async () => [{ id: 7, active: true }],
       get: async () => ({ displayedFolder: folderRefs[0] }),
       getSelectedMessages: async () => ({ messages: mails }) },
-    browserAction: { onClicked: event(), setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
+    browserAction: { onClicked: event(), setTitle: async () => {}, setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
     notifications: { onClicked: event(), create: async (...args) => notifications.push(args) },
     tabs: { query: async () => [], create: async () => {} }, windows: { update: async () => {} },
     messageDisplay: { open: async value => opened.push(value) }
@@ -78,6 +78,7 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
   const send = (type, values = {}, sender = { id: "unit", url: api.runtime.getURL("dashboard.html") }) =>
     events.message.listeners[0]({ type, ...values }, sender);
   await send("state");
+  nativePorts.length = 0; // Startup installation check is separate from scan connections.
   return { api, send, events, notifications, opened, rawReads, timers, deleted, nativePorts, stored: () => stored };
 }
 
@@ -832,4 +833,11 @@ test("addon update preserves enabled settings and returns a managed installation
   assert.equal((await h.send("state")).settings.enabled, true);
   assert.equal((await h.send("state")).helperRemoved, false);
   assert.equal(calls.find(call => call.op === "managePlan").package, "synthetic-package");
+});
+
+test("startup discovers bundled helper update and toolbar opens setup", async () => {
+  const h = await harness({ manageInfo: { status: "managed", version: "0.9.3", healthy: true } });
+  assert.equal((await h.send("state")).installation.version, "0.9.3");
+  h.api.browserAction.onClicked.listeners[0]();
+  await settle(h, state => Boolean(state.setupRequest));
 });

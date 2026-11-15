@@ -19,6 +19,24 @@ export function helperAction(info, bundledVersion) {
   return null;
 }
 
+export function helperNotice(info, version) {
+  const action = helperAction(info, version);
+  if (action === "update") return { kind: "update", badge: "更新", label: "更新あり", message: "補助プログラムの更新があります。", button: "更新を確認" };
+  if (action === "repair" || info?.state === "managed" && info.healthy === false)
+    return { kind: "repair", badge: "!", label: "要対応", message: "補助プログラムの修復が必要です。", button: "修復を確認" };
+  if (info?.state === "legacy") return { kind: "update", badge: "更新", label: "更新あり", message: "補助プログラムの管理機能を利用するには更新が必要です。", button: "更新を確認" };
+  if (info?.state === "unavailable") return { kind: "connection", badge: "!", label: "接続確認", message: "補助プログラムに接続できません。導入状態を確認してください。", button: "セットアップを開く" };
+  return null;
+}
+
+export function toolbarNotice(info, version, issue, count) {
+  const notice = helperNotice(info, version);
+  if (count) return { text: String(count), color: "#9d281b", title: `ClamAV メール検査：確認が必要なメール${count}件`, setup: false };
+  if (issue) return { text: "!", color: "#9d281b", title: "ClamAV メール検査：" + issue, setup: false };
+  return { text: notice?.badge || "", color: notice?.kind === "update" ? "#285b8f" : "#9d281b",
+    title: notice ? "ClamAV メール検査：" + notice.message : "ClamAV メール検査", setup: Boolean(notice) };
+}
+
 export function installationUI({ request, action, latest, busy }) {
   const $ = id => document.getElementById(id);
   const version = messenger.runtime.getManifest().version;
