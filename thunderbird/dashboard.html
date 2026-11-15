@@ -92,9 +92,9 @@
   <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" tabindex="0" hidden>
     <h2><span data-i18n="mail255">設定</span></h2>
     <form id="settings-form">
-      <label><input id="enabled" type="checkbox"> <span data-i18n="mail293">新着メールを自動検査する</span></label>
-      <p class="hint"><span data-i18n="mail294">先に対象アカウントを選択してください。対象をすべて外すと自動検査を停止します。</span></p>
-      <fieldset><legend><span data-i18n="mail295">自動検査するアカウント</span></legend><div id="accounts"></div></fieldset>
+      <fieldset><legend data-i18n="autoAccountsHeading">新着メールを自動検査するアカウント</legend><div id="accounts"></div></fieldset>
+      <p class="hint" data-i18n="autoAccountsHint">チェックしたアカウントに届く新着メールを自動検査します。すべて外すと自動検査を停止します。変更は自動保存します。</p>
+      <p id="automatic-status" role="status" aria-live="polite"></p>
       <label><input id="notifications" type="checkbox"> <span data-i18n="mail296">検出・検査不能・失敗をデスクトップ通知する</span></label>
       <p class="hint"><span data-i18n="mail297">通知には差出人・件名を表示しません。変更後に届いた新着が対象です。</span></p>
       <p id="settings-status" role="status" aria-live="polite"><span data-i18n="mail298">変更すると自動的に保存します。</span></p>
@@ -136,7 +136,7 @@
     <p><span data-i18n="mail314">この拡張と補助プログラムを取り除く手順を案内します。このタブを開いただけでは、削除や設定変更は行いません。</span></p>
     <h3><span data-i18n="mail315">削除するもの・残すもの</span></h3>
     <p><span data-i18n="mail316">補助プログラムと接続登録を削除し、続いてThunderbirdの確認で拡張を削除します。拡張の設定・検査履歴・再開情報は失われる可能性があります。メール本体・アカウント・ClamAVは残ります。</span></p>
-    <p><span data-i18n="mail317">先に自動検査をオフにし、実行中の検査を中止して停止を待ってください。再導入したい場合は、手順内で導入用ファイルを保存しておいてください。</span></p>
+    <p><span data-i18n="mail317">先に「設定」で自動検査の対象アカウントをすべて外し、実行中の検査を中止して停止を待ってください。再導入したい場合は、手順内で導入用ファイルを保存しておいてください。</span></p>
     <button type="button" id="uninstall-start"><span data-i18n="mail318">アンインストールの手順へ</span></button>
     <div id="uninstall-steps" hidden>
       <h3><span data-i18n="mail319">補助プログラムの削除</span></h3>
@@ -166,7 +166,7 @@
     <button type="button" data-open-tab="setup"><span data-i18n="mail209">セットアップを開く</span></button>
     <h3><span data-i18n="mail241">アンインストール</span></h3>
     <ol>
-      <li><span data-i18n="mail332">自動検査をオフにし、実行中の検査を中止して停止を待ちます。</span></li>
+      <li><span data-i18n="mail332">「設定」で自動検査の対象アカウントをすべて外し、実行中の検査を中止して停止を待ちます。</span></li>
       <li><span data-i18n="mail333">「アンインストール」タブで削除するもの・残すものを確認し、「アンインストールの手順へ」を押します。</span></li>
       <li><span data-i18n="mail334">対応済みの補助プログラムは画面内で確認して削除します。旧版などの場合だけ、手順の途中でTerminalの操作を案内します。</span></li>
       <li><span data-i18n="mail335">補助プログラムの削除後、Thunderbirdの確認画面で拡張を削除します。取り消した場合は同じタブから再試行できます。</span></li>

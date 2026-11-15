@@ -899,3 +899,24 @@ test("canceling automatic retries preserves previous failures and alert history"
   assert.equal((await h.send("state")).records[0].status, "error");
   assert.equal(h.deleted.length, 0);
 });
+
+test("legacy OFF with saved accounts stays stopped after startup and notification-only changes", async () => {
+  const h = await harness({ saved: { settings: { enabled: false, accountIds: ["one"], notifications: true } }, mails: [mail(1)] });
+  const state = await h.send("state");
+  assert.equal(state.settings.enabled, false);
+  assert.deepEqual(state.settings.accountIds, []);
+  await h.send("settings", { settings: { ...state.settings, notifications: false } });
+  h.events.newMail.listeners[0](mail(1).folder, { messages: [mail(1)] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.rawReads.length, 0);
+  assert.equal((await h.send("state")).records.length, 0);
+});
+
+test("legacy ON retains selected accounts and continues automatic scanning", async () => {
+  const messages = [mail(1), mail(2, "two")];
+  const h = await harness({ saved: { settings: { enabled: true, accountIds: ["one"], notifications: false } }, mails: messages });
+  assert.deepEqual((await h.send("state")).settings.accountIds, ["one"]);
+  h.events.newMail.listeners[0](messages[0].folder, { messages });
+  await settle(h, state => state.records.some(record => record.status === "clean"));
+  assert.deepEqual(h.rawReads, [1]);
+});

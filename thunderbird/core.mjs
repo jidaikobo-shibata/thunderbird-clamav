@@ -5,6 +5,13 @@ export const HOST = "local.clam_mail_check";
 export const DEFAULTS = Object.freeze({
   enabled: false, accountIds: [], notifications: true
 });
+/** Preserve legacy OFF as an empty selection; never infer opt-in from saved IDs. */
+export function normalizeAutomaticSettings(value = {}) {
+  const settings = { ...DEFAULTS, ...value };
+  const ids = Array.isArray(settings.accountIds) ? [...new Set(settings.accountIds.filter(id => typeof id === "string"))] : [];
+  const accountIds = settings.enabled === true ? ids : [];
+  return { enabled: accountIds.length > 0, notifications: settings.notifications, accountIds };
+}
 export const LABELS = Object.freeze({
   queued: t("mail084", "検査待ち"), scanning: t("mail085", "検査中"), clean: t("mail086", "未検出"),
   detected: t("mail087", "脅威候補を検出"), incomplete: t("mail088", "一部または全部が未検査"), error: t("mail089", "検査失敗"),
@@ -45,8 +52,7 @@ export function validateSettings(value, knownIds) {
   if (value.enabled && !value.accountIds.length) {
     throw new Error(t("mail092", "自動検査するアカウントを選択してください。"));
   }
-  return { enabled: value.enabled, notifications: value.notifications,
-    accountIds: [...new Set(value.accountIds)] };
+  return normalizeAutomaticSettings(value);
 }
 
 export function bytesToBase64(bytes) {

@@ -2,7 +2,7 @@ import { t } from "./i18n.mjs";
 import { toolbarNotice } from "./installation.mjs";
 import {
   MAX_BYTES, DEFAULTS, LABELS, NativeClient, accountOf, locator, sameEnvelope,
-  validateSettings, messagePages, sha256, needsAttention, pausedAutomatic
+  validateSettings, messagePages, sha256, needsAttention, pausedAutomatic, normalizeAutomaticSettings
 } from "./core.mjs";
 import { canDelete } from "./results.mjs";
 import { FolderScan, FOLDER_STATES, realFolder, checkpointHint } from "./folder-scan.mjs";
@@ -477,7 +477,7 @@ async function scanSelection() {
 
 const ready = (async () => {
   const data = await api.storage.local.get(["settings", "records", "issue", "folderJob", "folderCheckpoint", "lastHealth", "lastScan", "helperRemoved", "installation"]);
-  settings = { ...DEFAULTS, ...data.settings };
+  settings = normalizeAutomaticSettings(data.settings);
   records = Array.isArray(data.records) ? data.records : [];
   issue = typeof data.issue === "string" ? data.issue : "";
   lastHealth = data.lastHealth || null;
@@ -591,7 +591,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         try {
           if (removing) {
             helperRemoved = true;
-            settings = { ...settings, enabled: false };
+            settings = { ...settings, enabled: false, accountIds: [] };
             await save();
           }
           const result = await pending.client.request("manageApply", { token: pending.token }, 60000);
@@ -612,7 +612,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
       case "helperMarkRemoved":
         if (request.acknowledged !== true || running || folderScan.active || batchProgress?.active || deleting.size) throw new Error(t("mail065", "処理を停止し、Terminalで補助プログラムの削除が完了したことを確認してください。"));
         helperRemoved = true;
-        settings = { ...settings, enabled: false };
+        settings = { ...settings, enabled: false, accountIds: [] };
         installation = { state: "removed", detail: t("mail066", "Terminalでの削除完了を利用者が確認しました。") };
         await save();
         return { ok: true };

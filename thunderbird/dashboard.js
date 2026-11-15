@@ -1,7 +1,7 @@
 import { folderLabel } from "./folder-labels.mjs";
 import { t, uiLanguage, localizeDocument, localizeDetail } from "./i18n.mjs";
 import { installationUI, helperNotice } from "./installation.mjs";
-import { LABELS, needsAttention, pausedAutomatic } from "./core.mjs";
+import { LABELS, needsAttention, pausedAutomatic, normalizeAutomaticSettings } from "./core.mjs";
 import { selectable, canDelete, filterRecords, resultPage } from "./results.mjs";
 import { FOLDER_STATES } from "./folder-scan.mjs";
 
@@ -57,7 +57,6 @@ function updateControls() {
   $("folder-results").disabled = locked || !job;
   $("folder-only").disabled = locked || !job;
   for (const input of $("settings-form").querySelectorAll("input, button")) input.disabled = locked || latest?.helperRemoved;
-  $("enabled").disabled = locked || latest?.helperRemoved || !$("accounts").querySelector("input:checked");
   for (const record of visible) {
     const entry = rows.get(record.key);
     entry.checkbox.disabled = locked || !selectable(record);
@@ -482,7 +481,7 @@ $("delete-selected").addEventListener("click", () => {
   });
 });
 function syncSettings(settings) {
-  $("enabled").checked = settings.enabled;
+  settings = normalizeAutomaticSettings(settings);
   $("notifications").checked = settings.notifications;
   const current = new Map([...$("accounts").querySelectorAll("input")].map(input => [input.value, input]));
   const ids = new Set(latest.accounts.map(account => account.id));
@@ -498,6 +497,8 @@ function syncSettings(settings) {
     }
     checkbox.checked = settings.accountIds.includes(account.id);
   }
+  const names = latest.accounts.filter(account => settings.accountIds.includes(account.id)).map(account => account.name);
+  setText($("automatic-status"), names.length ? t("autoAccountsActive", "自動検査中：$1", [names.join(t("listSeparator", " ／ "))]) : t("autoAccountsStopped", "自動検査は停止しています。"));
   if (!latest.accounts.length) setText($("accounts"), t("mail152", "対象アカウントがありません。"));
 }
 
@@ -565,9 +566,8 @@ $("reload-folders").addEventListener("click", () => { void loadFolders(); });
 $("settings-form").addEventListener("submit", event => event.preventDefault());
 $("settings-form").addEventListener("change", () => {
   const accountIds = [...$("accounts").querySelectorAll("input:checked")].map(input => input.value);
-  const wasEnabled = $("enabled").checked;
-  if (!accountIds.length) $("enabled").checked = false;
-  const settings = { enabled: $("enabled").checked, notifications: $("notifications").checked, accountIds };
+  const wasEnabled = latest.settings.enabled;
+  const settings = { enabled: accountIds.length > 0, notifications: $("notifications").checked, accountIds };
   settingsSaving = true;
   void action(async () => {
     setText($("settings-status"), t("mail166", "保存しています。"));

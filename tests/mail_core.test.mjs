@@ -98,3 +98,12 @@ test("only paused automatic queued work is cancellable", async () => {
   assert.equal(pausedAutomatic({ ...queued, status: "scanning" }, { enabled: false, accountIds: [] }), false);
   assert.equal(pausedAutomatic({ ...queued, source: "manual" }, { enabled: false, accountIds: [] }), false);
 });
+
+test("automatic account selection migrates legacy OFF safely and normalizes empty ON", async () => {
+  const { normalizeAutomaticSettings } = await import("../thunderbird/core.mjs");
+  assert.deepEqual(normalizeAutomaticSettings({ enabled: false, accountIds: ["a"], notifications: false }),
+    { enabled: false, accountIds: [], notifications: false });
+  assert.deepEqual(normalizeAutomaticSettings({ enabled: true, accountIds: ["a", "a"], notifications: true }),
+    { enabled: true, accountIds: ["a"], notifications: true });
+  assert.equal(normalizeAutomaticSettings({ enabled: true, accountIds: [] }).enabled, false);
+});
