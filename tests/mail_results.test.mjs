@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { filterRecords, resultPage, selectable, canDelete } from "../thunderbird/results.mjs";
+import { filterRecords, resultPage, selectable, canDelete, canRetry, canForget } from "../thunderbird/results.mjs";
 
 const states = ["clean", "detected", "incomplete", "error", "queued", "scanning", "deleted"];
 const records = states.map((status, index) => ({ key: String(index), status, sha256: "hash",
@@ -29,8 +29,8 @@ test("pagination reaches all history and clamps after results shrink", () => {
   assert.equal(resultPage(many.slice(0, 3), 2).page, 0);
   assert.deepEqual(resultPage([], 9), { records: [], page: 0, pages: 1 });
 });
-test("selection and deletion accept all terminal undeleted results", () => {
-  assert.equal(records.filter(selectable).length, 4);
+test("selection includes terminal history while message deletion excludes deleted entries", () => {
+  assert.equal(records.filter(selectable).length, 5);
   assert.deepEqual(records.filter(canDelete).map(record => record.status), ["clean", "detected", "incomplete", "error"]);
   assert.equal(canDelete({ status: "incomplete" }), true);
   assert.equal(canDelete({ status: "unknown" }), false);
@@ -58,4 +58,14 @@ test("excluded automatic mail is reviewable in attention, incomplete and dedicat
   for (const status of ["attention", "incomplete"]) assert.equal(filterRecords([excluded, other], { status }).length, 2);
   assert.deepEqual(filterRecords([excluded, other], { status: "automatic-excluded" }).map(record => record.key), ["excluded"]);
   assert.equal(selectable(excluded), true);
+});
+
+test("shared selection includes deleted history while action eligibility stays separate", () => {
+  const deleted = { status: "deleted" }, queued = { status: "queued" };
+  assert.equal(selectable(deleted), true);
+  assert.equal(canForget(deleted), true);
+  assert.equal(canRetry(deleted), false);
+  assert.equal(canDelete(deleted), false);
+  assert.equal(selectable(queued), false);
+  assert.equal(canForget(queued), false);
 });

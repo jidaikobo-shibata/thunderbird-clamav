@@ -89,3 +89,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid GrayText
 #folder-options label:has(input:checked) { background: color-mix(in srgb, Highlight 12%, Canvas); }
 #folder-options input { flex-shrink: 0; }
 .folder-target-list { max-height: 30vh; overflow: auto; overflow-wrap: anywhere; }
+
+#forget-selected { margin-inline-start: 12px; }
+#selection-expansion:has(button[hidden]) { display: none; }
+#batch-progress { overflow-wrap: anywhere; }

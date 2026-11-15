@@ -2,8 +2,10 @@ import { folderLabel } from "./folder-labels.mjs";
 import { localizeDetail } from "./i18n.mjs";
 import { needsAttention } from "./core.mjs";
 
-export const selectable = record => ["clean", "detected", "incomplete", "error"].includes(record.status);
-export const canDelete = record => selectable(record);
+export const canRetry = record => ["clean", "detected", "incomplete", "error"].includes(record.status);
+export const canDelete = canRetry;
+export const canForget = record => canRetry(record) || record.status === "deleted";
+export const selectable = canForget;
 
 export function filterRecords(records, { status = "all", account = "all", search = "", folderJobId = null, folders = [] } = {}) {
   const query = search.trim().toLocaleLowerCase();

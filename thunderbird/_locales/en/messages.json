@@ -70,8 +70,8 @@
     "description": "確認後にメール内容が変わりました。もう一度確認してください。"
   },
   "mail015": {
-    "message": "Select 1–100 unique results for a bulk action.",
-    "description": "一括操作は重複のない1〜100件を選択してください。"
+    "message": "Select 1–1000 unique results for a bulk action.",
+    "description": "一括操作は重複のない1〜1000件を選択してください。"
   },
   "mail016": {
     "message": "Bulk deletion is in progress.",
@@ -2250,5 +2250,203 @@
   "notificationHeading": {
     "message": "Notifications",
     "description": "通知"
+  },
+  "bulkBusy": {
+    "message": "A bulk operation is in progress.",
+    "description": "一括操作の処理中です。"
+  },
+  "bulkRetryInterrupted": {
+    "message": "Bulk rescanning was interrupted. This message's result is unconfirmed. Rescan it if needed.",
+    "description": "一括再検査が中断され、このメールの結果は未確認です。必要に応じて再検査してください。"
+  },
+  "bulkRetryRestart": {
+    "message": "Bulk rescanning was interrupted. Check the results. Previous results for unstarted messages have been kept.",
+    "description": "一括再検査が中断されました。検査結果を確認してください。未着手の履歴は保持しています。"
+  },
+  "forgetChanged": {
+    "message": "The history changed. Select the entries again.",
+    "description": "履歴の状態が変わりました。選び直してください。"
+  },
+  "selectionCount": {
+    "message": "Selected: $ARG1$ (outside this page: $ARG2$)",
+    "description": "$1件を選択中（画面外$2件）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "retrySelectedCount": {
+    "message": "Rescan ($ARG1$ messages)",
+    "description": "再検査（$1通）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "deleteSelectedCount": {
+    "message": "Permanently delete messages ($ARG1$)",
+    "description": "メールを完全削除（$1通）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "forgetSelectedCount": {
+    "message": "Clear history only ($ARG1$ entries)",
+    "description": "履歴だけ消去（$1件）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "selectFilteredCount": {
+    "message": "Select all $ARG1$ eligible matching entries",
+    "description": "絞り込み結果の選択可能な$1件をすべて選択",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "forgetTitle": {
+    "message": "Clear history only",
+    "description": "履歴だけ消去"
+  },
+  "forgetWarning": {
+    "message": "Clear only the selected scan history. Messages themselves will remain. Entries that changed after confirmation will be kept.",
+    "description": "選択した検査履歴だけを消去します。メール本体は残ります。状態が変わった履歴は消去しません。"
+  },
+  "forgetAck": {
+    "message": "I have reviewed the history entries and understand that messages themselves will remain.",
+    "description": "対象の履歴を確認しました。メール本体は残ることを理解しました。"
+  },
+  "forgetConfirmCount": {
+    "message": "History entries to clear: $ARG1$ (all targets, including other pages, are listed below)",
+    "description": "消去する履歴：$1件（画面外を含む全対象を下に表示しています）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "deleteConfirmCount": {
+    "message": "Messages to permanently delete: $ARG1$ (all targets, including other pages, are listed below)",
+    "description": "完全削除するメール：$1通（画面外を含む全対象を下に表示しています）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "bulkRetryName": {
+    "message": "Bulk rescan",
+    "description": "一括再検査"
+  },
+  "bulkPrepareName": {
+    "message": "Verifying messages to delete",
+    "description": "削除対象の照合"
+  },
+  "bulkDeleteName": {
+    "message": "Bulk permanent message deletion",
+    "description": "メールの一括完全削除"
+  },
+  "bulkStopping": {
+    "message": "Stopping",
+    "description": "中止しています"
+  },
+  "bulkRunning": {
+    "message": "Processing",
+    "description": "処理中"
+  },
+  "bulkStopped": {
+    "message": "Stopped",
+    "description": "中止"
+  },
+  "bulkDone": {
+    "message": "Finished",
+    "description": "終了"
+  },
+  "bulkProgress": {
+    "message": "$ARG1$: $ARG2$ / $ARG3$ of $ARG4$ processed / Failed: $ARG5$; unstarted: $ARG6$",
+    "description": "$1：$2 ／ $3 / $4件 ／ 失敗$5件・未着手$6件",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      },
+      "arg4": {
+        "content": "$4"
+      },
+      "arg5": {
+        "content": "$5"
+      },
+      "arg6": {
+        "content": "$6"
+      }
+    }
+  },
+  "bulkPrepareCancelled": {
+    "message": "Verification stopped. No messages were deleted.",
+    "description": "照合を中止しました。メールは削除していません。"
+  },
+  "bulkDeleteResult": {
+    "message": "Permanently deleted: $ARG1$ / Failed: $ARG2$ / Unstarted: $ARG3$",
+    "description": "完全削除$1通 ／ 失敗$2通 ／ 未着手$3通",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "forgetCancelled": {
+    "message": "History clearing canceled.",
+    "description": "履歴の消去をキャンセルしました。"
+  },
+  "forgetResult": {
+    "message": "History entries cleared: $ARG1$. Kept due to changes: $ARG2$. No messages were deleted.",
+    "description": "履歴$1件を消去しました。状態が変わった$2件は残しました。メール本体は削除していません。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "selectionHint": {
+    "message": "Selections are kept across pages and cleared when filters change. Each action applies only to eligible entries.",
+    "description": "ページを移動しても選択を保持します。絞り込みを変更すると解除します。各操作は実行できる対象だけに適用します。"
+  },
+  "bulkStop": {
+    "message": "Stop",
+    "description": "中止"
+  },
+  "forgetSuccess": {
+    "message": "History entries cleared: $ARG1$. Messages themselves remain.",
+    "description": "履歴$1件を消去しました。メール本体は残っています。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
   }
 }

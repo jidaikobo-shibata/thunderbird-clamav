@@ -4,7 +4,7 @@ import {
   MAX_BYTES, DEFAULTS, LABELS, NativeClient, accountOf, locator, sameEnvelope,
   validateSettings, messagePages, sha256, needsAttention, pausedAutomatic, normalizeAutomaticSettings
 } from "./core.mjs";
-import { canDelete } from "./results.mjs";
+import { canDelete, canForget, canRetry } from "./results.mjs";
 import { FolderScan, FOLDER_STATES, realFolder, checkpointHint } from "./folder-scan.mjs";
 
 const api = messenger;
@@ -20,7 +20,8 @@ let mutations = Promise.resolve();
 const deletionTickets = new Map();
 const deleting = new Set();
 const batchTickets = new Map();
-let batchProgress = null;
+let batchProgress = null, retryContext = null;
+const historyTickets = new Map();
 let folderRequest = null;
 let lastHealth = null, lastScan = null;
 let resultsRequest = null, setupRequest = null;
@@ -185,11 +186,33 @@ function restoreExcluded(changes) {
 }
 
 function requestedKeys(keys) {
-  if (!Array.isArray(keys) || !keys.length || keys.length > 100 ||
+  if (!Array.isArray(keys) || !keys.length || keys.length > 1000 ||
       keys.some(key => typeof key !== "string") || new Set(keys).size !== keys.length) {
-    throw new Error(t("mail015", "一括操作は重複のない1〜100件を選択してください。"));
+    throw new Error(t("mail015", "一括操作は重複のない1〜1000件を選択してください。"));
   }
   return keys;
+}
+
+function startBatch(operation, total, phase = "execute") {
+  if (batchProgress?.active) throw new Error(t("bulkBusy", "一括操作の処理中です。"));
+  batchProgress = { id: crypto.randomUUID(), operation, phase, active: true, stopRequested: false,
+    total, completed: 0, deleted: 0, failed: 0, cancelled: 0 };
+  return batchProgress;
+}
+const yieldBatch = () => new Promise(resolve => setTimeout(resolve, 0));
+function restoreRetryRecord(record) {
+  const previous = record.bulkRetryBefore;
+  if (!previous) return;
+  for (const key of Object.keys(record)) delete record[key];
+  Object.assign(record, previous, { nextRetry: null });
+}
+function finishRetry(record) {
+  if (!retryContext || record.bulkRetryId !== retryContext.id) return;
+  retryContext.entries.delete(record.key);
+  delete record.bulkRetryId; delete record.bulkRetryBefore;
+  batchProgress.completed++;
+  if (record.status === "error") batchProgress.failed++;
+  if (!retryContext.entries.size) { batchProgress.active = false; retryContext = null; }
 }
 
 async function prepareBatch(keys) {
@@ -198,30 +221,40 @@ async function prepareBatch(keys) {
   if (!await api.permissions.contains({ permissions: ["messagesDelete"] })) {
     throw new Error(t("mail017", "完全削除の権限がありません。削除ボタンからもう一度操作してください。"));
   }
-  const tickets = [], targets = [], positions = new Set();
-  for (const key of keys) {
-    const record = deletable(key);
-    if (deleting.has(key)) throw new Error(t("mail018", "削除処理中のメールがあります。"));
-    const hash = record.sha256;
-    const { message, fingerprint } = await verified(record);
-    if (deletable(key).sha256 !== hash) throw new Error(t("mail019", "検査結果が変わりました。選び直してください。"));
-    const place = position(message);
-    if (positions.has(place)) throw new Error(t("mail020", "同じメールを指す履歴が含まれています。重複を外してください。"));
-    positions.add(place);
-    tickets.push({ key, hash, fingerprint, position: place });
-    targets.push({ key, author: message.author || t("mail021", "差出人なし"), subject: message.subject || t("mail022", "件名なし"),
-      accountId: message.folder.accountId, folder: message.folder.name || message.folder.path || "", folderInfo: message.folder,
-      status: record.status, signatures: record.signatures || [] });
-  }
-  for (const [token, batch] of batchTickets) {
-    if (batch.expires < Date.now()) batchTickets.delete(token);
-  }
-  if (batchTickets.size >= 10) throw new Error(t("mail023", "未完了の確認が多いため、ほかの確認画面を閉じてやり直してください。"));
-  const token = crypto.randomUUID();
-  batchTickets.set(token, { tickets, expires: Date.now() + 300000 });
-  return { ok: true, token, targets };
+  const progress = startBatch("delete", keys.length, "prepare");
+  try {
+    const tickets = [], targets = [], positions = new Set();
+    for (const key of keys) {
+      if (progress.stopRequested) return { ok: true, cancelled: true, targets: [] };
+      const record = deletable(key);
+      if (deleting.has(key)) throw new Error(t("mail018", "削除処理中のメールがあります。"));
+      const hash = record.sha256;
+      const { message, fingerprint } = await verified(record);
+      if (deletable(key).sha256 !== hash) throw new Error(t("mail019", "検査結果が変わりました。選び直してください。"));
+      const place = position(message);
+      if (positions.has(place)) throw new Error(t("mail020", "同じメールを指す履歴が含まれています。重複を外してください。"));
+      positions.add(place);
+      tickets.push({ key, hash, fingerprint, position: place });
+      targets.push({ key, author: message.author || t("mail021", "差出人なし"), subject: message.subject || t("mail022", "件名なし"),
+        accountId: message.folder.accountId, folder: message.folder.name || message.folder.path || "", folderInfo: message.folder,
+        status: record.status, signatures: record.signatures || [] });
+      progress.completed++;
+      if (progress.completed % 25 === 0) await yieldBatch();
+    }
+    for (const [token, batch] of batchTickets) {
+      if (batch.expires < Date.now()) batchTickets.delete(token);
+    }
+    if (batchTickets.size >= 10) throw new Error(t("mail023", "未完了の確認が多いため、ほかの確認画面を閉じてやり直してください。"));
+    if (progress.stopRequested) return { ok: true, cancelled: true, targets: [] };
+    const token = crypto.randomUUID();
+    batchTickets.set(token, { tickets, expires: Date.now() + 300000 });
+    return { ok: true, token, targets };
+  } catch (error) {
+    progress.error = true; progress.failed++;
+    progress.completed = Math.min(progress.total, progress.completed + 1);
+    throw error;
+  } finally { progress.active = false; progress.cancelled = progress.total - progress.completed; }
 }
-
 
 async function executeDeletion(ticket) {
   if (deleting.has(ticket.key)) throw new Error(t("mail024", "このメールは削除処理中です。"));
@@ -457,9 +490,10 @@ async function drain() {
       }
       record.updatedAt = new Date().toISOString();
       // Two automatic attempts total; no endless retry loop on bad mail/host.
-      if (!fromFolder && record.status === "error" && record.attempts < 2) {
+      if (!fromFolder && !record.bulkRetryId && record.status === "error" && record.attempts < 2) {
         record.nextRetry = Date.now() + 60000;
       }
+      finishRetry(record);
       if (fromFolder) {
         const flag = record.status === "detected" ? "notifiedDetection" :
           ["incomplete", "error"].includes(record.status) ? "notifiedProblem" : null;
@@ -476,6 +510,14 @@ async function drain() {
       await updateBadge();
     }
   } catch (error) {
+    if (retryContext) {
+      for (const record of records) {
+        if (record.bulkRetryId !== retryContext.id) continue;
+        if (record.status === "queued") restoreRetryRecord(record);
+        else { delete record.bulkRetryId; delete record.bulkRetryBefore; }
+      }
+      batchProgress.active = false; batchProgress.error = true; retryContext = null;
+    }
     const active = records.find(record => record.status === "scanning");
     if (active) {
       active.status = "error";
@@ -525,7 +567,21 @@ const ready = (async () => {
       }
     }
   }
+  let retryInterrupted = false;
   for (const record of records) {
+    if (record.bulkRetryId) {
+      retryInterrupted = true;
+      if (record.status === "queued" && record.bulkRetryBefore) restoreRetryRecord(record);
+      else if (record.status === "scanning") {
+        record.status = "incomplete";
+        record.unscannedReason = "bulkInterrupted";
+        record.updatedAt = new Date().toISOString();
+        record.detail = t("bulkRetryInterrupted", "一括再検査が中断され、このメールの結果は未確認です。必要に応じて再検査してください。");
+        delete record.detailMessages;
+        record.nextRetry = null;
+      }
+      delete record.bulkRetryId; delete record.bulkRetryBefore;
+    }
     record.messageId = null;
     record.session = null;
     if (record.status === "scanning" || (record.source === "folder" && record.status === "queued")) {
@@ -535,6 +591,7 @@ const ready = (async () => {
       if (record.source === "folder") record.nextRetry = null;
     }
   }
+  if (retryInterrupted) issue = [issue, t("bulkRetryRestart", "一括再検査が中断されました。検査結果を確認してください。未着手の履歴は保持しています。")].filter(Boolean).join(" ");
   excludePausedAutomatic();
   await api.menus.removeAll();
   api.menus.create({ id: "scan", title: t("mail051", "ClamAVで選択メールを検査"), contexts: ["message_list"] });
@@ -714,6 +771,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         await folderScan.stop();
         return { ok: true };
       case "retry": {
+        if (batchProgress?.active) throw new Error(t("bulkBusy", "一括操作の処理中です。"));
         const record = records.find(item => item.key === request.key);
         if (!record || deleting.has(record.key) || ["scanning", "queued", "deleted"].includes(record.status)) {
           throw new Error(t("mail074", "この結果は再検査できません。"));
@@ -731,16 +789,61 @@ api.runtime.onMessage.addListener(async (request, sender) => {
       case "retryMany": {
         const keys = requestedKeys(request.keys);
         const targets = keys.map(key => records.find(record => record.key === key));
-        if (targets.some(record => !record || deleting.has(record.key) ||
-            !["clean", "detected", "incomplete", "error"].includes(record.status))) {
-          throw new Error(t("mail075", "再検査できない結果が含まれています。選び直してください。"));
-        }
+        if (targets.some(record => !record || deleting.has(record.key) || !canRetry(record))) throw new Error(t("mail075", "再検査できない結果が含まれています。選び直してください。"));
+        const progress = startBatch("retry", targets.length);
+        retryContext = { id: progress.id, entries: new Map(targets.map(record => [record.key, record])) };
         for (const record of targets) {
-          Object.assign(record, { unscannedReason: null, status: "queued", source: "manual", attempts: 0, nextRetry: null, folderJobId: null });
+          const before = { ...record };
+          Object.assign(record, { bulkRetryId: progress.id, bulkRetryBefore: before, unscannedReason: null,
+            status: "queued", source: "manual", attempts: 0, nextRetry: null, folderJobId: null });
         }
-        await save();
+        try { await save(); }
+        catch (error) {
+          for (const record of targets) restoreRetryRecord(record);
+          retryContext = null; progress.active = false; throw error;
+        }
         void drain().catch(report);
         return { ok: true, count: targets.length };
+      }
+      case "cancelBatch": {
+        const progress = batchProgress;
+        if (!progress?.active || request.id !== progress.id) return { ok: true };
+        progress.stopRequested = true;
+        if (progress.operation === "retry" && retryContext) {
+          for (const [key, record] of retryContext.entries) {
+            if (record.status !== "queued") continue;
+            restoreRetryRecord(record); retryContext.entries.delete(key); progress.cancelled++;
+          }
+          if (!retryContext.entries.size) { retryContext = null; progress.active = false; }
+          await save();
+        }
+        return { ok: true };
+      }
+      case "prepareForget": {
+        const keys = requestedKeys(request.keys);
+        if (batchProgress?.active) throw new Error(t("bulkBusy", "一括操作の処理中です。"));
+        const targets = keys.map(key => records.find(record => record.key === key));
+        if (targets.some(record => !record || !canForget(record) || deleting.has(record.key))) throw new Error(t("forgetChanged", "履歴の状態が変わりました。選び直してください。"));
+        for (const [token, entry] of historyTickets) if (entry.expires < Date.now()) historyTickets.delete(token);
+        if (historyTickets.size >= 10) throw new Error(t("mail023", "未完了の確認が多いため、ほかの確認画面を閉じてやり直してください。"));
+        const token = crypto.randomUUID();
+        historyTickets.set(token, { expires: Date.now() + 300000, entries: targets.map(record => ({ key: record.key, fingerprint: JSON.stringify(record) })) });
+        return { ok: true, token, targets: targets.map(record => ({ key: record.key, author: record.locator.author || "", subject: record.locator.subject || t("mail022", "件名なし"),
+          accountId: record.locator.accountId, folderInfo: record.locator.folder, status: record.status, signatures: record.signatures || [] })) };
+      }
+      case "cancelForget": historyTickets.delete(request.token); return { ok: true };
+      case "forgetMany": {
+        if (batchProgress?.active) throw new Error(t("bulkBusy", "一括操作の処理中です。"));
+        const ticket = historyTickets.get(request.token); historyTickets.delete(request.token);
+        if (!ticket || ticket.expires < Date.now()) throw new Error(t("mail076", "削除確認が期限切れです。選び直してください。"));
+        const keys = new Set(ticket.entries.filter(entry => {
+          const record = records.find(record => record.key === entry.key);
+          return record && canForget(record) && !deleting.has(record.key) && JSON.stringify(record) === entry.fingerprint;
+        }).map(entry => entry.key));
+        records = records.filter(record => !keys.has(record.key));
+        batchProgress = null;
+        await save();
+        return { ok: true, keys: [...keys], count: keys.size, skipped: ticket.entries.length - keys.size };
       }
       case "prepareDeleteBatch":
         return await prepareBatch(request.keys);
@@ -752,10 +855,11 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         const batch = batchTickets.get(request.token);
         batchTickets.delete(request.token);
         if (!batch || batch.expires < Date.now()) throw new Error(t("mail076", "削除確認が期限切れです。選び直してください。"));
-        batchProgress = { active: true, total: batch.tickets.length, completed: 0, deleted: 0, failed: 0 };
+        const progress = startBatch("delete", batch.tickets.length);
         const results = [];
         try {
           for (const ticket of batch.tickets) {
+            if (progress.stopRequested) break;
             try {
               await executeDeletion(ticket);
               batchProgress.deleted++;
@@ -765,8 +869,10 @@ api.runtime.onMessage.addListener(async (request, sender) => {
               results.push({ key: ticket.key, deleted: false, error: error.message || t("mail077", "削除に失敗しました。") });
             }
             batchProgress.completed++;
+            if (batchProgress.completed % 25 === 0) await yieldBatch();
           }
-          return { ok: true, results };
+          progress.cancelled = progress.total - progress.completed;
+          return { ok: true, results, cancelled: progress.cancelled };
         } finally { batchProgress.active = false; }
       }
       case "open": {
@@ -780,6 +886,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         return { ok: true };
       }
       case "prepareDelete": {
+        if (batchProgress?.active) throw new Error(t("bulkBusy", "一括操作の処理中です。"));
         if (!await api.permissions.contains({ permissions: ["messagesDelete"] })) {
           throw new Error(t("mail017", "完全削除の権限がありません。削除ボタンからもう一度操作してください。"));
         }
@@ -801,6 +908,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         deletionTickets.delete(request.token);
         return { ok: true };
       case "deletePermanently": {
+        if (batchProgress?.active) throw new Error(t("bulkBusy", "一括操作の処理中です。"));
         const ticket = deletionTickets.get(request.token);
         deletionTickets.delete(request.token);
         if (!ticket || ticket.key !== request.key || ticket.expires < Date.now()) {
@@ -809,6 +917,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         return await executeDeletion(ticket);
       }
       case "clear":
+        if (batchProgress?.active) throw new Error(t("bulkBusy", "一括操作の処理中です。"));
         // This removes only generated results, never messages. The page asks
         // for confirmation before sending this request.
         records = records.filter(record => deleting.has(record.key) || ["scanning", "queued"].includes(record.status));

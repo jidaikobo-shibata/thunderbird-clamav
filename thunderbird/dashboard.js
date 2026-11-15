@@ -2,14 +2,14 @@ import { folderLabel } from "./folder-labels.mjs";
 import { t, uiLanguage, localizeDocument, localizeDetail } from "./i18n.mjs";
 import { installationUI, helperNotice } from "./installation.mjs";
 import { LABELS, needsAttention, normalizeAutomaticSettings } from "./core.mjs";
-import { selectable, canDelete, filterRecords, resultPage } from "./results.mjs";
+import { selectable, canDelete, canRetry, canForget, filterRecords, resultPage } from "./results.mjs";
 import { FOLDER_STATES } from "./folder-scan.mjs";
 
 localizeDocument();
 
 const $ = id => document.getElementById(id);
 let latest, initialized = false, refreshing = false, busy = false, page = 0;
-let visible = [];
+let visible = [], filteredRecords = [];
 const rows = new Map(), selected = new Set();
 let folderFilterId = null, seenFolderRequest = null;
 let folderAnnouncement = null, seenResultsRequest = null;
@@ -28,20 +28,30 @@ function setText(element, text) {
 }
 function blocked() { return busy || Boolean(latest?.batch?.active) || Boolean(latest?.maintenance); }
 const installer = installationUI({ request, action, latest: () => latest, busy: () => blocked() });
-function selection() { return visible.filter(record => selected.has(record.key)); }
+function selection() { return (latest?.records || []).filter(record => selected.has(record.key)); }
 function updateControls() {
   const locked = blocked() || Boolean(latest?.helperRemoved), chosen = selection();
-  setText($("selected-count"), t("mail103", "選択$1件", [chosen.length]));
-  $("retry-selected").disabled = locked || !chosen.length;
-  $("delete-selected").disabled = locked || !chosen.length || !chosen.every(canDelete);
+  const retryCount = chosen.filter(canRetry).length, deleteCount = chosen.filter(canDelete).length, historyCount = chosen.filter(canForget).length;
+  const outside = chosen.filter(record => !visible.some(item => item.key === record.key)).length;
+  setText($("selected-count"), t("selectionCount", "$1件を選択中（画面外$2件）", [chosen.length, outside]));
+  setText($("retry-selected"), t("retrySelectedCount", "再検査（$1通）", [retryCount]));
+  setText($("delete-selected"), t("deleteSelectedCount", "メールを完全削除（$1通）", [deleteCount]));
+  setText($("forget-selected"), t("forgetSelectedCount", "履歴だけ消去（$1件）", [historyCount]));
+  $("retry-selected").disabled = locked || !retryCount;
+  $("delete-selected").disabled = locked || !deleteCount;
+  $("forget-selected").disabled = locked || !historyCount;
   $("deselect").disabled = locked || !chosen.length;
-  const candidates = visible.filter(selectable);
+  const candidates = visible.filter(selectable), selectedOnPage = candidates.filter(record => selected.has(record.key)).length;
   $("select-page").disabled = locked || !candidates.length;
-  $("select-page").checked = candidates.length > 0 && chosen.length === candidates.length;
-  $("select-page").indeterminate = chosen.length > 0 && chosen.length < candidates.length;
-  for (const id of ["filter", "account-filter", "search", "reset-filters", "clear", "health"]) {
-    $(id).disabled = locked;
-  }
+  $("select-page").checked = candidates.length > 0 && selectedOnPage === candidates.length;
+  $("select-page").indeterminate = selectedOnPage > 0 && selectedOnPage < candidates.length;
+  const allCandidates = filteredRecords.filter(selectable);
+  $("select-filtered").hidden = !candidates.length || selectedOnPage !== candidates.length || allCandidates.every(record => selected.has(record.key));
+  $("select-filtered").disabled = locked;
+  setText($("select-filtered"), t("selectFilteredCount", "絞り込み結果の選択可能な$1件をすべて選択", [allCandidates.length]));
+  const navigationLocked = Boolean(latest?.maintenance) || busy && !latest?.batch?.active;
+  for (const id of ["filter", "account-filter", "search", "reset-filters"]) $(id).disabled = navigationLocked;
+  $("health").disabled = locked;
   const job = latest?.folderJob;
   const folderActive = job && ["collecting", "running", "stopping"].includes(job.status);
   $("scan-folder").disabled = locked || latest?.helperRemoved || Boolean(folderActive) || foldersLoading || !selectedFolders.size;
@@ -60,11 +70,11 @@ function updateControls() {
     entry.checkbox.checked = selected.has(record.key);
     entry.row.dataset.selected = String(entry.checkbox.checked);
     entry.open.disabled = locked || !record.sha256 || ["queued", "scanning", "deleted"].includes(record.status);
-    entry.retry.disabled = locked || !selectable(record);
+    entry.retry.disabled = locked || !canRetry(record);
     entry.remove.disabled = locked || !canDelete(record);
   }
-  $("previous-page").disabled = locked || page === 0;
-  $("next-page").disabled = locked || page + 1 >= Number($("page-label").dataset.pages || 1);
+  $("previous-page").disabled = navigationLocked || page === 0;
+  $("next-page").disabled = navigationLocked || page + 1 >= Number($("page-label").dataset.pages || 1);
   installer.render(); renderHelperNotice();
 }
 async function action(callback, success) {
@@ -128,6 +138,7 @@ function renderFolder() {
   $("folder-progress").hidden = !job;
   $("folder-only-label").hidden = !job;
   if (!job) {
+    if (folderFilterId) { selected.clear(); page = 0; }
     folderFilterId = null; $("folder-only").checked = false;
     return;
   }
@@ -250,10 +261,14 @@ for (const button of document.querySelectorAll("[data-open-tab]")) {
   button.addEventListener("click", () => { userNavigated = true; activateTab(button.dataset.openTab, true); });
 }
 
-function confirmDeletion(targets) {
+function confirmDeletion(targets, history = false) {
   const dialog = $("delete-dialog");
+  setText($("delete-title"), history ? t("forgetTitle", "履歴だけ消去") : t("mail357", "メールの完全削除"));
+  setText($("delete-warning"), history ? t("forgetWarning", "選択した検査履歴だけを消去します。メール本体は残ります。状態が変わった履歴は消去しません。") : t("mail358", "ごみ箱を経由せず完全に削除します。元には戻せません。IMAPではサーバーと他端末にも反映されます。"));
+  setText($("delete-ack-text"), history ? t("forgetAck", "対象の履歴を確認しました。メール本体は残ることを理解しました。") : t("mail359", "上の対象を確認し、元に戻せないことを理解しました"));
+  setText($("delete-confirm"), history ? t("forgetTitle", "履歴だけ消去") : t("mail360", "完全に削除する"));
   $("delete-targets").replaceChildren();
-  setText($("delete-count"), t("mail125", "完全削除する対象：$1件（下の全件をご確認ください）", [targets.length]));
+  setText($("delete-count"), history ? t("forgetConfirmCount", "消去する履歴：$1件（画面外を含む全対象を下に表示しています）", [targets.length]) : t("deleteConfirmCount", "完全削除するメール：$1通（画面外を含む全対象を下に表示しています）", [targets.length]));
   for (const target of targets) {
     const item = document.createElement("li");
     const subject = item.appendChild(document.createElement("strong"));
@@ -339,12 +354,13 @@ function renderRecords() {
   if (!latest) return;
   renderFolder();
   const filtered = filterRecords(latest.records, { status: $("filter").value, account: $("account-filter").value, search: $("search").value, folderJobId: folderFilterId, folders: folderChoices });
+  filteredRecords = filtered;
   const result = resultPage(filtered, page);
   page = result.page;
   visible = result.records;
   const keep = new Set(visible.map(record => record.key));
   for (const key of selected) {
-    if (!visible.some(record => record.key === key && selectable(record))) selected.delete(key);
+    if (!latest.records.some(record => record.key === key && selectable(record))) selected.delete(key);
   }
   for (const [key, entry] of rows) {
     if (!keep.has(key)) { entry.row.remove(); rows.delete(key); }
@@ -363,7 +379,7 @@ function renderRecords() {
     setText(entry.parts.detail, localizeDetail(record));
     setText(entry.parts.signatures, (record.signatures || []).join(" / "));
     setText(entry.parts.engine, record.engine || "");
-    entry.remove.hidden = !selectable(record);
+    entry.remove.hidden = !canDelete(record);
     for (const [button, label] of [[entry.checkbox, t("mail138", "一括操作の対象に選択")], [entry.remove, t("mail139", "ごみ箱を経由せず完全削除")], [entry.open, t("mail131", "メールを開く")], [entry.retry, t("mail134", "再検査")]]) {
       button.setAttribute("aria-label", t("namedDetail", "$1：$2", [record.locator.subject || t("mail022", "件名なし"), label]));
     }
@@ -380,8 +396,14 @@ function renderRecords() {
   $("page-label").dataset.pages = String(result.pages);
   $("empty-results").hidden = visible.length > 0;
   const progress = latest.batch;
-  $("batch-progress").hidden = !progress?.active;
-  if (progress?.active) setText($("batch-progress"), t("mail146", "一括削除：$1 / $2件を処理（削除$3件、失敗$4件）", [progress.completed, progress.total, progress.deleted, progress.failed]));
+  $("batch-progress").hidden = !progress;
+  $("batch-stop").hidden = !progress?.active;
+  $("batch-stop").disabled = !progress?.active || progress.stopRequested;
+  if (progress) {
+    const operation = progress.operation === "retry" ? t("bulkRetryName", "一括再検査") : progress.phase === "prepare" ? t("bulkPrepareName", "削除対象の照合") : t("bulkDeleteName", "メールの一括完全削除");
+    const state = progress.error ? t("mail180", "失敗") : progress.active ? progress.stopRequested ? t("bulkStopping", "中止しています") : t("bulkRunning", "処理中") : progress.stopRequested ? t("bulkStopped", "中止") : t("bulkDone", "終了");
+    setText($("batch-progress"), t("bulkProgress", "$1：$2 ／ $3 / $4件 ／ 失敗$5件・未着手$6件", [operation, state, progress.completed, progress.total, progress.failed || 0, progress.active ? progress.total - progress.completed : progress.cancelled || 0]));
+  }
   updateControls();
 }
 
@@ -436,7 +458,7 @@ $("reset-filters").addEventListener("click", () => {
   folderFilterId = null; $("folder-only").checked = false; resetSelection();
 });
 for (const [id, delta] of [["previous-page", -1], ["next-page", 1]]) {
-  $(id).addEventListener("click", () => { selected.clear(); page += delta; renderRecords(); });
+  $(id).addEventListener("click", () => { page += delta; renderRecords(); });
 }
 $("select-page").addEventListener("change", () => {
   for (const record of visible.filter(selectable)) {
@@ -444,22 +466,32 @@ $("select-page").addEventListener("change", () => {
   }
   updateControls();
 });
+$("select-filtered").addEventListener("click", () => {
+  selected.clear();
+  for (const record of filteredRecords.filter(selectable)) selected.add(record.key);
+  updateControls();
+});
+$("batch-stop").addEventListener("click", () => {
+  void request("cancelBatch", { id: latest?.batch?.id }).then(refresh).catch(error => setText($("action-status"), error.message));
+});
 $("deselect").addEventListener("click", () => { selected.clear(); updateControls(); });
 $("retry-selected").addEventListener("click", () => {
-  const keys = selection().map(record => record.key);
+  const keys = selection().filter(canRetry).map(record => record.key);
   void action(async () => {
+    $("batch-report").replaceChildren(); $("batch-report").hidden = true;
     const response = await request("retryMany", { keys });
-    selected.clear();
+    for (const key of keys) selected.delete(key);
     return t("mail147", "$1件の再検査を受け付けました。", [response.count]);
   });
 });
 $("delete-selected").addEventListener("click", () => {
-  const keys = selection().map(record => record.key);
+  const keys = selection().filter(canDelete).map(record => record.key);
   void action(async () => {
     await requireDeletePermission();
     $("batch-report").replaceChildren(); $("batch-report").hidden = true;
     setText($("action-status"), t("mail148", "選択した削除対象を照合しています。"));
     const prepared = await request("prepareDeleteBatch", { keys });
+    if (prepared.cancelled) return t("bulkPrepareCancelled", "照合を中止しました。メールは削除していません。");
     if (!await confirmDeletion(prepared.targets)) {
       await request("cancelDeleteBatch", { token: prepared.token });
       return t("mail149", "一括削除をキャンセルしました。");
@@ -474,7 +506,21 @@ $("delete-selected").addEventListener("click", () => {
       $("batch-report").append(item);
     }
     $("batch-report").hidden = failed.length === 0;
-    return t("mail151", "一括削除：完全削除$1件、未削除$2件。", [response.results.length - failed.length, failed.length]);
+    return t("bulkDeleteResult", "完全削除$1通 ／ 失敗$2通 ／ 未着手$3通", [response.results.length - failed.length, failed.length, response.cancelled || 0]);
+  });
+});
+$("forget-selected").addEventListener("click", () => {
+  const keys = selection().filter(canForget).map(record => record.key);
+  void action(async () => {
+    $("batch-report").replaceChildren(); $("batch-report").hidden = true;
+    const prepared = await request("prepareForget", { keys });
+    if (!await confirmDeletion(prepared.targets, true)) {
+      await request("cancelForget", { token: prepared.token });
+      return t("forgetCancelled", "履歴の消去をキャンセルしました。");
+    }
+    const response = await request("forgetMany", { token: prepared.token });
+    for (const key of response.keys) selected.delete(key);
+    return response.skipped ? t("forgetResult", "履歴$1件を消去しました。状態が変わった$2件は残しました。メール本体は削除していません。", [response.count, response.skipped]) : t("forgetSuccess", "履歴$1件を消去しました。メール本体は残っています。", [response.count]);
   });
 });
 function syncSettings(settings) {
@@ -585,10 +631,6 @@ $("health").addEventListener("click", () => {
     renderConnection();
     if (health.status !== "ready") throw new Error(health.detail);
   }, t("mail171", "接続の確認結果を更新しました。"));
-});
-$("clear").addEventListener("click", () => {
-  if (blocked() || !confirm(t("mail172", "検出・失敗を含む、検査履歴を消去します。メール自体は削除しません。続けますか？"))) return;
-  void action(() => request("clear"), t("mail173", "検査履歴を消去しました。"));
 });
 void refresh().catch(error => setText($("action-status"), error.message));
 setInterval(() => {

@@ -19,7 +19,7 @@ const server = createServer(async (request, response) => {
   }
   const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript", ".svg": "image/svg+xml", ".pyz": "application/octet-stream" };
   response.setHeader("Content-Type", types[path.extname(name)]);
-  response.end(await readFile(name === "installer.pyz" ? path.join(root, "dist", "clam-mail-check-installer-0.13.0.pyz") : path.join(root, "thunderbird", name)));
+  response.end(await readFile(name === "installer.pyz" ? path.join(root, "dist", "clam-mail-check-installer-0.14.0.pyz") : path.join(root, "thunderbird", name)));
 });
 await new Promise((resolve, reject) => {
   server.once("error", reject);
@@ -96,7 +96,7 @@ try {
       locator: { accountId, author: key === "r0" ? '<img src=x onerror="window.bad=true">' : "送信者",
         subject: key === "r0" ? "テスト添付メール" : "メール " + key, folder: { path: "/Inbox" } } });
     window.testState = { ok: true, issue: "", batch: null, folderJob: null, folderRequest: null,
-      installation: { state: sessionStorage.getItem("fixture-installation") || "managed", version: "0.13.0", healthy: true, detail: "導入済み" },
+      installation: { state: sessionStorage.getItem("fixture-installation") || "managed", version: "0.14.0", healthy: true, detail: "導入済み" },
       settings: { enabled: false, accountIds: [], notifications: true },
       accounts: [{ id: "test", name: "テストアカウント", type: "imap" }, { id: "other", name: "別アカウント", type: "imap" }],
       records: [makeRecord("r0", "detected"), makeRecord("r1", "detected", "other"),
@@ -106,17 +106,17 @@ try {
     const target = key => { const record = testState.records.find(record => record.key === key);
       return { key, author: record.locator.author, subject: record.locator.subject,
         folder: "/Inbox", accountId: record.locator.accountId, status: record.status, signatures: record.signatures }; };
-    let batchKeys = [];
-    window.messenger = { i18n: { getUILanguage: () => language, getMessage }, runtime: { getManifest: () => ({ version: "0.13.0" }), getURL: name => "/" + name, sendMessage: async request => {
+    let batchKeys = [], forgetKeys = [];
+    window.messenger = { i18n: { getUILanguage: () => language, getMessage }, runtime: { getManifest: () => ({ version: "0.14.0" }), getURL: name => "/" + name, sendMessage: async request => {
       testCalls.push(request);
       if (request.type === "state") return structuredClone(testState);
       if (request.type === "helperInfo") return { ok: true, installation: testState.installation };
       if (request.type === "helperPlan") { testState.maintenance = true; testState.maintenanceOperation = request.operation; return { ok: true,
-        plan: { token: "maintenance-token", operation: request.operation, version: "0.13.0", paths: ["/synthetic/home/.local/lib/clam-mail-check"] } }; }
+        plan: { token: "maintenance-token", operation: request.operation, version: "0.14.0", paths: ["/synthetic/home/.local/lib/clam-mail-check"] } }; }
       if (request.type === "helperCancel") testState.maintenance = false;
       if (request.type === "helperApply") { testState.maintenance = false;
         testState.helperRemoved = testState.maintenanceOperation === "uninstall";
-        testState.installation = { state: testState.helperRemoved ? "removed" : "managed", version: "0.13.0", healthy: true,
+        testState.installation = { state: testState.helperRemoved ? "removed" : "managed", version: "0.14.0", healthy: true,
           detail: testState.helperRemoved ? "補助プログラムを削除しました。" : "補助プログラムを更新しました。", retained: [] };
         return { ok: true, installation: testState.installation }; }
       if (request.type === "helperMarkRemoved") { testState.helperRemoved = true; testState.installation = { state: "removed" }; }
@@ -165,6 +165,15 @@ try {
         return { ok: true, health: testState.lastHealth };
       }
       if (request.type === "clear") testState.records = testState.records.filter(record => ["queued", "scanning"].includes(record.status));
+      if (request.type === "prepareForget") { forgetKeys = request.keys; return { ok: true, token: "history", targets: forgetKeys.map(target) }; }
+      if (request.type === "forgetMany") {
+        testState.records = testState.records.filter(record => !forgetKeys.includes(record.key));
+        return { ok: true, keys: forgetKeys, count: forgetKeys.length, skipped: 0 };
+      }
+      if (request.type === "cancelBatch" && testState.batch?.id === request.id) {
+        testState.batch.stopRequested = true; testState.batch.active = false;
+        testState.batch.cancelled = testState.batch.total - testState.batch.completed;
+      }
       if (request.type === "prepareDelete") return { ok: true, token: "test-ticket", ...target(request.key) };
       if (request.type === "deletePermanently") testState.records.find(record => record.key === request.key).status = "deleted";
       if (request.type === "prepareDeleteBatch") { batchKeys = request.keys; return { ok: true, token: "batch", targets: batchKeys.map(target) }; }
@@ -233,8 +242,18 @@ try {
   assert.match(await evaluate("document.getElementById('selected-count').textContent"), /1件/);
   await evaluate("document.getElementById('next-page').click()");
   assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 11);
-  assert.match(await evaluate("document.getElementById('selected-count').textContent"), /0件/);
+  assert.match(await evaluate("document.getElementById('selected-count').textContent"), /1件.*画面外1件/);
   await evaluate("document.getElementById('previous-page').click()");
+  await evaluate("document.getElementById('select-page').click()");
+  assert.equal(await evaluate("document.getElementById('select-filtered').hidden"), false);
+  await evaluate("document.getElementById('select-filtered').click()");
+  assert.match(await evaluate("document.getElementById('selected-count').textContent"), /60件/);
+  assert.match(await evaluate("document.getElementById('retry-selected').textContent"), /59通/);
+  assert.match(await evaluate("document.getElementById('forget-selected').textContent"), /60件/);
+  await evaluate("testState.records.push(makeRecord('new-fixed', 'clean'))");
+  await until("document.getElementById('summary').textContent.includes('履歴62件')");
+  assert.match(await evaluate("document.getElementById('selected-count').textContent"), /60件/);
+  await evaluate("testState.records = testState.records.filter(record => record.key !== 'new-fixed'); document.getElementById('deselect').click()");
   await change("filter", "detected");
   assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 2);
   await change("account-filter", "other");
@@ -260,7 +279,8 @@ try {
   assert.equal(await evaluate("document.querySelector('[data-i18n=autoAccountsHint], [data-i18n=mail297], [data-i18n=mail298]')"), null);
 
   assert.equal(await evaluate("document.getElementById('cancel-paused-queue')"), null);
-  assert.equal(await evaluate("document.getElementById('clear').closest('[role=tabpanel]').id"), "panel-results");
+  assert.equal(await evaluate("document.getElementById('clear')"), null);
+  assert.equal(await evaluate("document.getElementById('forget-selected').closest('[role=tabpanel]').id"), "panel-results");
   await evaluate("document.querySelector('#accounts input').click()");
   await until("testState.settings.enabled && testState.settings.accountIds.length === 1 && document.getElementById('settings-status').textContent.includes('保存しました') && !document.getElementById('notifications').disabled");
   await evaluate("failSettings = true; document.querySelector('#accounts input').click()");
@@ -301,7 +321,7 @@ try {
   await evaluate("document.getElementById('delete-selected').click()");
   await until("document.getElementById('delete-dialog').open");
   await evaluate("document.getElementById('delete-ack').click(); document.getElementById('delete-confirm').click()");
-  await until("document.getElementById('action-status').textContent.includes('完全削除1件')");
+  await until("document.getElementById('action-status').textContent.includes('完全削除1通')");
   assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 1);
   assert.match(await evaluate("document.getElementById('batch-report').textContent"), /模擬の削除失敗/);
   const singlePrepares = await evaluate("testCalls.filter(call => call.type === 'prepareDelete').length");
@@ -336,8 +356,11 @@ try {
   assert.equal(await evaluate("document.documentElement.scrollWidth <= window.innerWidth"), true);
   const mobile = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
   await writeFile(path.join(root, "dist/ui-mobile.png"), Buffer.from(mobile.data, "base64"));
-  await evaluate("document.getElementById('tab-results').click(); document.getElementById('clear').click()");
-  await until("testCalls.some(call => call.type === 'clear') && !document.getElementById('clear').disabled");
+  await evaluate("document.getElementById('tab-results').click(); document.getElementById('reset-filters').click(); document.getElementById('select-page').click(); if (!document.getElementById('select-filtered').hidden) document.getElementById('select-filtered').click(); document.getElementById('forget-selected').click()");
+  await until("document.getElementById('delete-dialog').open");
+  assert.match(await evaluate("document.getElementById('delete-warning').textContent"), /メール本体は残ります/);
+  await evaluate("document.getElementById('delete-ack').click(); document.getElementById('delete-confirm').click()");
+  await until("testCalls.some(call => call.type === 'forgetMany') && !document.getElementById('filter').disabled");
   await evaluate("document.getElementById('tab-scan').click()");
   await until("document.getElementById('scan-account').options.length === 3");
   await change("scan-account", "test");
@@ -422,7 +445,7 @@ try {
   await call("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   assert.equal(await evaluate("document.documentElement.scrollWidth <= window.innerWidth"), true);
   await evaluate("document.getElementById('tab-setup').click()");
-  assert.match(await evaluate("document.getElementById('installer-command').textContent"), /python3 -I.*0.13.0.*install/);
+  assert.match(await evaluate("document.getElementById('installer-command').textContent"), /python3 -I.*0.14.0.*install/);
   assert.equal(await evaluate("document.getElementById('installer-download').tagName"), "BUTTON");
   const downloads = path.join(profile, "downloads");
   await mkdir(downloads, { recursive: true });
@@ -439,11 +462,11 @@ try {
 
   let downloaded;
   for (let attempt = 0; attempt < 100; attempt++) {
-    downloaded = await readFile(path.join(downloads, "clam-mail-check-installer-0.13.0.pyz")).catch(() => null);
+    downloaded = await readFile(path.join(downloads, "clam-mail-check-installer-0.14.0.pyz")).catch(() => null);
     if (downloaded) break;
     await new Promise(resolve => setTimeout(resolve, 25));
   }
-  assert.deepEqual(downloaded, await readFile(path.join(root, "dist/clam-mail-check-installer-0.13.0.pyz")));
+  assert.deepEqual(downloaded, await readFile(path.join(root, "dist/clam-mail-check-installer-0.14.0.pyz")));
   await evaluate("document.getElementById('installation-title').scrollIntoView()");
   const installationImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
   await writeFile(path.join(root, "dist/ui-installation.png"), Buffer.from(installationImage.data, "base64"));
@@ -515,7 +538,7 @@ try {
   await call("Page.reload");
   await until("document.documentElement.lang === 'en-US' && document.querySelector('#tab-setup').textContent === 'Setup' && document.querySelector('#results tr')");
   assert.equal(await evaluate("document.title"), "ClamAV Mail Check");
-  assert.equal(await evaluate("document.getElementById('delete-selected').textContent"), "Permanently delete selected messages");
+  assert.match(await evaluate("document.getElementById('delete-selected').textContent"), /Permanently delete messages/);
   assert.match(await evaluate("document.getElementById('delete-warning').textContent"), /cannot be undone.*IMAP/);
   assert.equal(await evaluate("document.getElementById('search').placeholder"), "Sender, subject, detection name, etc.");
   assert.equal(await evaluate("document.getElementById('folder-bar').getAttribute('aria-label')"), "Processed messages in the folder scan");
@@ -554,7 +577,7 @@ try {
   const englishAccounts = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
   await writeFile(path.join(root, "dist/ui-en-accounts.png"), Buffer.from(englishAccounts.data, "base64"));
   assert.equal(await evaluate("document.querySelectorAll('#panel-settings fieldset').length"), 2);
-  assert.equal(await evaluate("document.getElementById('panel-settings').contains(document.getElementById('clear'))"), false);
+  assert.equal(await evaluate("document.getElementById('panel-settings').contains(document.getElementById('forget-selected'))"), false);
   await evaluate("testState.records.push({ ...makeRecord('excluded-ui', 'queued'), source: 'automatic', attempts: 0, sha256: null }); document.querySelector('#accounts input').click()");
   await until("testState.records.some(record => record.key === 'excluded-ui' && record.unscannedReason === 'automaticExcluded') && !document.getElementById('notifications').disabled");
   await evaluate("document.getElementById('tab-results').click()");
@@ -564,8 +587,44 @@ try {
   await evaluate("document.getElementById('select-page').click()");
   assert.equal(await evaluate("document.getElementById('retry-selected').disabled"), false);
   assert.equal(await evaluate("document.getElementById('delete-selected').disabled"), false);
-  await evaluate("document.getElementById('clear').click()");
-  await until("!testState.records.some(record => record.key === 'excluded-ui') && !document.getElementById('clear').disabled");
+  await evaluate("document.getElementById('forget-selected').click()");
+  await until("document.getElementById('delete-dialog').open");
+  await evaluate("document.getElementById('delete-ack').click(); document.getElementById('delete-confirm').click()");
+  await until("!testState.records.some(record => record.key === 'excluded-ui') && !document.getElementById('filter').disabled");
+  await call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
+  await evaluate("testState.records = Array.from({length: 1000}, (_, i) => makeRecord('large' + i, i % 10 === 0 ? 'deleted' : 'clean')); document.getElementById('reset-filters').click()");
+  await until("document.getElementById('summary').textContent.includes('History: 1000')");
+  await evaluate("document.getElementById('select-page').click()");
+  assert.match(await evaluate("document.getElementById('select-filtered').textContent"), /1000/);
+  await evaluate("document.getElementById('select-filtered').click(); document.getElementById('next-page').click()");
+  assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 50);
+  assert.equal(await evaluate("document.querySelectorAll('#results input:checked').length"), 50);
+  assert.match(await evaluate("document.getElementById('selected-count').textContent"), /1000.*950/);
+  assert.match(await evaluate("document.getElementById('retry-selected').textContent"), /900/);
+  await evaluate("window.scrollTo(0, 0)");
+  const selectionImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+  await writeFile(path.join(root, "dist/ui-selection-desktop.png"), Buffer.from(selectionImage.data, "base64"));
+  await evaluate("document.getElementById('forget-selected').click()");
+  await until("document.getElementById('delete-dialog').open");
+  assert.equal(await evaluate("document.querySelectorAll('#delete-targets li').length"), 1000);
+  assert.match(await evaluate("document.getElementById('delete-warning').textContent"), /Messages themselves will remain/);
+  await evaluate("document.getElementById('delete-cancel').click()");
+  await until("!document.getElementById('filter').disabled");
+  assert.equal(await evaluate("testState.records.length"), 1000);
+  await change("filter", "deleted");
+  assert.match(await evaluate("document.getElementById('selected-count').textContent"), /Selected: 0/);
+  await evaluate("document.getElementById('select-page').click(); document.getElementById('select-filtered').click()");
+  assert.equal(await evaluate("document.getElementById('retry-selected').disabled"), true);
+  assert.equal(await evaluate("document.getElementById('delete-selected').disabled"), true);
+  assert.equal(await evaluate("document.getElementById('forget-selected').disabled"), false);
+  await evaluate("document.getElementById('forget-selected').click()");
+  await until("document.getElementById('delete-dialog').open");
+  await evaluate("document.getElementById('delete-ack').click(); document.getElementById('delete-confirm').click()");
+  await until("testState.records.length === 900 && !document.getElementById('filter').disabled");
+  await evaluate("testState.batch = { id: 'mock-progress', operation: 'delete', phase: 'execute', active: true, stopRequested: false, total: 1000, completed: 7, failed: 0 }");
+  await until("!document.getElementById('batch-stop').hidden");
+  await evaluate("document.getElementById('batch-stop').click()");
+  await until("testCalls.some(call => call.type === 'cancelBatch' && call.id === 'mock-progress') && document.getElementById('batch-stop').hidden");
   console.log("UI smoke: passed (Japanese/English, six tabs, help/setup/uninstall navigation, folder picker, autosave/rollback, connection history, filters, bulk actions, folder start/cancel/subfolders, progress counters, run filter, stop/interruption/resume/delete, desktop/mobile)");
 } finally {
   for (const waiter of pending.values()) clearTimeout(waiter.timer);

@@ -70,8 +70,8 @@
     "description": "確認後にメール内容が変わりました。もう一度確認してください。"
   },
   "mail015": {
-    "message": "一括操作は重複のない1〜100件を選択してください。",
-    "description": "一括操作は重複のない1〜100件を選択してください。"
+    "message": "一括操作は重複のない1〜1000件を選択してください。",
+    "description": "一括操作は重複のない1〜1000件を選択してください。"
   },
   "mail016": {
     "message": "一括削除の処理中です。",
@@ -2250,5 +2250,203 @@
   "notificationHeading": {
     "message": "通知",
     "description": "通知"
+  },
+  "bulkBusy": {
+    "message": "一括操作の処理中です。",
+    "description": "一括操作の処理中です。"
+  },
+  "bulkRetryInterrupted": {
+    "message": "一括再検査が中断され、このメールの結果は未確認です。必要に応じて再検査してください。",
+    "description": "一括再検査が中断され、このメールの結果は未確認です。必要に応じて再検査してください。"
+  },
+  "bulkRetryRestart": {
+    "message": "一括再検査が中断されました。検査結果を確認してください。未着手の履歴は保持しています。",
+    "description": "一括再検査が中断されました。検査結果を確認してください。未着手の履歴は保持しています。"
+  },
+  "forgetChanged": {
+    "message": "履歴の状態が変わりました。選び直してください。",
+    "description": "履歴の状態が変わりました。選び直してください。"
+  },
+  "selectionCount": {
+    "message": "$ARG1$件を選択中（画面外$ARG2$件）",
+    "description": "$1件を選択中（画面外$2件）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "retrySelectedCount": {
+    "message": "再検査（$ARG1$通）",
+    "description": "再検査（$1通）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "deleteSelectedCount": {
+    "message": "メールを完全削除（$ARG1$通）",
+    "description": "メールを完全削除（$1通）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "forgetSelectedCount": {
+    "message": "履歴だけ消去（$ARG1$件）",
+    "description": "履歴だけ消去（$1件）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "selectFilteredCount": {
+    "message": "絞り込み結果の選択可能な$ARG1$件をすべて選択",
+    "description": "絞り込み結果の選択可能な$1件をすべて選択",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "forgetTitle": {
+    "message": "履歴だけ消去",
+    "description": "履歴だけ消去"
+  },
+  "forgetWarning": {
+    "message": "選択した検査履歴だけを消去します。メール本体は残ります。状態が変わった履歴は消去しません。",
+    "description": "選択した検査履歴だけを消去します。メール本体は残ります。状態が変わった履歴は消去しません。"
+  },
+  "forgetAck": {
+    "message": "対象の履歴を確認しました。メール本体は残ることを理解しました。",
+    "description": "対象の履歴を確認しました。メール本体は残ることを理解しました。"
+  },
+  "forgetConfirmCount": {
+    "message": "消去する履歴：$ARG1$件（画面外を含む全対象を下に表示しています）",
+    "description": "消去する履歴：$1件（画面外を含む全対象を下に表示しています）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "deleteConfirmCount": {
+    "message": "完全削除するメール：$ARG1$通（画面外を含む全対象を下に表示しています）",
+    "description": "完全削除するメール：$1通（画面外を含む全対象を下に表示しています）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "bulkRetryName": {
+    "message": "一括再検査",
+    "description": "一括再検査"
+  },
+  "bulkPrepareName": {
+    "message": "削除対象の照合",
+    "description": "削除対象の照合"
+  },
+  "bulkDeleteName": {
+    "message": "メールの一括完全削除",
+    "description": "メールの一括完全削除"
+  },
+  "bulkStopping": {
+    "message": "中止しています",
+    "description": "中止しています"
+  },
+  "bulkRunning": {
+    "message": "処理中",
+    "description": "処理中"
+  },
+  "bulkStopped": {
+    "message": "中止",
+    "description": "中止"
+  },
+  "bulkDone": {
+    "message": "終了",
+    "description": "終了"
+  },
+  "bulkProgress": {
+    "message": "$ARG1$：$ARG2$ ／ $ARG3$ / $ARG4$件 ／ 失敗$ARG5$件・未着手$ARG6$件",
+    "description": "$1：$2 ／ $3 / $4件 ／ 失敗$5件・未着手$6件",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      },
+      "arg4": {
+        "content": "$4"
+      },
+      "arg5": {
+        "content": "$5"
+      },
+      "arg6": {
+        "content": "$6"
+      }
+    }
+  },
+  "bulkPrepareCancelled": {
+    "message": "照合を中止しました。メールは削除していません。",
+    "description": "照合を中止しました。メールは削除していません。"
+  },
+  "bulkDeleteResult": {
+    "message": "完全削除$ARG1$通 ／ 失敗$ARG2$通 ／ 未着手$ARG3$通",
+    "description": "完全削除$1通 ／ 失敗$2通 ／ 未着手$3通",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "forgetCancelled": {
+    "message": "履歴の消去をキャンセルしました。",
+    "description": "履歴の消去をキャンセルしました。"
+  },
+  "forgetResult": {
+    "message": "履歴$ARG1$件を消去しました。状態が変わった$ARG2$件は残しました。メール本体は削除していません。",
+    "description": "履歴$1件を消去しました。状態が変わった$2件は残しました。メール本体は削除していません。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "selectionHint": {
+    "message": "ページを移動しても選択を保持します。絞り込みを変更すると解除します。各操作は実行できる対象だけに適用します。",
+    "description": "ページを移動しても選択を保持します。絞り込みを変更すると解除します。各操作は実行できる対象だけに適用します。"
+  },
+  "bulkStop": {
+    "message": "中止",
+    "description": "中止"
+  },
+  "forgetSuccess": {
+    "message": "履歴$ARG1$件を消去しました。メール本体は残っています。",
+    "description": "履歴$1件を消去しました。メール本体は残っています。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
   }
 }

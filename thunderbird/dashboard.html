@@ -69,13 +69,15 @@
     <label id="folder-only-label" class="hint" hidden><input type="checkbox" id="folder-only"> <span data-i18n="mail274">今回のフォルダー検査の結果だけを表示</span></label>
     <p id="summary" role="status" aria-live="polite"></p>
     <div class="selection-bar" aria-label="選択した結果への操作" data-i18n-aria-label="mail275">
-      <strong id="selected-count"><span data-i18n="mail276">選択0件</span></strong>
+      <strong id="selected-count" role="status" aria-live="polite" aria-atomic="true"><span data-i18n="mail276">選択0件</span></strong>
       <button type="button" id="retry-selected" disabled><span data-i18n="mail277">選択したメールを再検査</span></button>
       <button type="button" id="delete-selected" class="danger" disabled><span data-i18n="mail278">選択したメールを完全削除</span></button>
+      <button type="button" id="forget-selected" disabled data-i18n="forgetTitle">履歴だけ消去</button>
       <button type="button" id="deselect" disabled><span data-i18n="mail279">選択を解除</span></button>
     </div>
-    <p class="hint"><span data-i18n="mail280">選択は表示中のページのみです。絞り込み・ページ変更で解除します。一括完全削除は、未検出・検出・未検査・失敗のメールを選択すると利用できます。初回は削除ボタンからThunderbirdの権限確認が表示されます。</span></p>
-    <p id="batch-progress" role="status" aria-live="polite" hidden></p>
+    <p id="selection-expansion"><button type="button" id="select-filtered" hidden></button></p>
+    <p class="hint" data-i18n="selectionHint">ページを移動しても選択を保持します。絞り込みを変更すると解除します。各操作は実行できる対象だけに適用します。</p>
+    <div class="actions"><p id="batch-progress" role="status" aria-live="polite" hidden></p><button type="button" id="batch-stop" hidden data-i18n="bulkStop">中止</button></div>
     <ul id="batch-report" aria-label="一括操作で処理できなかった結果" data-i18n-aria-label="mail281" hidden></ul>
     <div class="table-scroll" tabindex="0" role="region" aria-label="検査結果一覧（横にスクロールできます）" data-i18n-aria-label="mail282">
       <table>
@@ -90,7 +92,7 @@
     </nav>
     <h3><span data-i18n="mail299">検査履歴</span></h3>
     <p><span data-i18n="mail300">最大1000件を保持します。上限時は古い未検出・完全削除済みの結果から置き換えます。差出人・件名・検査結果をローカルに保存し、本文と添付は履歴に保存しません。</span></p>
-    <button type="button" id="clear"><span data-i18n="mail301">検査履歴を消去</span></button>
+
     <p class="hint"><span data-i18n="mail302">履歴の消去では、メール自体は削除されません。</span></p>
 
   </section>
@@ -210,7 +212,7 @@
     <p id="delete-warning"><span data-i18n="mail358">ごみ箱を経由せず完全に削除します。元には戻せません。IMAPではサーバーと他端末にも反映されます。</span></p>
     <p id="delete-count"></p>
     <div class="dialog-targets"><ol id="delete-targets"></ol></div>
-    <label><input type="checkbox" id="delete-ack"> <span data-i18n="mail359">上の対象を確認し、元に戻せないことを理解しました</span></label>
+    <label><input type="checkbox" id="delete-ack"> <span id="delete-ack-text" data-i18n="mail359">上の対象を確認し、元に戻せないことを理解しました</span></label>
     <div class="actions"><button id="delete-cancel" value="cancel" autofocus><span data-i18n="mail348">キャンセル</span></button><button id="delete-confirm" class="danger" value="delete" disabled><span data-i18n="mail360">完全に削除する</span></button></div>
   </form>
 </dialog>

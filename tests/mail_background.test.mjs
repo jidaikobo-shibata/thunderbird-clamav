@@ -339,7 +339,7 @@ test("batch rechecks every mail and reports changed and server-refused items sep
 
 test("batch rejects invalid keys and missing permission while accepting mixed terminal results", async () => {
   const { h } = await batchFixture();
-  for (const keys of [[], ["k1", "k1"], ["k1", "unknown"], Array.from({ length: 101 }, (_, i) => "k" + i)]) {
+  for (const keys of [[], ["k1", "k1"], ["k1", "unknown"], Array.from({ length: 1001 }, (_, i) => "k" + i)]) {
     assert.equal((await h.send("prepareDeleteBatch", { keys })).ok, false);
   }
   const denied = await batchFixture({ deleteAllowed: false });
@@ -985,4 +985,102 @@ test("failed account deselection restores queued results as well as settings", a
   release();
   await settle(h, state => state.records.every(record => record.status === "clean"));
   assert.deepEqual(h.rawReads, [1, 2]);
+});
+
+test("history-only confirmation clears 1000 terminal entries without reading or deleting mail", async () => {
+  const records = Array.from({ length: 1000 }, (_, i) => ({ key: "h" + i, status: i % 2 ? "deleted" : "incomplete", locator: { subject: "history " + i } }));
+  const h = await harness({ saved: { records } });
+  assert.equal((await h.send("prepareForget", { keys: Array.from({ length: 1001 }, (_, i) => "h" + i) })).ok, false);
+  const prepared = await h.send("prepareForget", { keys: records.map(record => record.key) });
+  assert.equal(prepared.targets.length, 1000);
+  const result = await h.send("forgetMany", { token: prepared.token });
+  assert.equal(result.count, 1000);
+  assert.equal((await h.send("state")).records.length, 0);
+  assert.equal(h.rawReads.length, 0); assert.equal(h.deleted.length, 0);
+  assert.equal((await h.send("forgetMany", { token: prepared.token })).ok, false);
+});
+
+test("history clear cancels, rejects active records, and preserves changed or newly added entries", async () => {
+  const records = ["a", "b", "c"].map(key => ({ key, status: "clean", locator: { subject: key } }));
+  const h = await harness({ saved: { records } });
+  const canceled = await h.send("prepareForget", { keys: ["a"] });
+  await h.send("cancelForget", { token: canceled.token });
+  assert.equal((await h.send("forgetMany", { token: canceled.token })).ok, false);
+  const prepared = await h.send("prepareForget", { keys: ["a", "b"] });
+  const state = await h.send("state");
+  state.records.find(record => record.key === "b").status = "detected";
+  state.records.push({ key: "new", status: "error", locator: {} });
+  state.records.find(record => record.key === "c").status = "scanning";
+  assert.equal((await h.send("prepareForget", { keys: ["c"] })).ok, false);
+  const result = await h.send("forgetMany", { token: prepared.token });
+  assert.deepEqual(result.keys, ["a"]); assert.equal(result.skipped, 1);
+  assert.deepEqual((await h.send("state")).records.map(record => record.key), ["b", "c", "new"]);
+  assert.equal(h.deleted.length, 0);
+});
+
+test("1000-message bulk retry can stop after the current message and restore pending history", async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const mails = Array.from({ length: 1000 }, (_, i) => mail(i + 1));
+  const records = mails.map(message => ({ key: "r" + message.id, status: "clean", locator: locator(message), detail: "previous result" }));
+  const h = await harness({ saved: { records }, mails, scanGate: id => id === 1 ? gate : undefined });
+  assert.equal((await h.send("retryMany", { keys: records.map(record => record.key) })).count, 1000);
+  const during = await settle(h, state => state.batch?.active && h.rawReads.length === 1);
+  await h.send("cancelBatch", { id: "wrong" });
+  assert.equal((await h.send("state")).batch.stopRequested, false);
+  await h.send("cancelBatch", { id: during.batch.id });
+  assert.equal((await h.send("state")).records[1].detail, "previous result");
+  release();
+  const done = await settle(h, state => !state.batch.active);
+  assert.equal(done.batch.completed, 1); assert.equal(done.batch.cancelled, 999);
+  assert.ok(done.records.every(record => record.status === "clean" && !record.bulkRetryBefore));
+  assert.deepEqual(h.rawReads, [1]);
+});
+
+test("restart restores unstarted bulk retry history and marks only the in-flight result unknown", async () => {
+  const previous = { key: "queued", status: "detected", locator: {}, detail: "previous detection" };
+  const h = await harness({ saved: { records: [
+    { ...previous, status: "queued", source: "manual", bulkRetryId: "old", bulkRetryBefore: previous },
+    { key: "active", status: "scanning", source: "manual", locator: {}, bulkRetryId: "old", bulkRetryBefore: { status: "clean" } }
+  ] } });
+  const state = await h.send("state");
+  assert.equal(state.records[0].status, "detected");
+  assert.equal(state.records[1].status, "incomplete");
+  assert.ok(state.records.every(record => !record.bulkRetryId && !record.bulkRetryBefore));
+  assert.equal(h.rawReads.length, 0);
+});
+
+test("canceling bulk deletion preparation produces no actionable confirmation token", async () => {
+  const { records, mails } = await batchFixture();
+  const h = await harness({ saved: { records }, mails, deleteAllowed: true });
+  const raw = h.api.messages.getRaw;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  h.api.messages.getRaw = async (...args) => { await gate; return raw(...args); };
+  const preparing = h.send("prepareDeleteBatch", { keys: ["k1", "k2"] });
+  const during = await settle(h, state => state.batch?.active && state.batch.phase === "prepare");
+  await h.send("cancelBatch", { id: during.batch.id }); release();
+  const result = await preparing;
+  assert.equal(result.cancelled, true); assert.equal(result.token, undefined);
+  assert.equal(h.deleted.length, 0);
+});
+
+test("1000-message permanent deletion stops between messages and cannot replay the confirmation", async () => {
+  const mails = Array.from({ length: 1000 }, (_, i) => mail(i + 1));
+  const records = mails.map(message => ({ key: "d" + message.id, status: "clean", locator: locator(message), sha256: null }));
+  const h = await harness({ saved: { records }, mails, deleteAllowed: true });
+  const prepared = await h.send("prepareDeleteBatch", { keys: records.map(record => record.key) });
+  assert.equal(prepared.targets.length, 1000);
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const remove = h.api.messages.delete;
+  let entered = false;
+  h.api.messages.delete = async (...args) => { entered = true; await gate; return remove(...args); };
+  const deleting = h.send("deleteBatch", { token: prepared.token });
+  const during = await settle(h, state => state.batch?.active && state.batch.phase === "execute" && entered);
+  await h.send("cancelBatch", { id: during.batch.id }); release();
+  const result = await deleting;
+  assert.equal(result.results.length, 1); assert.equal(result.cancelled, 999);
+  assert.equal(h.deleted.length, 1);
+  assert.equal((await h.send("deleteBatch", { token: prepared.token })).ok, false);
 });
