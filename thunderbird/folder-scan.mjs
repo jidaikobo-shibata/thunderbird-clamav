@@ -82,7 +82,7 @@ export class FolderScan {
     this.cursor = 0;
     this.checkpoints.clear();
     this.job = { id: crypto.randomUUID(), folder: { id: folder.id, accountId: folder.accountId,
-      path: folder.path, name: folder.name || folder.path }, includeSubfolders,
+      path: folder.path, name: folder.name || folder.path, displayNames: folder.displayNames }, includeSubfolders,
       status: "collecting", startedAt: new Date().toISOString(), finishedAt: null,
       total: null, discovered: 0, completed: 0, scanning: 0, ignored: 0, skippedFolders: 0,
       counts: { clean: 0, detected: 0, incomplete: 0, error: 0 }, detail: t("mail182", "対象メールを確認しています。") };

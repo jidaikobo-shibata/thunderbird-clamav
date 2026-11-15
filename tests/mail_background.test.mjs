@@ -708,13 +708,16 @@ test("folder picker enumerates real account folders and starts the explicit targ
     { id: "news", type: "nntp", rootFolder: { ...root, accountId: "news" } }];
   const choices = await h.send("folderChoices");
   assert.deepEqual(choices.folders.map(folder => folder.id), ["inbox", "spam"]);
+  assert.deepEqual(choices.folders[1].displayNames, ["受信トレイ", "迷惑メール"]);
   assert.equal((await h.send("folderContext", { folderId: "missing" })).ok, false);
   assert.equal((await h.send("folderContext", { folderId: "virtual" })).ok, false);
   const context = await h.send("folderContext", { folderId: "spam" });
   assert.equal(context.folder.path, "/Inbox/Spam");
+  assert.deepEqual(context.folder.displayNames, ["受信トレイ", "迷惑メール"]);
   await h.send("folderStart", { token: context.token, includeSubfolders: false });
   const state = await settledFolder(h, "completed");
   assert.equal(state.folderJob.folder.id, "spam");
+  assert.deepEqual(state.folderJob.folder.displayNames, ["受信トレイ", "迷惑メール"]);
   assert.deepEqual(h.rawReads, [1]);
 });
 

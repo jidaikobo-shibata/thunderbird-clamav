@@ -68,13 +68,38 @@ const folderScan = new FolderScan(api, {
   }
 });
 
+async function listFolderChoices() {
+  const choices = [], seen = new Set();
+  const walk = (folder, accountId, parents = []) => {
+    if (!folder || choices.length >= 5000) return;
+    const current = { ...folder, accountId: folder.accountId || accountId };
+    const identity = current.accountId + ":" + current.path;
+    if (seen.has(identity)) return;
+    seen.add(identity);
+    const displayNames = current.isRoot || current.path === "/" ? parents : [...parents, current.name || current.path];
+    if (realFolder(current) && typeof current.id === "string") {
+      choices.push({ id: current.id, accountId: current.accountId, path: current.path,
+        name: current.name || current.path, displayNames });
+    }
+    for (const child of folder.subFolders || []) walk(child, accountId, displayNames);
+  };
+  for (const account of await api.accounts.list(true)) {
+    if (!["imap", "pop3", "none"].includes(account.type)) continue;
+    if (account.rootFolder) walk(account.rootFolder, account.id);
+    else for (const folder of account.folders || []) walk(folder, account.id);
+  }
+  return { ok: true, folders: choices, limited: choices.length >= 5000 };
+}
+
 async function chooseFolder(folder) {
   if (maintenanceActive() || helperRemoved) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
   if (folderScan.active) throw new Error(t("mail006", "フォルダー検査は既に実行中です。"));
   const current = folder?.id ? await api.folders.get(folder.id, false) : folder;
   if (!realFolder(current)) throw new Error(t("mail007", "通常のメールフォルダーを1つ選択してください。統合・検索・タグの仮想フォルダーは対象外です。"));
+  const choices = await listFolderChoices();
+  const displayNames = choices.folders.find(candidate => candidate.accountId === current.accountId && candidate.path === current.path)?.displayNames;
   folderRequest = { token: crypto.randomUUID(), folder: { id: current.id, accountId: current.accountId,
-    path: current.path, name: current.name || current.path } };
+    path: current.path, name: current.name || current.path, displayNames } };
   return folderRequest;
 }
 
@@ -158,7 +183,7 @@ async function prepareBatch(keys) {
     positions.add(place);
     tickets.push({ key, hash, fingerprint, position: place });
     targets.push({ key, author: message.author || t("mail021", "差出人なし"), subject: message.subject || t("mail022", "件名なし"),
-      accountId: message.folder.accountId, folder: message.folder.path || message.folder.name || "",
+      accountId: message.folder.accountId, folder: message.folder.name || message.folder.path || "", folderInfo: message.folder,
       status: record.status, signatures: record.signatures || [] });
   }
   for (const [token, batch] of batchTickets) {
@@ -610,27 +635,8 @@ api.runtime.onMessage.addListener(async (request, sender) => {
       case "scanSelection":
         await scanSelection();
         return { ok: true };
-      case "folderChoices": {
-        const choices = [], seen = new Set();
-        const walk = (folder, accountId) => {
-          if (!folder || choices.length >= 5000) return;
-          const current = { ...folder, accountId: folder.accountId || accountId };
-          const identity = current.accountId + ":" + current.path;
-          if (seen.has(identity)) return;
-          seen.add(identity);
-          if (realFolder(current) && typeof current.id === "string") {
-            choices.push({ id: current.id, accountId: current.accountId, path: current.path,
-              name: current.name || current.path });
-          }
-          for (const child of folder.subFolders || []) walk(child, accountId);
-        };
-        for (const account of await api.accounts.list(true)) {
-          if (!["imap", "pop3", "none"].includes(account.type)) continue;
-          if (account.rootFolder) walk(account.rootFolder, account.id);
-          else for (const folder of account.folders || []) walk(folder, account.id);
-        }
-        return { ok: true, folders: choices, limited: choices.length >= 5000 };
-      }
+      case "folderChoices":
+        return listFolderChoices();
       case "folderContext":
         if (request.folderId !== undefined) {
           if (typeof request.folderId !== "string" || !request.folderId) throw new Error(t("mail067", "検査するフォルダーを選択してください。"));
@@ -646,7 +652,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         const folder = folderRequest.folder;
         const current = folder.id ? await api.folders.get(folder.id, false) : folder;
         if (!realFolder(current) || current.accountId !== folder.accountId || current.path !== folder.path) throw new Error(t("mail070", "フォルダーが見つからないか、場所が変わりました。選び直してください。"));
-        const job = await folderScan.start(current, request.includeSubfolders);
+        const job = await folderScan.start({ ...current, displayNames: folder.displayNames }, request.includeSubfolders);
         folderRequest = null;
         void folderScan.collecting.catch(report);
         return { ok: true, job };
@@ -749,7 +755,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         deletionTickets.set(token, { key: record.key, hash, fingerprint, position: position(message),
           expires: Date.now() + 60000 });
         return { ok: true, token, author: message.author || t("mail021", "差出人なし"),
-          subject: message.subject || t("mail022", "件名なし"), folder: message.folder.path || message.folder.name || "",
+          subject: message.subject || t("mail022", "件名なし"), folder: message.folder.name || message.folder.path || "", folderInfo: message.folder,
           accountId: message.folder.accountId, status: record.status, signatures: record.signatures || [] };
       }
       case "cancelDelete":

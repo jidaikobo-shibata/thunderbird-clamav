@@ -1,3 +1,4 @@
+import { folderLabel } from "./folder-labels.mjs";
 import { t, uiLanguage, localizeDocument, localizeDetail } from "./i18n.mjs";
 import { installationUI, helperNotice } from "./installation.mjs";
 import { LABELS, needsAttention } from "./core.mjs";
@@ -129,7 +130,7 @@ function renderFolder() {
     folderFilterId = null; $("folder-only").checked = false; selected.clear(); page = 0;
   }
   const account = latest.accounts.find(account => account.id === job.folder.accountId)?.name || job.folder.accountId;
-  setText($("folder-title"), t("mail108", "フォルダー検査：$1 ／ $2$3", [account, job.folder.path, job.includeSubfolders ? t("mail109", "（サブフォルダーを含む）") : ""]));
+  setText($("folder-title"), t("mail108", "フォルダー検査：$1 ／ $2$3", [account, folderLabel(job.folder, folderChoices), job.includeSubfolders ? t("mail109", "（サブフォルダーを含む）") : ""]));
   const elapsed = Math.max(0, Math.floor(((job.finishedAt ? new Date(job.finishedAt).getTime() : Date.now()) - new Date(job.startedAt).getTime()) / 1000));
   const time = t("mail110", "経過$1分$2秒", [Math.floor(elapsed / 60), elapsed % 60]);
   if (job.total === null) {
@@ -158,7 +159,7 @@ function showFolderDialog(context) {
   seenFolderRequest = context.token;
   activateTab("scan");
   const account = latest.accounts.find(account => account.id === context.folder.accountId)?.name || context.folder.accountId;
-  setText($("folder-target"), [account, context.folder.path].join(t("listSeparator", " ／ ")));
+  setText($("folder-target"), [account, folderLabel(context.folder, folderChoices)].join(t("listSeparator", " ／ ")));
   $("folder-subfolders").checked = false;
   const dialog = $("folder-dialog");
   dialog.returnValue = "cancel";
@@ -196,7 +197,7 @@ $("folder-resume").addEventListener("click", () => {
 $("folder-delete").addEventListener("click", () => {
   if (blocked() || !latest?.folderJob) return;
   const job = latest.folderJob, dialog = $("folder-delete-dialog");
-  setText($("folder-delete-target"), t("mail123", "$1 ／ 処理済み$2件", [job.folder.path, job.completed]));
+  setText($("folder-delete-target"), t("mail123", "$1 ／ 処理済み$2件", [folderLabel(job.folder, folderChoices), job.completed]));
   dialog.returnValue = "cancel";
   dialog.onclose = () => {
     if (dialog.returnValue !== "delete") return;
@@ -239,7 +240,7 @@ function confirmDeletion(targets) {
     subject.textContent = target.subject;
     const detail = item.appendChild(document.createElement("div"));
     const account = latest.accounts.find(account => account.id === target.accountId)?.name || target.accountId;
-    detail.textContent = [target.author, account, target.folder, LABELS[target.status], target.signatures.join(" / ")].filter(Boolean).join(t("listSeparator", " ／ "));
+    detail.textContent = [target.author, account, target.folderInfo ? folderLabel(target.folderInfo, folderChoices, target.accountId) : target.folder, LABELS[target.status], target.signatures.join(" / ")].filter(Boolean).join(t("listSeparator", " ／ "));
     $("delete-targets").append(item);
   }
   $("delete-ack").checked = false;
@@ -338,7 +339,7 @@ function renderRecords() {
     setText(entry.parts.sender, record.locator.author || t("mail021", "差出人なし"));
     setText(entry.parts.subject, record.locator.subject || t("mail022", "件名なし"));
     const account = latest.accounts.find(account => account.id === record.locator.accountId)?.name || record.locator.accountId || "";
-    setText(entry.parts.location, [account, record.locator.folder?.path].filter(Boolean).join(t("listSeparator", " ／ ")));
+    setText(entry.parts.location, [account, folderLabel(record.locator.folder, folderChoices, record.locator.accountId)].filter(Boolean).join(t("listSeparator", " ／ ")));
     setText(entry.parts.detail, localizeDetail(record));
     setText(entry.parts.signatures, (record.signatures || []).join(" / "));
     setText(entry.parts.engine, record.engine || "");
@@ -489,7 +490,7 @@ function renderFolderChoices() {
   const accountId = $("scan-account").value, previous = $("scan-target").value;
   $("scan-target").replaceChildren(new Option(t("mail159", "選択してください"), ""));
   for (const folder of folderChoices.filter(folder => folder.accountId === accountId)) {
-    $("scan-target").append(new Option(folder.path, folder.id));
+    $("scan-target").append(new Option(folderLabel(folder), folder.id));
   }
   if ([...$("scan-target").options].some(option => option.value === previous)) $("scan-target").value = previous;
   renderTarget();
@@ -497,7 +498,7 @@ function renderFolderChoices() {
 function renderTarget() {
   const folder = folderChoices.find(folder => folder.id === $("scan-target").value && folder.accountId === $("scan-account").value);
   const account = latest?.accounts.find(account => account.id === folder?.accountId);
-  setText($("scan-target-label"), folder ? t("mail160", "検査対象：$1 ／ $2", [account?.name || folder.accountId, folder.path]) : t("mail161", "検査するアカウントとフォルダーを選択してください。"));
+  setText($("scan-target-label"), folder ? t("mail160", "検査対象：$1 ／ $2", [account?.name || folder.accountId, folderLabel(folder)]) : t("mail161", "検査するアカウントとフォルダーを選択してください。"));
   updateControls();
 }
 async function loadFolders() {

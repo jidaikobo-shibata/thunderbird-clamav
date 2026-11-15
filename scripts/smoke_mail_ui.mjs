@@ -14,12 +14,12 @@ const catalogs = Object.fromEntries(await Promise.all(["ja", "en"].map(async lan
 const profile = await mkdtemp(path.join(tmpdir(), "clam-mail-ui-"));
 const server = createServer(async (request, response) => {
   const name = new URL(request.url, "http://localhost").pathname.slice(1);
-  if (!["dashboard.html", "dashboard.css", "dashboard.js", "core.mjs", "results.mjs", "folder-scan.mjs", "installation.mjs", "i18n.mjs", "installer.pyz", "icon.svg"].includes(name)) {
+  if (!["dashboard.html", "dashboard.css", "dashboard.js", "core.mjs", "results.mjs", "folder-scan.mjs", "folder-labels.mjs", "installation.mjs", "i18n.mjs", "installer.pyz", "icon.svg"].includes(name)) {
     response.writeHead(404).end(); return;
   }
   const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript", ".svg": "image/svg+xml", ".pyz": "application/octet-stream" };
   response.setHeader("Content-Type", types[path.extname(name)]);
-  response.end(await readFile(name === "installer.pyz" ? path.join(root, "dist", "clam-mail-check-installer-0.10.0.pyz") : path.join(root, "thunderbird", name)));
+  response.end(await readFile(name === "installer.pyz" ? path.join(root, "dist", "clam-mail-check-installer-0.10.1.pyz") : path.join(root, "thunderbird", name)));
 });
 await new Promise((resolve, reject) => {
   server.once("error", reject);
@@ -96,7 +96,7 @@ try {
       locator: { accountId, author: key === "r0" ? '<img src=x onerror="window.bad=true">' : "送信者",
         subject: key === "r0" ? "テスト添付メール" : "メール " + key, folder: { path: "/Inbox" } } });
     window.testState = { ok: true, issue: "", batch: null, folderJob: null, folderRequest: null,
-      installation: { state: sessionStorage.getItem("fixture-installation") || "managed", version: "0.10.0", healthy: true, detail: "導入済み" },
+      installation: { state: sessionStorage.getItem("fixture-installation") || "managed", version: "0.10.1", healthy: true, detail: "導入済み" },
       settings: { enabled: false, accountIds: [], notifications: true },
       accounts: [{ id: "test", name: "テストアカウント", type: "imap" }, { id: "other", name: "別アカウント", type: "imap" }],
       records: [makeRecord("r0", "detected"), makeRecord("r1", "detected", "other"),
@@ -107,16 +107,16 @@ try {
       return { key, author: record.locator.author, subject: record.locator.subject,
         folder: "/Inbox", accountId: record.locator.accountId, status: record.status, signatures: record.signatures }; };
     let batchKeys = [];
-    window.messenger = { i18n: { getUILanguage: () => language, getMessage }, runtime: { getManifest: () => ({ version: "0.10.0" }), getURL: name => "/" + name, sendMessage: async request => {
+    window.messenger = { i18n: { getUILanguage: () => language, getMessage }, runtime: { getManifest: () => ({ version: "0.10.1" }), getURL: name => "/" + name, sendMessage: async request => {
       testCalls.push(request);
       if (request.type === "state") return structuredClone(testState);
       if (request.type === "helperInfo") return { ok: true, installation: testState.installation };
       if (request.type === "helperPlan") { testState.maintenance = true; testState.maintenanceOperation = request.operation; return { ok: true,
-        plan: { token: "maintenance-token", operation: request.operation, version: "0.10.0", paths: ["/synthetic/home/.local/lib/clam-mail-check"] } }; }
+        plan: { token: "maintenance-token", operation: request.operation, version: "0.10.1", paths: ["/synthetic/home/.local/lib/clam-mail-check"] } }; }
       if (request.type === "helperCancel") testState.maintenance = false;
       if (request.type === "helperApply") { testState.maintenance = false;
         testState.helperRemoved = testState.maintenanceOperation === "uninstall";
-        testState.installation = { state: testState.helperRemoved ? "removed" : "managed", version: "0.10.0", healthy: true,
+        testState.installation = { state: testState.helperRemoved ? "removed" : "managed", version: "0.10.1", healthy: true,
           detail: testState.helperRemoved ? "補助プログラムを削除しました。" : "補助プログラムを更新しました。", retained: [] };
         return { ok: true, installation: testState.installation }; }
       if (request.type === "helperMarkRemoved") { testState.helperRemoved = true; testState.installation = { state: "removed" }; }
@@ -127,7 +127,7 @@ try {
       }
       if (request.type === "folderChoices") return { ok: true, folders: [
         { id: "inbox", accountId: "test", path: "/Inbox", name: "受信トレイ" },
-        { id: "spam", accountId: "test", path: "/Inbox/Spam", name: "迷惑メール" },
+        { id: "spam", accountId: "test", path: "/Inbox/Spam", name: "迷惑メール", displayNames: ["受信トレイ", "迷惑メール"] },
         { id: "other-inbox", accountId: "other", path: "/Inbox", name: "受信トレイ" }
       ] };
       if (request.type === "folderContext") {
@@ -326,8 +326,9 @@ try {
   await until("document.getElementById('scan-account').options.length === 3");
   await change("scan-account", "test");
   await change("scan-target", "inbox");
-  assert.match(await evaluate("document.getElementById('scan-target-label').textContent"), /テストアカウント.*Inbox/);
+  assert.match(await evaluate("document.getElementById('scan-target-label').textContent"), /テストアカウント.*受信トレイ/);
   assert.equal(await evaluate("document.querySelector('#scan-target option[value=other-inbox]')"), null);
+  assert.equal(await evaluate("document.querySelector('#scan-target option[value=spam]').textContent"), "受信トレイ › 迷惑メール");
   await evaluate("document.getElementById('scan-folder').click()");
   await until("document.getElementById('folder-dialog').open");
   assert.equal(await evaluate("document.getElementById('folder-subfolders').checked"), false);
@@ -387,7 +388,7 @@ try {
   await call("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   assert.equal(await evaluate("document.documentElement.scrollWidth <= window.innerWidth"), true);
   await evaluate("document.getElementById('tab-setup').click()");
-  assert.match(await evaluate("document.getElementById('installer-command').textContent"), /python3 -I.*0.10.0.*install/);
+  assert.match(await evaluate("document.getElementById('installer-command').textContent"), /python3 -I.*0.10.1.*install/);
   assert.equal(await evaluate("document.getElementById('installer-download').tagName"), "BUTTON");
   const downloads = path.join(profile, "downloads");
   await mkdir(downloads, { recursive: true });
@@ -404,11 +405,11 @@ try {
 
   let downloaded;
   for (let attempt = 0; attempt < 100; attempt++) {
-    downloaded = await readFile(path.join(downloads, "clam-mail-check-installer-0.10.0.pyz")).catch(() => null);
+    downloaded = await readFile(path.join(downloads, "clam-mail-check-installer-0.10.1.pyz")).catch(() => null);
     if (downloaded) break;
     await new Promise(resolve => setTimeout(resolve, 25));
   }
-  assert.deepEqual(downloaded, await readFile(path.join(root, "dist/clam-mail-check-installer-0.10.0.pyz")));
+  assert.deepEqual(downloaded, await readFile(path.join(root, "dist/clam-mail-check-installer-0.10.1.pyz")));
   await evaluate("document.getElementById('installation-title').scrollIntoView()");
   const installationImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
   await writeFile(path.join(root, "dist/ui-installation.png"), Buffer.from(installationImage.data, "base64"));
