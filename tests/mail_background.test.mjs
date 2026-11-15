@@ -9,7 +9,7 @@ function event() {
 
 let caseId = 0;
 async function harness({ saved = {}, mails = [], nativeFailure = false, oversized = false, deleteAllowed = false, deleteFailure = false, deleteFailureIds = [], scanResult = {}, scanGate = null,
-  manageInfo = null, folderRefs = [{ id: "inbox", accountId: "one", path: "/Inbox", name: "受信トレイ" }] } = {}) {
+  manageInfo = null, healthResult = null, folderRefs = [{ id: "inbox", accountId: "one", path: "/Inbox", name: "受信トレイ" }] } = {}) {
   let stored = structuredClone(saved);
   const notifications = [], opened = [], rawReads = [], timers = [], deleted = [], nativePorts = [];
   const events = { newMail: event(), selected: event(), message: event() };
@@ -26,7 +26,7 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
             queueMicrotask(async () => {
               if (request.op === "end" && scanGate) await scanGate(rawReads.at(-1));
               if (nativeFailure) { port.onDisconnect.listeners[0](); return; }
-              const result = request.op === "manageInfo" && manageInfo ? manageInfo : request.op === "health" ? { status: "ready", protocol: 1, engine: "test" } :
+              const result = request.op === "manageInfo" && manageInfo ? manageInfo : request.op === "health" && healthResult ? healthResult : request.op === "health" ? { status: "ready", protocol: 1, engine: "test" } :
                 request.op === "end" ? { status: "clean", detail: "未検出", sha256: request.sha256, signatures: [],
                   ...(typeof scanResult === "function" ? scanResult(rawReads.at(-1)) : scanResult) } :
                   { status: "accepted", seq: request.seq + 1 };
@@ -724,7 +724,7 @@ test("folder picker enumerates real account folders and starts the explicit targ
 
 test("connection confirmation and actual scan engine survive reopening/restart independently", async () => {
   const h = await harness({ mails: [mail(1)], scanResult: { engine: "loaded engine (clamd)" } });
-  assert.equal((await h.send("state")).lastHealth, null);
+  assert.equal((await h.send("state")).lastHealth.status, "ready");
   await h.send("health");
   assert.equal(h.stored().lastHealth.status, "ready");
   assert.ok(h.stored().lastHealth.checkedAt);
@@ -1083,4 +1083,24 @@ test("1000-message permanent deletion stops between messages and cannot replay t
   assert.equal(result.results.length, 1); assert.equal(result.cancelled, 999);
   assert.equal(h.deleted.length, 1);
   assert.equal((await h.send("deleteBatch", { token: prepared.token })).ok, false);
+});
+
+test("startup distinguishes missing ClamAV from an unavailable helper and can recover", async () => {
+  const missing = await harness({ manageInfo: { status: "managed", version: "0.15.0", healthy: true },
+    healthResult: { status: "error", code: "clamav_missing", detail: "ClamAV is missing" } });
+  let state = await missing.send("state");
+  assert.equal(state.installation.state, "managed");
+  assert.equal(state.installation.clamavCode, "clamav_missing");
+  assert.equal(state.lastHealth.code, "clamav_missing");
+  assert.equal(state.lastScan, null);
+  const unavailable = await harness({ nativeFailure: true });
+  state = await unavailable.send("state");
+  assert.equal(state.installation.state, "unavailable");
+  assert.equal(state.lastHealth.code, "helper_unavailable");
+  assert.doesNotMatch(state.lastHealth.detail, /ClamAVが見つかりません/);
+  const healthy = await harness({ saved: structuredClone(unavailable.stored()), manageInfo: { status: "managed", version: "0.15.0", healthy: true } });
+  state = await healthy.send("state");
+  assert.equal(state.lastHealth.status, "ready");
+  assert.equal(state.installation.state, "managed");
+  assert.equal(state.installation.clamavCode, "ready");
 });

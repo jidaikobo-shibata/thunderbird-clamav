@@ -1502,8 +1502,8 @@
     "description": "導入状態を確認しています。"
   },
   "mail309": {
-    "message": "Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。初回登録と接続不能時の修復は、同梱ファイルを保存してTerminalで実行します。GUIアプリやsudoは不要です。",
-    "description": "Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。初回登録と接続不能時の修復は、同梱ファイルを保存してTerminalで実行します。GUIアプリやsudoは不要です。"
+    "message": "Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。初回登録と接続不能時の修復は、同梱ファイルを保存してTerminalで実行します。補助プログラムの導入にGUIアプリやsudoは不要です。",
+    "description": "Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。初回登録と接続不能時の修復は、同梱ファイルを保存してTerminalで実行します。補助プログラムの導入にGUIアプリやsudoは不要です。"
   },
   "mail310": {
     "message": "導入用ファイルを保存",
@@ -1590,8 +1590,8 @@
     "description": "変更内容を確認して承認し、完了後に「導入を確認」を押します。対応済みなら、以後の更新・修復はアドオン内で実行できます。"
   },
   "mail331": {
-    "message": "Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。ファイルの保存だけでは設置・削除は行いません。sudoは不要です。",
-    "description": "Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。ファイルの保存だけでは設置・削除は行いません。sudoは不要です。"
+    "message": "Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。ファイルの保存だけでは設置・削除は行いません。補助プログラムの導入にsudoは不要です。",
+    "description": "Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。ファイルの保存だけでは設置・削除は行いません。補助プログラムの導入にsudoは不要です。"
   },
   "mail332": {
     "message": "「設定」で自動検査の対象アカウントをすべて外し、実行中の検査を中止して停止を待ちます。",
@@ -2448,5 +2448,41 @@
         "content": "$1"
       }
     }
+  },
+  "clamavMissing": {
+    "message": "ClamAVが見つかりません。この拡張は /usr/bin/clamscan を使用します。",
+    "description": "ClamAVが見つかりません。この拡張は /usr/bin/clamscan を使用します。"
+  },
+  "clamavUnusable": {
+    "message": "ClamAVを起動・確認できません。導入状態と実行権限を確認してください。",
+    "description": "ClamAVを起動・確認できません。導入状態と実行権限を確認してください。"
+  },
+  "helperClamavUnknown": {
+    "message": "補助プログラムに接続できないため、ClamAVの有無はまだ確認できません。補助プログラムの導入・接続を確認してください。",
+    "description": "補助プログラムに接続できないため、ClamAVの有無はまだ確認できません。補助プログラムの導入・接続を確認してください。"
+  },
+  "clamavInstallHeading": {
+    "message": "ClamAVの導入方法（Ubuntu / Debian）",
+    "description": "ClamAVの導入方法（Ubuntu / Debian）"
+  },
+  "clamavInstallInstructions": {
+    "message": "ClamAVを未導入の場合は、Terminalで次のコマンドを実行してください。これはClamAV本体と高速検査用のclamdを導入するOSの操作です。",
+    "description": "ClamAVを未導入の場合は、Terminalで次のコマンドを実行してください。これはClamAV本体と高速検査用のclamdを導入するOSの操作です。"
+  },
+  "clamavDefinitions": {
+    "message": "導入後はFreshClamによるウイルス定義の初回更新を完了させてください。補助プログラムが未導入なら導入し、「接続を再確認」を押してください。ClamAVが別の場所に導入済みの場合は、通常パッケージとの違いを確認してください。",
+    "description": "導入後はFreshClamによるウイルス定義の初回更新を完了させてください。補助プログラムが未導入なら導入し、「接続を再確認」を押してください。ClamAVが別の場所に導入済みの場合は、通常パッケージとの違いを確認してください。"
+  },
+  "clamavInstallDocs": {
+    "message": "ClamAV公式の導入ガイド",
+    "description": "ClamAV公式の導入ガイド"
+  },
+  "clamavInstallerMissing": {
+    "message": "ClamAVが見つかりません。先にClamAVを導入してください。Ubuntu / Debianでは次のコマンドを利用できます。",
+    "description": "ClamAVが見つかりません。先にClamAVを導入してください。Ubuntu / Debianでは次のコマンドを利用できます。"
+  },
+  "clamavInstallerUnusable": {
+    "message": "ClamAVを確認できませんでした。導入状態を確認してから再実行してください。変更は確定しません。",
+    "description": "ClamAVを確認できませんでした。導入状態を確認してから再実行してください。変更は確定しません。"
   }
 }

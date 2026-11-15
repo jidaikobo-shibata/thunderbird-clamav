@@ -84,6 +84,18 @@ class SetupTests(unittest.TestCase):
         self.assertTrue(self.manager.state()["healthy"])
         self.assertEqual(self.manager.state()["version"], self.manager.version)
 
+    def test_probe_reports_missing_clamav_with_install_instructions(self):
+        from setup.manager import encoded
+        import struct
+        result = encoded({"status": "error", "code": "clamav_missing"})
+        frame = struct.pack("=I", len(result)) + result
+        self.probe.stop()
+        from setup.manager import probe_host
+        with patch("setup.manager.subprocess.run", return_value=subprocess.CompletedProcess([], 0, frame, b"")):
+            with self.assertRaisesRegex(SetupError, "sudo apt install clamav clamav-daemon clamav-freshclam"):
+                probe_host(Path("/synthetic/helper.py"))
+        self.assertFalse(self.manager.layout.registration.exists())
+
     def test_foreign_registration_and_user_edits_are_not_overwritten(self):
         registration = self.manager.layout.registration
         registration.parent.mkdir(parents=True)

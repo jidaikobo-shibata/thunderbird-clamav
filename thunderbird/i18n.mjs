@@ -28,6 +28,6 @@ export function localizeDetail(value) {
   if (!Array.isArray(value?.detailMessages) || value.detailMessages.length > 32 ||
       !globalThis.messenger?.i18n?.getMessage) return value?.detail || "";
   if (!value.detailMessages.every(part => typeof part?.text === "string" &&
-      (part.key === undefined || /^mail[0-9]{3}$/.test(part.key)))) return value.detail || "";
+      (part.key === undefined || /^[a-zA-Z][a-zA-Z0-9_]*$/.test(part.key)))) return value.detail || "";
   return value.detailMessages.map(part => part.key ? t(part.key, part.text) : part.text).join("");
 }

@@ -92,6 +92,10 @@ def probe_host(path):
         if not 0 < size <= 4096 or len(result.stdout) != size + 4:
             raise ValueError("invalid frame")
         reply = json.loads(result.stdout[4:])
+        if reply.get("code") == "clamav_missing":
+            raise SetupError(tr('ClamAVが見つかりません。先にClamAVを導入してください。Ubuntu / Debianでは次のコマンドを利用できます。') + "\nsudo apt install clamav clamav-daemon clamav-freshclam")
+        if reply.get("status") == "error" and reply.get("code") == "clamav_unusable":
+            raise SetupError(tr('ClamAVを確認できませんでした。導入状態を確認してから再実行してください。変更は確定しません。'))
         if reply.get("status") != "ready" or reply.get("protocol") != 1:
             raise ValueError("not ready")
         return reply

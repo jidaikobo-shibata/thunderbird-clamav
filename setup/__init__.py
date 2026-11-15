@@ -63,6 +63,8 @@ _EN_MESSAGES = {'同梱の導入用ファイルを読み取れません。': 'Ca
  '実行しますか？ [y/N]: ': 'Proceed? [y/N]: ',
  '未対応の操作です。': 'This operation is not supported.'}
 
+
+_EN_MESSAGES.update({'ClamAVが見つかりません。先にClamAVを導入してください。Ubuntu / Debianでは次のコマンドを利用できます。': 'ClamAV was not found. Install it first. On Ubuntu / Debian, you can use the following command.', 'ClamAVを確認できませんでした。導入状態を確認してから再実行してください。変更は確定しません。': 'Could not verify ClamAV. Check its installation and try again. Changes will not be committed.'})
 def set_language(language):
     global _LANGUAGE
     _LANGUAGE = "ja" if str(language).lower().replace("_", "-").startswith("ja") else "en-US"

@@ -19,7 +19,7 @@ const server = createServer(async (request, response) => {
   }
   const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript", ".svg": "image/svg+xml", ".pyz": "application/octet-stream" };
   response.setHeader("Content-Type", types[path.extname(name)]);
-  response.end(await readFile(name === "installer.pyz" ? path.join(root, "dist", "clam-mail-check-installer-0.14.1.pyz") : path.join(root, "thunderbird", name)));
+  response.end(await readFile(name === "installer.pyz" ? path.join(root, "dist", "clam-mail-check-installer-0.15.0.pyz") : path.join(root, "thunderbird", name)));
 });
 await new Promise((resolve, reject) => {
   server.once("error", reject);
@@ -96,27 +96,36 @@ try {
       locator: { accountId, author: key === "r0" ? '<img src=x onerror="window.bad=true">' : "送信者",
         subject: key === "r0" ? "テスト添付メール" : "メール " + key, folder: { path: "/Inbox" } } });
     window.testState = { ok: true, issue: "", batch: null, folderJob: null, folderRequest: null,
-      installation: { state: sessionStorage.getItem("fixture-installation") || "managed", version: "0.14.1", healthy: true, detail: "導入済み" },
+      installation: { state: sessionStorage.getItem("fixture-installation") || "managed", version: "0.15.0", healthy: true, detail: "導入済み" },
       settings: { enabled: false, accountIds: [], notifications: true },
       accounts: [{ id: "test", name: "テストアカウント", type: "imap" }, { id: "other", name: "別アカウント", type: "imap" }],
       records: [makeRecord("r0", "detected"), makeRecord("r1", "detected", "other"),
         makeRecord("r2", "clean"), makeRecord("r3", "incomplete", "other"),
         makeRecord("r4", "queued"), makeRecord("r5", "deleted"),
         ...Array.from({ length: 55 }, (_, i) => makeRecord("r" + (i + 6), "clean"))] };
+    function fixtureHealth() {
+      const code = testState.installation.state === "unavailable" ? "helper_unavailable" : sessionStorage.getItem("fixture-health");
+      if (code) return { status: "error", code, checkedAt: new Date().toISOString(), detail: getMessage(code === "clamav_missing" ? "clamavMissing" : code === "clamav_unusable" ? "clamavUnusable" : "helperClamavUnknown") };
+      return { status: "ready", engine: "ClamAV test", detail: "接続可能", checkedAt: new Date().toISOString() };
+    }
     const target = key => { const record = testState.records.find(record => record.key === key);
       return { key, author: record.locator.author, subject: record.locator.subject,
         folder: "/Inbox", accountId: record.locator.accountId, status: record.status, signatures: record.signatures }; };
     let batchKeys = [], forgetKeys = [];
-    window.messenger = { i18n: { getUILanguage: () => language, getMessage }, runtime: { getManifest: () => ({ version: "0.14.1" }), getURL: name => "/" + name, sendMessage: async request => {
+    window.messenger = { i18n: { getUILanguage: () => language, getMessage }, runtime: { getManifest: () => ({ version: "0.15.0" }), getURL: name => "/" + name, sendMessage: async request => {
       testCalls.push(request);
       if (request.type === "state") return structuredClone(testState);
-      if (request.type === "helperInfo") return { ok: true, installation: testState.installation };
+      if (request.type === "helperInfo") {
+        testState.lastHealth = fixtureHealth();
+        testState.installation.clamavCode = testState.lastHealth.code || "ready";
+        return { ok: true, installation: testState.installation, health: testState.lastHealth };
+      }
       if (request.type === "helperPlan") { testState.maintenance = true; testState.maintenanceOperation = request.operation; return { ok: true,
-        plan: { token: "maintenance-token", operation: request.operation, version: "0.14.1", paths: ["/synthetic/home/.local/lib/clam-mail-check"] } }; }
+        plan: { token: "maintenance-token", operation: request.operation, version: "0.15.0", paths: ["/synthetic/home/.local/lib/clam-mail-check"] } }; }
       if (request.type === "helperCancel") testState.maintenance = false;
       if (request.type === "helperApply") { testState.maintenance = false;
         testState.helperRemoved = testState.maintenanceOperation === "uninstall";
-        testState.installation = { state: testState.helperRemoved ? "removed" : "managed", version: "0.14.1", healthy: true,
+        testState.installation = { state: testState.helperRemoved ? "removed" : "managed", version: "0.15.0", healthy: true,
           detail: testState.helperRemoved ? "補助プログラムを削除しました。" : "補助プログラムを更新しました。", retained: [] };
         return { ok: true, installation: testState.installation }; }
       if (request.type === "helperMarkRemoved") { testState.helperRemoved = true; testState.installation = { state: "removed" }; }
@@ -161,7 +170,8 @@ try {
         testState.folderJob.finishedAt = new Date().toISOString(); testState.folderJob.detail = "中止しました。"; }
 
       if (request.type === "health") {
-        testState.lastHealth = { status: "ready", engine: "ClamAV test", detail: "接続可能", checkedAt: new Date().toISOString() };
+        testState.lastHealth = fixtureHealth();
+        testState.installation.clamavCode = testState.lastHealth.code || "ready";
         return { ok: true, health: testState.lastHealth };
       }
       if (request.type === "clear") testState.records = testState.records.filter(record => ["queued", "scanning"].includes(record.status));
@@ -448,7 +458,7 @@ try {
   await call("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   assert.equal(await evaluate("document.documentElement.scrollWidth <= window.innerWidth"), true);
   await evaluate("document.getElementById('tab-setup').click()");
-  assert.match(await evaluate("document.getElementById('installer-command').textContent"), /python3 -I.*0.14.1.*install/);
+  assert.match(await evaluate("document.getElementById('installer-command').textContent"), /python3 -I.*0.15.0.*install/);
   assert.equal(await evaluate("document.getElementById('installer-download').tagName"), "BUTTON");
   const downloads = path.join(profile, "downloads");
   await mkdir(downloads, { recursive: true });
@@ -465,11 +475,11 @@ try {
 
   let downloaded;
   for (let attempt = 0; attempt < 100; attempt++) {
-    downloaded = await readFile(path.join(downloads, "clam-mail-check-installer-0.14.1.pyz")).catch(() => null);
+    downloaded = await readFile(path.join(downloads, "clam-mail-check-installer-0.15.0.pyz")).catch(() => null);
     if (downloaded) break;
     await new Promise(resolve => setTimeout(resolve, 25));
   }
-  assert.deepEqual(downloaded, await readFile(path.join(root, "dist/clam-mail-check-installer-0.14.1.pyz")));
+  assert.deepEqual(downloaded, await readFile(path.join(root, "dist/clam-mail-check-installer-0.15.0.pyz")));
   await evaluate("document.getElementById('installation-title').scrollIntoView()");
   const installationImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
   await writeFile(path.join(root, "dist/ui-installation.png"), Buffer.from(installationImage.data, "base64"));
@@ -628,6 +638,28 @@ try {
   await until("!document.getElementById('batch-stop').hidden");
   await evaluate("document.getElementById('batch-stop').click()");
   await until("testCalls.some(call => call.type === 'cancelBatch' && call.id === 'mock-progress') && document.getElementById('batch-stop').hidden");
+  for (const language of ["ja", "en-US"]) {
+    await evaluate(`sessionStorage.setItem('fixture-language', '${language}'); sessionStorage.setItem('fixture-health', 'clamav_missing'); sessionStorage.removeItem('fixture-installation')`);
+    await call("Page.reload");
+    await until("document.getElementById('clamav-install-guide').open && document.getElementById('health-result').textContent.includes('/usr/bin/clamscan')");
+    await evaluate("document.getElementById('tab-setup').click()");
+    assert.equal(await evaluate("document.getElementById('clamav-install-guide').hidden"), false);
+    assert.match(await evaluate("document.getElementById('clamav-install-guide').textContent"), /sudo apt install clamav clamav-daemon clamav-freshclam/);
+    assert.equal(await evaluate("document.getElementById('setup-dot').hidden"), false);
+    if (language === "ja") {
+      await evaluate("window.scrollTo(0, 0)");
+      const image = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+      await writeFile(path.join(root, "dist/ui-clamav-missing.png"), Buffer.from(image.data, "base64"));
+    }
+    await evaluate("sessionStorage.setItem('fixture-health', 'clamav_unusable'); document.getElementById('health').click()");
+    await until("document.getElementById('clamav-install-guide').dataset.code === 'clamav_unusable' && !document.getElementById('health').disabled");
+    await evaluate("testState.installation.state = 'unavailable'; document.getElementById('health').click()");
+    await until("document.getElementById('clamav-install-guide').dataset.code === 'helper_unavailable' && !document.getElementById('health').disabled");
+    assert.match(await evaluate("document.getElementById('health-result').textContent"), language === "ja" ? /有無はまだ確認できません/ : /Cannot determine whether ClamAV/);
+    await evaluate("sessionStorage.removeItem('fixture-health'); testState.installation.state = 'managed'; document.getElementById('health').click()");
+    await until("document.getElementById('clamav-install-guide').hidden && !document.getElementById('health').disabled");
+    assert.equal(await evaluate("document.getElementById('setup-dot').hidden"), true);
+  }
   console.log("UI smoke: passed (Japanese/English, six tabs, help/setup/uninstall navigation, folder picker, autosave/rollback, connection history, filters, bulk actions, folder start/cancel/subfolders, progress counters, run filter, stop/interruption/resume/delete, desktop/mobile)");
 } finally {
   for (const waiter of pending.values()) clearTimeout(waiter.timer);

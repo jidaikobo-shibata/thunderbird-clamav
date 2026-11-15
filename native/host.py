@@ -126,6 +126,11 @@ _MESSAGE_KEYS = {'メールが空か、検査上限の25MiBを超えています
  '未対応の操作です。': 'mail082'}
 
 
+
+_EN_MESSAGES.update({'ClamAVが見つかりません。この拡張は /usr/bin/clamscan を使用します。': 'ClamAV was not found. This extension uses /usr/bin/clamscan.', 'ClamAVを起動・確認できません。導入状態と実行権限を確認してください。': 'ClamAV could not be started or verified. Check its installation and execution permissions.'})
+
+_MESSAGE_KEYS.update({'ClamAVが見つかりません。この拡張は /usr/bin/clamscan を使用します。': 'clamavMissing', 'ClamAVを起動・確認できません。導入状態と実行権限を確認してください。': 'clamavUnusable'})
+
 def tr(message):
     text = message if _LANGUAGE == "ja" else _EN_MESSAGES.get(message, message)
     key = _MESSAGE_KEYS.get(message)
@@ -473,14 +478,18 @@ def scan(data, scanner=None):
 
 
 def health():
+    if not Path(CLAMSCAN).is_file():
+        return {"status": "error", "code": "clamav_missing", "detail": tr('ClamAVが見つかりません。この拡張は /usr/bin/clamscan を使用します。')}
     try:
         result = subprocess.run([CLAMSCAN, "--version"], capture_output=True,
                                 timeout=10, check=False)
         if result.returncode:
             raise OSError("version failed")
         version = result.stdout.decode("utf-8", "replace").strip()[:300]
+        if not version.startswith("ClamAV "):
+            raise OSError("invalid version")
     except (OSError, subprocess.TimeoutExpired):
-        return {"status": "error", "detail": tr('ClamAVのバージョンを取得できません。')}
+        return {"status": "error", "code": "clamav_unusable", "detail": tr('ClamAVを起動・確認できません。導入状態と実行権限を確認してください。')}
     return {"status": "ready", "protocol": PROTOCOL, "engine": version,
             "maxBytes": MAX_MAIL, "chunkBytes": CHUNK_SIZE,
             "detail": (tr('連続検査では専用clamdを利用します。初回は定義を読み込みます。起動できない場合はclamscanを利用します。')

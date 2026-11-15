@@ -31,23 +31,41 @@ function releaseMaintenance() {
   pendingMaintenance?.client.close();
   pendingMaintenance = null;
 }
+async function readHealth(client) {
+  try {
+    return { ...await client.request("health"), checkedAt: new Date().toISOString() };
+  } catch {
+    return { status: "error", code: "helper_unavailable", checkedAt: new Date().toISOString(),
+      detail: t("helperClamavUnknown", "補助プログラムに接続できないため、ClamAVの有無はまだ確認できません。補助プログラムの導入・接続を確認してください。") };
+  }
+}
+function applyHealthToInstallation() {
+  if (!installation || installation.state === "removed") return;
+  installation.clamavCode = lastHealth.status === "ready" ? "ready" : lastHealth.code || "unconfirmed";
+  if (lastHealth.code === "helper_unavailable") installation.state = "unavailable";
+}
 async function helperInfo() {
   if (maintenanceActive()) return installation;
   const generation = maintenanceGeneration;
-  const client = new NativeClient(api.runtime);
+  let client;
   try {
+    client = new NativeClient(api.runtime);
     const info = await client.request("manageInfo");
     if (generation !== maintenanceGeneration) return installation;
-    installation = { state: info.status === "managed" ? "managed" : "legacy",
+    const candidate = { state: info.status === "managed" ? "managed" : "legacy",
       version: info.version || null, healthy: info.healthy, detail: info.detail || t("mail001", "連携用の更新が必要です。") };
-    if (installation.state === "managed" && helperRemoved && !maintenanceActive()) {
-      helperRemoved = false;
-      await save();
-    }
+    const health = await readHealth(client);
+    if (generation !== maintenanceGeneration) return installation;
+    installation = candidate;
+    lastHealth = health;
+    applyHealthToInstallation();
+    if (installation.state === "managed" && helperRemoved && !maintenanceActive()) helperRemoved = false;
   } catch (error) {
     if (generation !== maintenanceGeneration) return installation;
     installation = { state: helperRemoved && installation?.state === "removed" ? "removed" : "unavailable", detail: error.message };
-  } finally { client.close(); }
+    lastHealth = { status: "error", code: "helper_unavailable", checkedAt: new Date().toISOString(),
+      detail: t("helperClamavUnknown", "補助プログラムに接続できないため、ClamAVの有無はまだ確認できません。補助プログラムの導入・接続を確認してください。") };
+  } finally { client?.close(); }
   await save();
   await updateBadge();
   return installation;
@@ -646,7 +664,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
           .filter(account => ["imap", "pop3", "none"].includes(account.type))
           .map(account => ({ id: account.id, name: account.name, type: account.type })) };
       case "helperInfo":
-        return { ok: true, installation: await helperInfo() };
+        return { ok: true, installation: await helperInfo(), health: lastHealth };
       case "helperPlan": {
         if (running || folderScan.active || batchProgress?.active || deleting.size) throw new Error(t("mail055", "検査・削除の処理が終了してから操作してください。フォルダー検査中は先に中止してください。"));
         maintenanceGeneration++;
@@ -714,13 +732,9 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         return { ok: true };
       }
       case "health": {
-        const client = new NativeClient(api.runtime);
-        try {
-          try { lastHealth = { ...await client.request("health"), checkedAt: new Date().toISOString() }; }
-          catch (error) { lastHealth = { status: "error", checkedAt: new Date().toISOString(), detail: error.message }; }
-          await save();
-          return { ok: true, health: lastHealth };
-        } finally { client.close(); }
+        if (maintenanceActive()) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
+        await helperInfo();
+        return { ok: true, health: lastHealth };
       }
       case "scanSelection":
         await scanSelection();

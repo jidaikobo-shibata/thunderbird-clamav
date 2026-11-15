@@ -418,7 +418,9 @@ async function refresh() {
       initialized = true;
       void loadFolders();
       void request("helperInfo").then(response => {
-        latest.installation = response.installation; installer.render(); renderHelperNotice();
+        latest.installation = response.installation;
+        latest.lastHealth = response.health || latest.lastHealth;
+        renderConnection(); installer.render(); renderHelperNotice();
         if (!userNavigated && !latest.folderRequest && !latest.resultsRequest && response.installation?.state !== "managed") {
           activateTab(response.installation?.state === "removed" ? "uninstall" : "setup");
         }
@@ -548,6 +550,12 @@ function renderConnection() {
   setText($("health-result"), health ?
     t("mail153", "最終接続確認：$1 ／ $2。$3 $4", [health.status === "ready" ? t("mail154", "応答あり") : t("mail155", "確認失敗"), new Date(health.checkedAt).toLocaleString(uiLanguage()), health.engine || "", localizeDetail(health)]) :
     t("mail156", "接続はまだ確認していません。「接続を再確認」で確認できます。"));
+  const guide = $("clamav-install-guide");
+  guide.hidden = health?.status === "ready";
+  if (guide.dataset.code !== (health?.code || "unknown")) {
+    guide.dataset.code = health?.code || "unknown";
+    guide.open = health?.code === "clamav_missing";
+  }
   const scan = latest.lastScan;
   setText($("last-scan-result"), scan ? t("mail157", "最終実検査：$1 ／ $2 ／ $3", [new Date(scan.checkedAt).toLocaleString(uiLanguage()), scan.engine?.includes("(clamd)") ? "clamd" : "clamscan", scan.engine || ""]) : t("mail158", "実検査の記録はありません。"));
 }

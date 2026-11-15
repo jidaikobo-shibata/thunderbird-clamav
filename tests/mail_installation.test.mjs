@@ -35,3 +35,12 @@ test("helper notices distinguish connection failure and prioritize mail attentio
   assert.equal(helperNotice({ state: "removed" }, "0.9.4"), null);
   assert.equal(helperNotice({ state: "managed", version: "0.9.4", healthy: true }, "0.9.4"), null);
 });
+
+test("ClamAV prerequisite problems lead to setup without claiming the helper is missing", () => {
+  const info = { state: "managed", version: "0.15.0", healthy: true, clamavCode: "clamav_missing" };
+  const notice = toolbarNotice(info, "0.15.0", "", 0);
+  assert.equal(notice.setup, true);
+  assert.equal(notice.dot, "attention");
+  assert.match(notice.title, /ClamAV/);
+  assert.equal(helperNotice({ ...info, clamavCode: "ready" }, "0.15.0"), null);
+});

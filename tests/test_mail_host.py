@@ -259,6 +259,24 @@ class DaemonTests(unittest.TestCase):
             close.assert_called_once()
 
 
+class PrerequisiteTests(unittest.TestCase):
+    def test_missing_clamav_has_specific_code_without_starting_any_process(self):
+        with patch.object(host, "CLAMSCAN", "/synthetic/not-installed/clamscan"), patch.object(host.subprocess, "run") as run:
+            result = host.health()
+        self.assertEqual(result["code"], "clamav_missing")
+        self.assertEqual(result["status"], "error")
+        run.assert_not_called()
+        self.assertEqual(host.describe_result(result)["detailMessages"][0]["key"], "clamavMissing")
+
+    def test_broken_or_inaccessible_clamav_is_not_claimed_to_be_uninstalled(self):
+        with patch.object(Path, "is_file", return_value=True):
+            for error in [PermissionError("denied"), subprocess.TimeoutExpired("clamscan", 10)]:
+                with patch.object(host.subprocess, "run", side_effect=error):
+                    self.assertEqual(host.health()["code"], "clamav_unusable")
+            with patch.object(host.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"not ClamAV", b"")):
+                self.assertEqual(host.health()["code"], "clamav_unusable")
+
+
 class PackagingTests(unittest.TestCase):
     def test_build_and_registration_are_local_and_never_overwrite(self):
         root = Path(__file__).resolve().parents[1]

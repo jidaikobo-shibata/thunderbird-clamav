@@ -1502,7 +1502,7 @@
     "description": "導入状態を確認しています。"
   },
   "mail309": {
-    "message": "For regular Thunderbird installations on Linux. Requires Python 3 and ClamAV. For initial registration or repair when disconnected, save the bundled file and run it in Terminal. No GUI app or sudo is needed.",
+    "message": "For regular Thunderbird installations on Linux. Requires Python 3 and ClamAV. For initial registration or repair when disconnected, save the bundled file and run it in Terminal. Installing the helper requires neither a GUI app nor sudo.",
     "description": "Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。初回登録と接続不能時の修復は、同梱ファイルを保存してTerminalで実行します。GUIアプリやsudoは不要です。"
   },
   "mail310": {
@@ -1590,7 +1590,7 @@
     "description": "変更内容を確認して承認し、完了後に「導入を確認」を押します。対応済みなら、以後の更新・修復はアドオン内で実行できます。"
   },
   "mail331": {
-    "message": "For regular Thunderbird installations on Linux. Requires Python 3 and ClamAV. Saving the file alone does not install or remove anything. No sudo is needed.",
+    "message": "For regular Thunderbird installations on Linux. Requires Python 3 and ClamAV. Saving the file alone does not install or remove anything. No sudo is needed to install the helper.",
     "description": "Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。ファイルの保存だけでは設置・削除は行いません。sudoは不要です。"
   },
   "mail332": {
@@ -2448,5 +2448,41 @@
         "content": "$1"
       }
     }
+  },
+  "clamavMissing": {
+    "message": "ClamAV was not found. This extension uses /usr/bin/clamscan.",
+    "description": "ClamAVが見つかりません。この拡張は /usr/bin/clamscan を使用します。"
+  },
+  "clamavUnusable": {
+    "message": "ClamAV could not be started or verified. Check its installation and execution permissions.",
+    "description": "ClamAVを起動・確認できません。導入状態と実行権限を確認してください。"
+  },
+  "helperClamavUnknown": {
+    "message": "Cannot determine whether ClamAV is installed because the helper is unavailable. Check the helper installation and connection.",
+    "description": "補助プログラムに接続できないため、ClamAVの有無はまだ確認できません。補助プログラムの導入・接続を確認してください。"
+  },
+  "clamavInstallHeading": {
+    "message": "Install ClamAV (Ubuntu / Debian)",
+    "description": "ClamAVの導入方法（Ubuntu / Debian）"
+  },
+  "clamavInstallInstructions": {
+    "message": "If ClamAV is not installed, run the following command in Terminal. This OS operation installs ClamAV and clamd for faster scanning.",
+    "description": "ClamAVを未導入の場合は、Terminalで次のコマンドを実行してください。これはClamAV本体と高速検査用のclamdを導入するOSの操作です。"
+  },
+  "clamavDefinitions": {
+    "message": "After installation, let FreshClam finish downloading the initial virus definitions. Install the helper if needed, then click “Check connection again”. If ClamAV is already installed elsewhere, check how it differs from the regular distribution packages.",
+    "description": "導入後はFreshClamによるウイルス定義の初回更新を完了させてください。補助プログラムが未導入なら導入し、「接続を再確認」を押してください。ClamAVが別の場所に導入済みの場合は、通常パッケージとの違いを確認してください。"
+  },
+  "clamavInstallDocs": {
+    "message": "Official ClamAV installation guide",
+    "description": "ClamAV公式の導入ガイド"
+  },
+  "clamavInstallerMissing": {
+    "message": "ClamAV was not found. Install it first. On Ubuntu / Debian, you can use the following command.",
+    "description": "ClamAVが見つかりません。先にClamAVを導入してください。Ubuntu / Debianでは次のコマンドを利用できます。"
+  },
+  "clamavInstallerUnusable": {
+    "message": "Could not verify ClamAV. Check its installation and try again. Changes will not be committed.",
+    "description": "ClamAVを確認できませんでした。導入状態を確認してから再実行してください。変更は確定しません。"
   }
 }

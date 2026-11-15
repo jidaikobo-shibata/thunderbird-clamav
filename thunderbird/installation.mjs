@@ -21,6 +21,8 @@ export function helperAction(info, bundledVersion) {
 }
 
 export function helperNotice(info, version) {
+  if (info?.state !== "removed" && info?.clamavCode === "clamav_missing") return { kind: "connection", badge: "!", message: t("clamavMissing", "ClamAVが見つかりません。この拡張は /usr/bin/clamscan を使用します。") };
+  if (info?.state !== "removed" && info?.clamavCode === "clamav_unusable") return { kind: "connection", badge: "!", message: t("clamavUnusable", "ClamAVを起動・確認できません。導入状態と実行権限を確認してください。") };
   const action = helperAction(info, version);
   if (action === "update") return { kind: "update", badge: t("mail199", "更新"), label: t("mail200", "更新あり"), message: t("mail201", "補助プログラムの更新があります。"), button: t("mail202", "更新を確認") };
   if (action === "repair" || info?.state === "managed" && info.healthy === false)
