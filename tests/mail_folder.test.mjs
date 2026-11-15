@@ -218,3 +218,38 @@ test("resume re-enumeration can be cancelled and rejects a moved root", async ()
   release(); await scan.collecting;
   assert.equal(scan.job.status, "stopped");
 });
+
+test("multiple roots share progress, deduplicate parent/child traversal and resume checkpoints", async () => {
+  const { scan, api, listed } = fixture();
+  const byId = { root, child, nested };
+  const messages = Object.fromEntries(Object.entries(byId).map(([id, folder]) => [id, mail(id, folder)]));
+  api.messages.list = async id => { listed.push(id); return { messages: [messages[id]] }; };
+  await scan.start([root, child], true); await scan.collecting;
+  assert.deepEqual(listed, ["root", "child", "nested"]);
+  assert.equal(scan.job.total, 3);
+  assert.equal(scan.job.folders.length, 2);
+  const target = scan.take();
+  await scan.complete("clean", { hint: await checkpointHint(locator(target)), digest: "a".repeat(64) });
+  await scan.stop();
+  assert.equal(scan.job.status, "stopped");
+  const saved = scan.snapshot(), checkpoint = scan.checkpointState();
+  const next = new FolderScan(api, { digestOf: async () => "a".repeat(64) });
+  next.restore(saved, checkpoint);
+  await assert.rejects(next.resume([root]), /見つからない|場所/);
+  await next.resume([root, child]); await next.collecting;
+  assert.equal(next.job.resumedMatched, 1);
+  assert.equal(next.job.total, 3);
+  for (let i = 0; i < 2; i++) { assert.ok(next.take()); await next.complete("clean"); }
+  assert.equal(next.job.completed, 3);
+  assert.equal(next.job.status, "completed");
+});
+
+test("multiple roots without subfolders include only explicit targets and reject cross-account roots", async () => {
+  const { scan, api, listed } = fixture();
+  api.messages.list = async id => { listed.push(id); return { messages: [mail(id, id === "root" ? root : child)] }; };
+  await assert.rejects(scan.start([root, { ...child, accountId: "other" }], false));
+  await assert.rejects(scan.start([root, root], false));
+  await scan.start([root, child], false); await scan.collecting;
+  assert.deepEqual(listed, ["root", "child"]);
+  assert.equal(scan.job.total, 2);
+});

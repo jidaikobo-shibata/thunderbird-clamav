@@ -82,3 +82,10 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid GrayText
 .notification-dot { position: absolute; top: 8px; right: 8px; width: 8px; height: 8px; border-radius: 50%; background: #285b8f; }
 .notification-dot[data-kind="repair"], .notification-dot[data-kind="connection"] { background: #b34b17; }
 @media (forced-colors: active) { .notification-dot { background: Highlight; forced-color-adjust: none; } }
+
+#folder-options { max-height: 22rem; overflow: auto; border: 1px solid GrayText; border-radius: 4px; }
+#folder-options:empty { display: none; }
+#folder-options label { display: flex; gap: 8px; align-items: center; min-height: 44px; padding: 4px 12px; overflow-wrap: anywhere; }
+#folder-options label:has(input:checked) { background: color-mix(in srgb, Highlight 12%, Canvas); }
+#folder-options input { flex-shrink: 0; }
+.folder-target-list { max-height: 30vh; overflow: auto; overflow-wrap: anywhere; }

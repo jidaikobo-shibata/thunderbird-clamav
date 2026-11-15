@@ -27,9 +27,17 @@
     <h2><span data-i18n="mail254">検査</span></h2>
     <div class="scan-picker">
       <label for="scan-account"><span data-i18n="mail257">アカウント</span><select id="scan-account"><option value="" data-i18n="mail159">選択してください</option></select></label>
-      <label for="scan-target"><span data-i18n="mail258">フォルダー</span><select id="scan-target"><option value="" data-i18n="mail159">選択してください</option></select></label>
+      <label for="folder-search"><span data-i18n="folderSearch">フォルダーを絞り込む</span><input id="folder-search" type="search" autocomplete="off"></label>
       <button type="button" id="reload-folders"><span data-i18n="mail259">一覧を更新</span></button>
     </div>
+    <fieldset id="folder-picker">
+      <legend data-i18n="folderChoose">検査するフォルダー（複数選択可）</legend>
+      <div class="actions"><button type="button" id="folder-select-visible" data-i18n="folderSelectVisible">表示中を選択</button><button type="button" id="folder-clear-selection" data-i18n="folderClearSelection">すべての選択を解除</button></div>
+      <p id="folder-selection-count" role="status" aria-live="polite"></p>
+      <div id="folder-options"></div>
+      <p id="folder-picker-empty"></p>
+      <p class="hint" data-i18n="folderSelectionHint">絞り込みで隠れた選択も保持します。アカウントを変えると選択を解除します。</p>
+    </fieldset>
     <p id="scan-target-label"><span data-i18n="mail161">検査するアカウントとフォルダーを選択してください。</span></p>
     <p id="folder-load-status" role="status"></p>
     <button type="button" id="scan-folder" disabled><span data-i18n="mail260">検査範囲を確認して開始</span></button>
@@ -38,6 +46,7 @@
       <h3 id="folder-title"><span data-i18n="mail262">フォルダー検査</span></h3>
       <p id="folder-status"></p><p id="folder-announcement" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></p>
       <progress id="folder-bar" max="1" aria-label="フォルダー検査の処理済み件数" data-i18n-aria-label="mail263"></progress>
+      <details id="folder-job-targets" hidden><summary data-i18n="folderTargets">対象フォルダー</summary><ul id="folder-job-target-list"></ul></details>
       <p id="folder-counts"></p><p id="folder-detail"></p>
       <div class="actions"><button type="button" id="folder-results"><span data-i18n="mail264">この検査の結果を表示</span></button><button type="button" id="folder-stop"><span data-i18n="mail177">中止</span></button><button type="button" id="folder-resume"><span data-i18n="mail265">再開</span></button><button type="button" id="folder-delete"><span data-i18n="mail266">検査記録を削除</span></button></div>
       <p id="folder-retained" class="hint"></p>
@@ -181,7 +190,7 @@
 <dialog id="folder-dialog" aria-labelledby="folder-dialog-title" aria-describedby="folder-warning">
   <form method="dialog">
     <h2 id="folder-dialog-title"><span data-i18n="mail350">フォルダーを検査</span></h2>
-    <p id="folder-target"></p>
+    <p id="folder-target"></p><ul id="folder-target-list" class="folder-target-list"></ul>
     <label><input type="checkbox" id="folder-subfolders"> <span data-i18n="mail351">サブフォルダーも含める</span></label>
     <p id="folder-warning"><span data-i18n="mail352">先にThunderbirdの受信・同期を完了してください。対象一覧を取得してから1通ずつ検査します。IMAPでは本文の取得に通信が発生する場合があります。大きなフォルダーは時間がかかります。</span></p>
     <p><span data-i18n="mail353">進捗は検査タブに表示します。中止時は実行中の処理を終えて停止します。Thunderbird終了後は自動再開しません。「再開」で処理済みメールを照合して続行できます。新しい検査を開始すると、前回の再開情報を置き換えます。</span></p>

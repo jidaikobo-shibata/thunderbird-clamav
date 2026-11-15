@@ -75,13 +75,16 @@ export class FolderScan {
   }
   async start(folder, includeSubfolders) {
     if (this.active) throw new Error(t("mail006", "フォルダー検査は既に実行中です。"));
-    if (!realFolder(folder) || typeof includeSubfolders !== "boolean") {
-      throw new Error(t("mail007", "通常のメールフォルダーを1つ選択してください。統合・検索・タグの仮想フォルダーは対象外です。"));
+    const roots = Array.isArray(folder) ? folder : [folder];
+    if (!roots.length || roots.length > 5000 || roots.some(root => !realFolder(root) || root.accountId !== roots[0].accountId) || new Set(roots.map(keyOf)).size !== roots.length || typeof includeSubfolders !== "boolean") {
+      throw new Error(t("foldersInvalid", "同じアカウントの通常のメールフォルダーを選択してください。"));
     }
     this.targets = [];
     this.cursor = 0;
     this.checkpoints.clear();
-    this.job = { id: crypto.randomUUID(), folder: { id: folder.id, accountId: folder.accountId,
+    folder = roots[0];
+    const savedRoots = roots.map(root => ({ id: root.id, accountId: root.accountId, path: root.path, name: root.name || root.path, displayNames: root.displayNames }));
+    this.job = { id: crypto.randomUUID(), folders: savedRoots, folder: { id: folder.id, accountId: folder.accountId,
       path: folder.path, name: folder.name || folder.path, displayNames: folder.displayNames }, includeSubfolders,
       status: "collecting", startedAt: new Date().toISOString(), finishedAt: null,
       total: null, discovered: 0, completed: 0, scanning: 0, ignored: 0, skippedFolders: 0,
@@ -93,7 +96,7 @@ export class FolderScan {
       this.job.finishedAt = new Date().toISOString();
       throw error;
     }
-    this.launch(folder);
+    this.launch(roots);
     return this.snapshot();
   }
   launch(folder, resume = false) {
@@ -102,7 +105,8 @@ export class FolderScan {
   }
   async resume(folder) {
     if (!this.resumable || this.active) throw new Error(t("mail185", "このフォルダー検査は再開できません。"));
-    if (!realFolder(folder) || keyOf(folder) !== keyOf(this.job.folder)) throw new Error(t("mail072", "元のフォルダーが見つからないか、場所が変わりました。"));
+    const roots = Array.isArray(folder) ? folder : [folder], saved = this.job.folders || [this.job.folder];
+    if (roots.length !== saved.length || roots.some((root, index) => !realFolder(root) || keyOf(root) !== keyOf(saved[index]))) throw new Error(t("mail072", "元のフォルダーが見つからないか、場所が変わりました。"));
     const previous = this.snapshot();
     this.targets = [];
     this.cursor = 0;
@@ -112,7 +116,7 @@ export class FolderScan {
       detail: t("mail186", "処理済みメールと照合しています。新着・変更されたメールも確認します。") });
     try { await this.changed(); }
     catch (error) { this.job = previous; throw error; }
-    this.launch(folder, true);
+    this.launch(roots, true);
     return this.snapshot();
   }
   async remove() {
@@ -130,14 +134,15 @@ export class FolderScan {
   async collect(root, resume = false) {
     const remaining = resume ? new Map(this.checkpoints) : new Map();
     const hints = new Set([...remaining.keys()].map(key => key.slice(0, 64)));
-    const folders = [root], seenFolders = new Set(), seenMessages = new Set();
+    const roots = Array.isArray(root) ? root : [root];
+    const folders = [...roots], seenFolders = new Set(), seenMessages = new Set();
     while (folders.length) {
       if (this.job.status === "stopping") return this.finish("stopped", t("mail188", "対象一覧の取得中に中止しました。"));
       const folder = folders.shift(), identity = keyOf(folder);
       if (seenFolders.has(identity)) continue;
       seenFolders.add(identity);
       if (seenFolders.size > 5000) return this.finish("blocked", t("mail189", "対象フォルダーが多いため停止しました。範囲を分けてください。"));
-      if (!realFolder(folder) || folder.accountId !== root.accountId) { this.job.skippedFolders++; continue; }
+      if (!realFolder(folder) || folder.accountId !== roots[0].accountId) { this.job.skippedFolders++; continue; }
       const first = await this.api.messages.list(ref(folder));
       for await (const message of messagePages(this.api.messages, first)) {
         if (this.job.status === "stopping") return this.finish("stopped", t("mail188", "対象一覧の取得中に中止しました。"));

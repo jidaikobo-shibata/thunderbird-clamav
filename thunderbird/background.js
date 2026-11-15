@@ -91,15 +91,17 @@ async function listFolderChoices() {
   return { ok: true, folders: choices, limited: choices.length >= 5000 };
 }
 
-async function chooseFolder(folder) {
+async function chooseFolder(folder) { return chooseFolders([folder]); }
+
+async function chooseFolders(folders) {
   if (maintenanceActive() || helperRemoved) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
   if (folderScan.active) throw new Error(t("mail006", "フォルダー検査は既に実行中です。"));
-  const current = folder?.id ? await api.folders.get(folder.id, false) : folder;
-  if (!realFolder(current)) throw new Error(t("mail007", "通常のメールフォルダーを1つ選択してください。統合・検索・タグの仮想フォルダーは対象外です。"));
+  const current = await Promise.all(folders.map(folder => folder?.id ? api.folders.get(folder.id, false) : folder));
+  if (!current.length || current.some(folder => !realFolder(folder) || folder.accountId !== current[0].accountId)) throw new Error(t("foldersInvalid", "同じアカウントの通常のメールフォルダーを選択してください。"));
   const choices = await listFolderChoices();
-  const displayNames = choices.folders.find(candidate => candidate.accountId === current.accountId && candidate.path === current.path)?.displayNames;
-  folderRequest = { token: crypto.randomUUID(), folder: { id: current.id, accountId: current.accountId,
-    path: current.path, name: current.name || current.path, displayNames } };
+  const selectedFolders = current.map(folder => ({ id: folder.id, accountId: folder.accountId, path: folder.path,
+    name: folder.name || folder.path, displayNames: choices.folders.find(candidate => candidate.accountId === folder.accountId && candidate.path === folder.path)?.displayNames }));
+  folderRequest = { token: crypto.randomUUID(), folder: selectedFolders[0], folders: selectedFolders };
   return folderRequest;
 }
 
@@ -638,6 +640,11 @@ api.runtime.onMessage.addListener(async (request, sender) => {
       case "folderChoices":
         return listFolderChoices();
       case "folderContext":
+        if (request.folderIds !== undefined) {
+          const ids = request.folderIds;
+          if (!Array.isArray(ids) || !ids.length || ids.length > 5000 || ids.some(id => typeof id !== "string" || !id) || new Set(ids).size !== ids.length) throw new Error(t("foldersInvalid", "同じアカウントの通常のメールフォルダーを選択してください。"));
+          return { ok: true, ...await chooseFolders(ids.map(id => ({ id }))) };
+        }
         if (request.folderId !== undefined) {
           if (typeof request.folderId !== "string" || !request.folderId) throw new Error(t("mail067", "検査するフォルダーを選択してください。"));
           return { ok: true, ...await chooseFolder(await api.folders.get(request.folderId, false)) };
@@ -649,19 +656,19 @@ api.runtime.onMessage.addListener(async (request, sender) => {
       case "folderStart": {
         if (!folderRequest || folderRequest.token !== request.token) throw new Error(t("mail068", "フォルダーの選択が変わりました。選び直してください。"));
         if (typeof request.includeSubfolders !== "boolean") throw new Error(t("mail069", "サブフォルダーの選択が不正です。"));
-        const folder = folderRequest.folder;
-        const current = folder.id ? await api.folders.get(folder.id, false) : folder;
-        if (!realFolder(current) || current.accountId !== folder.accountId || current.path !== folder.path) throw new Error(t("mail070", "フォルダーが見つからないか、場所が変わりました。選び直してください。"));
-        const job = await folderScan.start({ ...current, displayNames: folder.displayNames }, request.includeSubfolders);
+        const context = folderRequest, folders = context.folders || [context.folder];
+        const current = await Promise.all(folders.map(folder => folder.id ? api.folders.get(folder.id, false) : folder));
+        if (folderRequest !== context || current.some((folder, index) => !realFolder(folder) || folder.accountId !== folders[index].accountId || folder.path !== folders[index].path)) throw new Error(t("mail070", "フォルダーが見つからないか、場所が変わりました。選び直してください。"));
+        const job = await folderScan.start(current.map((folder, index) => ({ ...folder, displayNames: folders[index].displayNames })), request.includeSubfolders);
         folderRequest = null;
         void folderScan.collecting.catch(report);
         return { ok: true, job };
       }
       case "folderResume": {
         if (request.jobId !== folderScan.job?.id || !folderScan.resumable) throw new Error(t("mail071", "この検査は再開できません。画面を更新してください。"));
-        const job = folderScan.job, folder = job.folder;
-        const current = folder.id ? await api.folders.get(folder.id, false) : folder;
-        if (folderScan.job !== job || !realFolder(current) || current.accountId !== folder.accountId || current.path !== folder.path) throw new Error(t("mail072", "元のフォルダーが見つからないか、場所が変わりました。"));
+        const job = folderScan.job, folders = job.folders || [job.folder];
+        const current = await Promise.all(folders.map(folder => folder.id ? api.folders.get(folder.id, false) : folder));
+        if (folderScan.job !== job || current.some((folder, index) => !realFolder(folder) || folder.accountId !== folders[index].accountId || folder.path !== folders[index].path)) throw new Error(t("mail072", "元のフォルダーが見つからないか、場所が変わりました。"));
         await folderScan.resume(current);
         void folderScan.collecting.catch(report);
         return { ok: true };

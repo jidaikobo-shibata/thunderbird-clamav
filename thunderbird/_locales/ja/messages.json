@@ -2086,5 +2086,80 @@
   "listSeparator": {
     "message": " ／ ",
     "description": "画面内の情報を区切る文字"
+  },
+  "foldersInvalid": {
+    "message": "同じアカウントの通常のメールフォルダーを選択してください。",
+    "description": "同じアカウントの通常のメールフォルダーを選択してください。"
+  },
+  "folderSearch": {
+    "message": "フォルダーを絞り込む",
+    "description": "フォルダーを絞り込む"
+  },
+  "folderChoose": {
+    "message": "検査するフォルダー（複数選択可）",
+    "description": "検査するフォルダー（複数選択可）"
+  },
+  "folderSelectVisible": {
+    "message": "表示中を選択",
+    "description": "表示中を選択"
+  },
+  "folderClearSelection": {
+    "message": "すべての選択を解除",
+    "description": "すべての選択を解除"
+  },
+  "folderSelectionHint": {
+    "message": "絞り込みで隠れた選択も保持します。アカウントを変えると選択を解除します。",
+    "description": "絞り込みで隠れた選択も保持します。アカウントを変えると選択を解除します。"
+  },
+  "folderJobLabel": {
+    "message": "$ARG1$ほか（$ARG2$フォルダー）",
+    "description": "$1ほか（$2フォルダー）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "folderConfirmCount": {
+    "message": "$ARG1$：$ARG2$フォルダーを検査します。",
+    "description": "$1：$2フォルダーを検査します。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "folderSelectionCount": {
+    "message": "選択$ARG1$フォルダー ／ 表示$ARG2$フォルダー（表示外の選択$ARG3$）",
+    "description": "選択$1フォルダー ／ 表示$2フォルダー（表示外の選択$3）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "folderNoMatches": {
+    "message": "一致するフォルダーはありません。",
+    "description": "一致するフォルダーはありません。"
+  },
+  "folderAccountFirst": {
+    "message": "アカウントを選択してください。",
+    "description": "アカウントを選択してください。"
+  },
+  "folderTargets": {
+    "message": "対象フォルダー",
+    "description": "複数フォルダー検査の対象一覧"
   }
 }

@@ -15,6 +15,7 @@ let folderFilterId = null, seenFolderRequest = null;
 let folderAnnouncement = null, seenResultsRequest = null;
 const TABS = ["scan", "results", "settings", "setup", "uninstall", "help"];
 let userNavigated = false, seenSetupRequest = null;
+const selectedFolders = new Set();
 let folderChoices = [], foldersLoading = false, settingsSaving = false;
 
 async function request(type, values = {}) {
@@ -43,9 +44,9 @@ function updateControls() {
   }
   const job = latest?.folderJob;
   const folderActive = job && ["collecting", "running", "stopping"].includes(job.status);
-  $("scan-folder").disabled = locked || latest?.helperRemoved || Boolean(folderActive) || foldersLoading || !$("scan-target").value;
-  for (const id of ["scan-account", "scan-target", "reload-folders"]) $(id).disabled = locked || foldersLoading;
-  $("scan-target").disabled ||= !$("scan-account").value;
+  $("scan-folder").disabled = locked || latest?.helperRemoved || Boolean(folderActive) || foldersLoading || !selectedFolders.size;
+  for (const id of ["scan-account", "folder-search", "reload-folders", "folder-select-visible", "folder-clear-selection"]) $(id).disabled = locked || foldersLoading;
+  $("folder-picker").disabled = locked || foldersLoading || !$("scan-account").value;
   $("folder-stop").disabled = locked || !folderActive || job.status === "stopping";
   $("folder-resume").hidden = !job || !["stopped", "interrupted", "blocked", "error"].includes(job.status);
   $("folder-resume").disabled = locked || Boolean(folderActive);
@@ -118,6 +119,11 @@ function activateTab(name, focus = false) {
   renderHelperNotice();
 }
 
+function jobFolderLabel(job) {
+  const folders = job.folders || [job.folder];
+  return folders.length > 1 ? t("folderJobLabel", "$1ほか（$2フォルダー）", [folderLabel(folders[0], folderChoices), folders.length]) : folderLabel(folders[0], folderChoices);
+}
+
 function renderFolder() {
   const job = latest.folderJob;
   $("folder-progress").hidden = !job;
@@ -130,8 +136,17 @@ function renderFolder() {
     folderFilterId = null; $("folder-only").checked = false; selected.clear(); page = 0;
   }
   const account = latest.accounts.find(account => account.id === job.folder.accountId)?.name || job.folder.accountId;
-  setText($("folder-title"), t("mail108", "フォルダー検査：$1 ／ $2$3", [account, folderLabel(job.folder, folderChoices), job.includeSubfolders ? t("mail109", "（サブフォルダーを含む）") : ""]));
+  setText($("folder-title"), t("mail108", "フォルダー検査：$1 ／ $2$3", [account, jobFolderLabel(job), job.includeSubfolders ? t("mail109", "（サブフォルダーを含む）") : ""]));
   const elapsed = Math.max(0, Math.floor(((job.finishedAt ? new Date(job.finishedAt).getTime() : Date.now()) - new Date(job.startedAt).getTime()) / 1000));
+  const targets = job.folders || [job.folder];
+  const labels = targets.map(folder => folderLabel(folder, folderChoices));
+  const signature = JSON.stringify(labels);
+  $("folder-job-targets").hidden = targets.length < 2;
+  if ($("folder-job-target-list").dataset.signature !== signature) {
+    $("folder-job-target-list").dataset.signature = signature;
+    $("folder-job-target-list").replaceChildren();
+    for (const label of labels) { const item = document.createElement("li"); item.textContent = label; $("folder-job-target-list").append(item); }
+  }
   const time = t("mail110", "経過$1分$2秒", [Math.floor(elapsed / 60), elapsed % 60]);
   if (job.total === null) {
     if (["collecting", "stopping"].includes(job.status)) $("folder-bar").removeAttribute("value");
@@ -160,6 +175,12 @@ function showFolderDialog(context) {
   activateTab("scan");
   const account = latest.accounts.find(account => account.id === context.folder.accountId)?.name || context.folder.accountId;
   setText($("folder-target"), [account, folderLabel(context.folder, folderChoices)].join(t("listSeparator", " ／ ")));
+  const folders = context.folders || [context.folder];
+  $("folder-target-list").replaceChildren();
+  for (const folder of folders) {
+    const item = document.createElement("li"); item.textContent = folderLabel(folder, folderChoices); $("folder-target-list").append(item);
+  }
+  setText($("folder-target"), t("folderConfirmCount", "$1：$2フォルダーを検査します。", [account, folders.length]));
   $("folder-subfolders").checked = false;
   const dialog = $("folder-dialog");
   dialog.returnValue = "cancel";
@@ -182,7 +203,7 @@ function showFolderDialog(context) {
 $("scan-folder").addEventListener("click", () => {
   let context;
   void action(async () => {
-    context = await request("folderContext", { folderId: $("scan-target").value });
+    context = await request("folderContext", { folderIds: [...selectedFolders] });
     return t("mail120", "対象とサブフォルダーの範囲を確認してください。");
   }).then(() => { if (context && !$("folder-dialog").open) showFolderDialog(context); });
 });
@@ -197,7 +218,7 @@ $("folder-resume").addEventListener("click", () => {
 $("folder-delete").addEventListener("click", () => {
   if (blocked() || !latest?.folderJob) return;
   const job = latest.folderJob, dialog = $("folder-delete-dialog");
-  setText($("folder-delete-target"), t("mail123", "$1 ／ 処理済み$2件", [folderLabel(job.folder, folderChoices), job.completed]));
+  setText($("folder-delete-target"), t("mail123", "$1 ／ 処理済み$2件", [jobFolderLabel(job), job.completed]));
   dialog.returnValue = "cancel";
   dialog.onclose = () => {
     if (dialog.returnValue !== "delete") return;
@@ -486,21 +507,36 @@ function renderConnection() {
   setText($("last-scan-result"), scan ? t("mail157", "最終実検査：$1 ／ $2 ／ $3", [new Date(scan.checkedAt).toLocaleString(uiLanguage()), scan.engine?.includes("(clamd)") ? "clamd" : "clamscan", scan.engine || ""]) : t("mail158", "実検査の記録はありません。"));
 }
 
+function matchingFolders() {
+  const query = $("folder-search").value.trim().toLocaleLowerCase(uiLanguage());
+  return folderChoices.filter(folder => folder.accountId === $("scan-account").value && (!query || folderLabel(folder).toLocaleLowerCase(uiLanguage()).includes(query)));
+}
 function renderFolderChoices() {
-  const accountId = $("scan-account").value, previous = $("scan-target").value;
-  $("scan-target").replaceChildren(new Option(t("mail159", "選択してください"), ""));
-  for (const folder of folderChoices.filter(folder => folder.accountId === accountId)) {
-    $("scan-target").append(new Option(folderLabel(folder), folder.id));
+  const folders = matchingFolders();
+  $("folder-options").replaceChildren();
+  for (const folder of folders) {
+    const label = document.createElement("label"), input = document.createElement("input");
+    input.type = "checkbox"; input.value = folder.id; input.checked = selectedFolders.has(folder.id);
+    input.addEventListener("change", () => {
+      if (input.checked) selectedFolders.add(folder.id); else selectedFolders.delete(folder.id);
+      renderTarget();
+    });
+    label.append(input, document.createTextNode(folderLabel(folder))); $("folder-options").append(label);
   }
-  if ([...$("scan-target").options].some(option => option.value === previous)) $("scan-target").value = previous;
+  $("folder-picker-empty").hidden = folders.length > 0;
+  setText($("folder-picker-empty"), $("scan-account").value ? t("folderNoMatches", "一致するフォルダーはありません。") : t("folderAccountFirst", "アカウントを選択してください。"));
   renderTarget();
 }
 function renderTarget() {
-  const folder = folderChoices.find(folder => folder.id === $("scan-target").value && folder.accountId === $("scan-account").value);
-  const account = latest?.accounts.find(account => account.id === folder?.accountId);
-  setText($("scan-target-label"), folder ? t("mail160", "検査対象：$1 ／ $2", [account?.name || folder.accountId, folderLabel(folder)]) : t("mail161", "検査するアカウントとフォルダーを選択してください。"));
+  const shown = matchingFolders(), shownIds = new Set(shown.map(folder => folder.id));
+  setText($("folder-selection-count"), t("folderSelectionCount", "選択$1フォルダー ／ 表示$2フォルダー（表示外の選択$3）", [selectedFolders.size, shown.length, [...selectedFolders].filter(id => !shownIds.has(id)).length]));
+  const account = latest?.accounts.find(account => account.id === $("scan-account").value);
+  setText($("scan-target-label"), selectedFolders.size ? t("folderConfirmCount", "$1：$2フォルダーを検査します。", [account?.name || "", selectedFolders.size]) : t("mail161", "検査するアカウントとフォルダーを選択してください。"));
   updateControls();
 }
+$("folder-search").addEventListener("input", renderFolderChoices);
+$("folder-select-visible").addEventListener("click", () => { for (const folder of matchingFolders()) selectedFolders.add(folder.id); renderFolderChoices(); });
+$("folder-clear-selection").addEventListener("click", () => { selectedFolders.clear(); renderFolderChoices(); });
 async function loadFolders() {
   if (foldersLoading) return;
   foldersLoading = true; updateControls();
@@ -508,6 +544,8 @@ async function loadFolders() {
   try {
     const response = await request("folderChoices");
     folderChoices = response.folders;
+    const availableIds = new Set(folderChoices.filter(folder => folder.accountId === $("scan-account").value).map(folder => folder.id));
+    for (const id of selectedFolders) if (!availableIds.has(id)) selectedFolders.delete(id);
     const previous = $("scan-account").value;
     $("scan-account").replaceChildren(new Option(t("mail159", "選択してください"), ""));
     for (const account of latest.accounts) $("scan-account").append(new Option(account.name, account.id));
@@ -519,8 +557,7 @@ async function loadFolders() {
   } catch (error) { setText($("folder-load-status"), t("mail165", "一覧を取得できませんでした。「一覧を更新」で再試行してください。") + error.message); }
   finally { foldersLoading = false; updateControls(); }
 }
-$("scan-account").addEventListener("change", () => { $("scan-target").value = ""; renderFolderChoices(); });
-$("scan-target").addEventListener("change", renderTarget);
+$("scan-account").addEventListener("change", () => { selectedFolders.clear(); $("folder-search").value = ""; renderFolderChoices(); });
 $("reload-folders").addEventListener("click", () => { void loadFolders(); });
 $("settings-form").addEventListener("submit", event => event.preventDefault());
 $("settings-form").addEventListener("change", () => {

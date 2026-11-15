@@ -2086,5 +2086,80 @@
   "listSeparator": {
     "message": " / ",
     "description": "画面内の情報を区切る文字"
+  },
+  "foldersInvalid": {
+    "message": "Select regular mail folders from the same account.",
+    "description": "同じアカウントの通常のメールフォルダーを選択してください。"
+  },
+  "folderSearch": {
+    "message": "Filter folders",
+    "description": "フォルダーを絞り込む"
+  },
+  "folderChoose": {
+    "message": "Folders to scan (select one or more)",
+    "description": "検査するフォルダー（複数選択可）"
+  },
+  "folderSelectVisible": {
+    "message": "Select visible folders",
+    "description": "表示中を選択"
+  },
+  "folderClearSelection": {
+    "message": "Deselect all folders",
+    "description": "すべての選択を解除"
+  },
+  "folderSelectionHint": {
+    "message": "Selections hidden by the filter are kept. Changing accounts clears the selection.",
+    "description": "絞り込みで隠れた選択も保持します。アカウントを変えると選択を解除します。"
+  },
+  "folderJobLabel": {
+    "message": "$ARG1$ and others ($ARG2$ folders)",
+    "description": "$1ほか（$2フォルダー）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "folderConfirmCount": {
+    "message": "$ARG1$: $ARG2$ folders to scan.",
+    "description": "$1：$2フォルダーを検査します。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "folderSelectionCount": {
+    "message": "Selected: $ARG1$ folders / Shown: $ARG2$ folders (selected but hidden: $ARG3$)",
+    "description": "選択$1フォルダー ／ 表示$2フォルダー（表示外の選択$3）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "folderNoMatches": {
+    "message": "No matching folders.",
+    "description": "一致するフォルダーはありません。"
+  },
+  "folderAccountFirst": {
+    "message": "Select an account.",
+    "description": "アカウントを選択してください。"
+  },
+  "folderTargets": {
+    "message": "Target folders",
+    "description": "複数フォルダー検査の対象一覧"
   }
 }

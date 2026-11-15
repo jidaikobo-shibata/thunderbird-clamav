@@ -844,3 +844,24 @@ test("startup discovers bundled helper update and toolbar opens setup", async ()
   h.api.browserAction.onClicked.listeners[0]();
   await settle(h, state => Boolean(state.setupRequest));
 });
+
+test("multi-folder confirmation scans the verified set and rejects changes or invalid selections", async () => {
+  const one = { id: "inbox", accountId: "one", path: "/Inbox", name: "受信トレイ" };
+  const two = { id: "spam", accountId: "one", path: "/Spam", name: "迷惑メール" };
+  const other = { id: "other", accountId: "two", path: "/Inbox", name: "受信トレイ" };
+  const h = await harness({ folderRefs: [one, two, other], mails: [{ ...mail(1), folder: one }, { ...mail(2), folder: two }] });
+  for (const folderIds of [[], ["inbox", "inbox"], ["inbox", "other"], ["missing"], [null]]) {
+    assert.equal((await h.send("folderContext", { folderIds })).ok, false);
+  }
+  const context = await h.send("folderContext", { folderIds: ["inbox", "spam"] });
+  assert.deepEqual(context.folders.map(folder => folder.id), ["inbox", "spam"]);
+  const get = h.api.folders.get;
+  h.api.folders.get = async id => id === "spam" ? { ...two, path: "/Moved" } : get(id);
+  assert.equal((await h.send("folderStart", { token: context.token, includeSubfolders: false })).ok, false);
+  assert.equal(h.rawReads.length, 0);
+  h.api.folders.get = get;
+  await h.send("folderStart", { token: context.token, includeSubfolders: false });
+  const state = await settledFolder(h, "completed");
+  assert.equal(state.folderJob.total, 2);
+  assert.deepEqual(h.rawReads, [1, 2]);
+});
