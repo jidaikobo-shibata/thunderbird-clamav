@@ -71,11 +71,11 @@ node --check thunderbird/dashboard.js
 python3 scripts/build_mail_check.py
 ```
 
-`dist/clam-mail-check-0.14.0.xpi` と、確認用の補助プログラム・登録JSONを
+`dist/clam-mail-check-0.14.1.xpi` と、確認用の補助プログラム・登録JSONを
 `dist/native/` に生成します。GUI不要の導入用ファイル
-`dist/clam-mail-check-installer-0.14.0.pyz` をXPIに同梱し、単体でも生成します。
+`dist/clam-mail-check-installer-0.14.1.pyz` をXPIに同梱し、単体でも生成します。
 旧GUI配布物も必要な場合だけ `--legacy-gui` を指定します。この場合はCコンパイラーが必要です。
-`dist/clam-mail-check-setup-0.14.0-linux-<architecture>.tar.gz` に生成します。
+`dist/clam-mail-check-setup-0.14.1-linux-<architecture>.tar.gz` に生成します。
 旧GUI配布物にはXPI・補助プログラム・GUIを同梱します。通常配布のXPIにもCLI導入用ファイルが入り、ソースのチェックアウトは不要です。
 生成しただけではインストールされません。旧GUIの起動用実行ファイルはビルドした
 アーキテクチャ向けです。今回の確認対象はUbuntu 26.04 / x86_64です。
@@ -156,14 +156,14 @@ Python 3と更新済みClamAVはOS側に必要で、Snap/Flatpakとの連携は�
 導入用ファイルはネットワークからコードを取得せず、同梱内容だけを設置します。
 
 1. XPIを旧版削除なしで上書きインストールし、「セットアップ」タブを開きます。
-2. 「導入用ファイルを保存」で`clam-mail-check-installer-0.14.0.pyz`を保存します。
+2. 「導入用ファイルを保存」で`clam-mail-check-installer-0.14.1.pyz`を保存します。
 3. 保存先のフォルダーをTerminalで開き、アドオンに表示されたコマンドを実行します。
    保存時の名前が変わった場合はコマンドのファイル名も合わせてください。
 4. Terminalに表示される変更先と影響を確認して承認します。root/sudoは不要で、実行を拒否します。
 5. アドオンに戻って「導入を確認」を押します。設置が有効で管理機能に対応した場合は版と状態が表示されます。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.14.0.pyz install
+python3 -I ./clam-mail-check-installer-0.14.1.pyz install
 ```
 
 導入済みなら同じコマンドで更新・修復します。既存の旧GUI方式の設置記録（format 1）も引き継ぎます。
@@ -188,7 +188,7 @@ python3 -I ./clam-mail-check-installer-0.14.0.pyz install
 5. 再びXPIをインストールし、上記の`install`コマンドと「導入を確認」で初回導入を試せます。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.14.0.pyz uninstall
+python3 -I ./clam-mail-check-installer-0.14.1.pyz uninstall
 ```
 
 対応済みならアドオン内の「アンインストール」で補助プログラムを削除し、続いてThunderbirdの確認で拡張自身を削除します。
@@ -203,7 +203,7 @@ python3 -I ./clam-mail-check-installer-0.14.0.pyz uninstall
 状態だけの確認（読み取りのみ）と、隔離した設置先での自動テストは次のとおりです。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.14.0.pyz status
+python3 -I ./clam-mail-check-installer-0.14.1.pyz status
 python3 -B -m unittest discover -s tests -p 'test_cli_setup.py'
 ```
 
@@ -279,7 +279,7 @@ python3 scripts/register_mail_host.py --install
 ユーザーのホーム配下に、次の2ファイルを新規作成します。
 
 ```text
-$HOME/.local/lib/clam-mail-check/0.14.0/host.py
+$HOME/.local/lib/clam-mail-check/0.14.1/host.py
 $HOME/.mozilla/native-messaging-hosts/local.clam_mail_check.json
 ```
 
@@ -637,3 +637,7 @@ XPIを削除せず上書きし、補助プログラムも更新してくださ�
 一括完全削除は最大1000通を開始前に照合し、確認後にも1通ずつ検証して処理します。準備の照合と実行の両方に進捗・中止を用意し、中止した未着手分は新しい確認なしに実行できません。削除失敗や内容変更は対象ごとに残して報告します。履歴消去は保存1回の短い処理です。
 
 一括再検査も最大1000通に対応し、進捗と中止を提供します。中止時は実行中の1通を終え、未着手の履歴は再検査前の結果に戻します。Thunderbird終了時にも未着手の履歴を復元し、実行中だった1通は未検査として残します。中断後の自動再開はしません。画面を閉じただけならバックグラウンドで継続します。
+
+
+## 履歴説明をヘルプへ移動（0.14.1）
+検査結果タブの「検査履歴」見出し、保持上限・保存内容・履歴消去の説明をヘルプへ移動しました。操作の確認画面は維持します。
