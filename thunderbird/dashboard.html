@@ -3,207 +3,207 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ClamAV メール検査</title>
+  <title data-i18n="mail212">ClamAV メール検査</title>
   <link rel="stylesheet" href="dashboard.css">
   <script type="module" src="dashboard.js"></script>
 </head>
 <body>
 <main>
-  <header><h1>ClamAV メール検査</h1><p>メールを検査し、結果を確認して必要なメールに対処します。</p></header>
+  <header><h1><span data-i18n="mail212">ClamAV メール検査</span></h1><p><span data-i18n="mail252">メールを検査し、結果を確認して必要なメールに対処します。</span></p></header>
   <div class="sticky-navigation">
-  <div class="tabs" role="tablist" aria-label="メール検査の画面">
-    <button type="button" role="tab" id="tab-scan" aria-selected="true" aria-controls="panel-scan">検査</button>
-    <button type="button" role="tab" id="tab-results" aria-selected="false" aria-controls="panel-results" tabindex="-1">検査結果</button>
-    <button type="button" role="tab" id="tab-settings" aria-selected="false" aria-controls="panel-settings" tabindex="-1">設定</button>
-    <button type="button" role="tab" id="tab-setup" aria-selected="false" aria-controls="panel-setup" tabindex="-1"><span>セットアップ</span><span id="setup-dot" class="notification-dot" aria-hidden="true" hidden></span></button>
-    <button type="button" role="tab" id="tab-uninstall" aria-selected="false" aria-controls="panel-uninstall" tabindex="-1">アンインストール</button>
-    <button type="button" role="tab" id="tab-help" aria-selected="false" aria-controls="panel-help" tabindex="-1">ヘルプ</button>
+  <div class="tabs" role="tablist" aria-label="メール検査の画面" data-i18n-aria-label="mail253">
+    <button type="button" role="tab" id="tab-scan" aria-selected="true" aria-controls="panel-scan"><span data-i18n="mail254">検査</span></button>
+    <button type="button" role="tab" id="tab-results" aria-selected="false" aria-controls="panel-results" tabindex="-1"><span data-i18n="mail141">検査結果</span></button>
+    <button type="button" role="tab" id="tab-settings" aria-selected="false" aria-controls="panel-settings" tabindex="-1"><span data-i18n="mail255">設定</span></button>
+    <button type="button" role="tab" id="tab-setup" aria-selected="false" aria-controls="panel-setup" tabindex="-1"><span><span data-i18n="mail106">セットアップ</span></span><span id="setup-dot" class="notification-dot" aria-hidden="true" hidden></span></button>
+    <button type="button" role="tab" id="tab-uninstall" aria-selected="false" aria-controls="panel-uninstall" tabindex="-1"><span data-i18n="mail241">アンインストール</span></button>
+    <button type="button" role="tab" id="tab-help" aria-selected="false" aria-controls="panel-help" tabindex="-1"><span data-i18n="mail256">ヘルプ</span></button>
   </div>
   </div>
   <p id="action-status" role="status" aria-live="polite"></p>
   <p id="issue" role="alert" hidden></p>
 
   <section id="panel-scan" role="tabpanel" aria-labelledby="tab-scan" tabindex="0">
-    <h2>検査</h2>
+    <h2><span data-i18n="mail254">検査</span></h2>
     <div class="scan-picker">
-      <label for="scan-account">アカウント<select id="scan-account"><option value="">選択してください</option></select></label>
-      <label for="scan-target">フォルダー<select id="scan-target"><option value="">選択してください</option></select></label>
-      <button type="button" id="reload-folders">一覧を更新</button>
+      <label for="scan-account"><span data-i18n="mail257">アカウント</span><select id="scan-account"><option value="" data-i18n="mail159">選択してください</option></select></label>
+      <label for="scan-target"><span data-i18n="mail258">フォルダー</span><select id="scan-target"><option value="" data-i18n="mail159">選択してください</option></select></label>
+      <button type="button" id="reload-folders"><span data-i18n="mail259">一覧を更新</span></button>
     </div>
-    <p id="scan-target-label">検査するアカウントとフォルダーを選択してください。</p>
+    <p id="scan-target-label"><span data-i18n="mail161">検査するアカウントとフォルダーを選択してください。</span></p>
     <p id="folder-load-status" role="status"></p>
-    <button type="button" id="scan-folder" disabled>検査範囲を確認して開始</button>
-    <p class="hint">サブフォルダーを含めるかは次の確認画面で選べます。メール単位の検査はThunderbirdのメール一覧の右クリックから利用できます。</p>
+    <button type="button" id="scan-folder" disabled><span data-i18n="mail260">検査範囲を確認して開始</span></button>
+    <p class="hint"><span data-i18n="mail261">サブフォルダーを含めるかは次の確認画面で選べます。メール単位の検査はThunderbirdのメール一覧の右クリックから利用できます。</span></p>
     <section id="folder-progress" class="folder-progress" aria-labelledby="folder-title" hidden>
-      <h3 id="folder-title">フォルダー検査</h3>
+      <h3 id="folder-title"><span data-i18n="mail262">フォルダー検査</span></h3>
       <p id="folder-status"></p><p id="folder-announcement" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></p>
-      <progress id="folder-bar" max="1" aria-label="フォルダー検査の処理済み件数"></progress>
+      <progress id="folder-bar" max="1" aria-label="フォルダー検査の処理済み件数" data-i18n-aria-label="mail263"></progress>
       <p id="folder-counts"></p><p id="folder-detail"></p>
-      <div class="actions"><button type="button" id="folder-results">この検査の結果を表示</button><button type="button" id="folder-stop">中止</button><button type="button" id="folder-resume">再開</button><button type="button" id="folder-delete">検査記録を削除</button></div>
+      <div class="actions"><button type="button" id="folder-results"><span data-i18n="mail264">この検査の結果を表示</span></button><button type="button" id="folder-stop"><span data-i18n="mail177">中止</span></button><button type="button" id="folder-resume"><span data-i18n="mail265">再開</span></button><button type="button" id="folder-delete"><span data-i18n="mail266">検査記録を削除</span></button></div>
       <p id="folder-retained" class="hint"></p>
     </section>
   </section>
   <section id="panel-results" role="tabpanel" aria-labelledby="tab-results" tabindex="0" hidden>
-    <h2>検査結果</h2>
+    <h2><span data-i18n="mail141">検査結果</span></h2>
     <div class="filters">
-      <label for="filter">状態<select id="filter">
-        <option value="all">すべて</option><option value="attention">確認が必要</option>
-        <option value="detected">脅威候補を検出</option><option value="incomplete">一部または全部が未検査</option>
-        <option value="error">検査失敗</option><option value="clean">未検出</option>
-        <option value="pending">検査待ち・検査中</option><option value="deleted">完全削除済み</option>
+      <label for="filter"><span data-i18n="mail267">状態</span><select id="filter">
+        <option value="all" data-i18n="mail268">すべて</option><option value="attention" data-i18n="mail269">確認が必要</option>
+        <option value="detected" data-i18n="mail087">脅威候補を検出</option><option value="incomplete" data-i18n="mail088">一部または全部が未検査</option>
+        <option value="error" data-i18n="mail089">検査失敗</option><option value="clean" data-i18n="mail086">未検出</option>
+        <option value="pending" data-i18n="mail270">検査待ち・検査中</option><option value="deleted" data-i18n="mail090">完全削除済み</option>
       </select></label>
-      <label for="account-filter">アカウント<select id="account-filter"><option value="all">すべて</option></select></label>
-      <label for="search">検索<input id="search" type="search" placeholder="差出人・件名・検出名など"></label>
-      <button type="button" id="reset-filters">絞り込みを解除</button>
+      <label for="account-filter"><span data-i18n="mail257">アカウント</span><select id="account-filter"><option value="all" data-i18n="mail268">すべて</option></select></label>
+      <label for="search"><span data-i18n="mail271">検索</span><input id="search" type="search" placeholder="差出人・件名・検出名など" data-i18n-placeholder="mail272"></label>
+      <button type="button" id="reset-filters"><span data-i18n="mail273">絞り込みを解除</span></button>
     </div>
-    <label id="folder-only-label" class="hint" hidden><input type="checkbox" id="folder-only"> 今回のフォルダー検査の結果だけを表示</label>
+    <label id="folder-only-label" class="hint" hidden><input type="checkbox" id="folder-only"> <span data-i18n="mail274">今回のフォルダー検査の結果だけを表示</span></label>
     <p id="summary" role="status" aria-live="polite"></p>
-    <div class="selection-bar" aria-label="選択した結果への操作">
-      <strong id="selected-count">選択0件</strong>
-      <button type="button" id="retry-selected" disabled>選択したメールを再検査</button>
-      <button type="button" id="delete-selected" class="danger" disabled>選択したメールを完全削除</button>
-      <button type="button" id="deselect" disabled>選択を解除</button>
+    <div class="selection-bar" aria-label="選択した結果への操作" data-i18n-aria-label="mail275">
+      <strong id="selected-count"><span data-i18n="mail276">選択0件</span></strong>
+      <button type="button" id="retry-selected" disabled><span data-i18n="mail277">選択したメールを再検査</span></button>
+      <button type="button" id="delete-selected" class="danger" disabled><span data-i18n="mail278">選択したメールを完全削除</span></button>
+      <button type="button" id="deselect" disabled><span data-i18n="mail279">選択を解除</span></button>
     </div>
-    <p class="hint">選択は表示中のページのみです。絞り込み・ページ変更で解除します。一括完全削除は、未検出・検出・未検査・失敗のメールを選択すると利用できます。初回は削除ボタンからThunderbirdの権限確認が表示されます。</p>
+    <p class="hint"><span data-i18n="mail280">選択は表示中のページのみです。絞り込み・ページ変更で解除します。一括完全削除は、未検出・検出・未検査・失敗のメールを選択すると利用できます。初回は削除ボタンからThunderbirdの権限確認が表示されます。</span></p>
     <p id="batch-progress" role="status" aria-live="polite" hidden></p>
-    <ul id="batch-report" aria-label="一括操作で処理できなかった結果" hidden></ul>
-    <div class="table-scroll" tabindex="0" role="region" aria-label="検査結果一覧（横にスクロールできます）">
+    <ul id="batch-report" aria-label="一括操作で処理できなかった結果" data-i18n-aria-label="mail281" hidden></ul>
+    <div class="table-scroll" tabindex="0" role="region" aria-label="検査結果一覧（横にスクロールできます）" data-i18n-aria-label="mail282">
       <table>
-        <caption class="visually-hidden">メールごとの検査結果。各行のチェックボックスで一括操作の対象を選べます。</caption>
-        <thead><tr><th scope="col" class="select-cell"><input type="checkbox" id="select-page" aria-label="このページの操作可能な結果をすべて選択"></th><th scope="col">状態・検査日時</th><th scope="col">差出人・件名</th><th scope="col">詳細</th><th scope="col">操作</th></tr></thead>
+        <caption class="visually-hidden"><span data-i18n="mail283">メールごとの検査結果。各行のチェックボックスで一括操作の対象を選べます。</span></caption>
+        <thead><tr><th scope="col" class="select-cell"><input type="checkbox" id="select-page" aria-label="このページの操作可能な結果をすべて選択" data-i18n-aria-label="mail284"></th><th scope="col"><span data-i18n="mail285">状態・検査日時</span></th><th scope="col"><span data-i18n="mail286">差出人・件名</span></th><th scope="col"><span data-i18n="mail287">詳細</span></th><th scope="col"><span data-i18n="mail288">操作</span></th></tr></thead>
         <tbody id="results"></tbody>
       </table>
     </div>
-    <p id="empty-results" hidden>該当する検査結果はありません。</p>
-    <nav class="pagination" aria-label="結果一覧のページ送り">
-      <button type="button" id="previous-page">前のページ</button><span id="page-label"></span><button type="button" id="next-page">次のページ</button>
+    <p id="empty-results" hidden><span data-i18n="mail289">該当する検査結果はありません。</span></p>
+    <nav class="pagination" aria-label="結果一覧のページ送り" data-i18n-aria-label="mail290">
+      <button type="button" id="previous-page"><span data-i18n="mail291">前のページ</span></button><span id="page-label"></span><button type="button" id="next-page"><span data-i18n="mail292">次のページ</span></button>
     </nav>
   </section>
 
   <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" tabindex="0" hidden>
-    <h2>設定</h2>
+    <h2><span data-i18n="mail255">設定</span></h2>
     <form id="settings-form">
-      <label><input id="enabled" type="checkbox"> 新着メールを自動検査する</label>
-      <p class="hint">先に対象アカウントを選択してください。対象をすべて外すと自動検査を停止します。</p>
-      <fieldset><legend>自動検査するアカウント</legend><div id="accounts"></div></fieldset>
-      <label><input id="notifications" type="checkbox"> 検出・検査不能・失敗をデスクトップ通知する</label>
-      <p class="hint">通知には差出人・件名を表示しません。変更後に届いた新着が対象です。</p>
-      <p id="settings-status" role="status" aria-live="polite">変更すると自動的に保存します。</p>
+      <label><input id="enabled" type="checkbox"> <span data-i18n="mail293">新着メールを自動検査する</span></label>
+      <p class="hint"><span data-i18n="mail294">先に対象アカウントを選択してください。対象をすべて外すと自動検査を停止します。</span></p>
+      <fieldset><legend><span data-i18n="mail295">自動検査するアカウント</span></legend><div id="accounts"></div></fieldset>
+      <label><input id="notifications" type="checkbox"> <span data-i18n="mail296">検出・検査不能・失敗をデスクトップ通知する</span></label>
+      <p class="hint"><span data-i18n="mail297">通知には差出人・件名を表示しません。変更後に届いた新着が対象です。</span></p>
+      <p id="settings-status" role="status" aria-live="polite"><span data-i18n="mail298">変更すると自動的に保存します。</span></p>
     </form>
-    <h3>検査履歴</h3>
-    <p>最大1000件を保持します。上限時は古い未検出・完全削除済みの結果から置き換えます。差出人・件名・検査結果をローカルに保存し、本文と添付は履歴に保存しません。</p>
-    <button type="button" id="clear">完了した検査履歴を消去</button>
-    <p class="hint">履歴の消去では、メール自体は削除されません。</p>
+    <h3><span data-i18n="mail299">検査履歴</span></h3>
+    <p><span data-i18n="mail300">最大1000件を保持します。上限時は古い未検出・完全削除済みの結果から置き換えます。差出人・件名・検査結果をローカルに保存し、本文と添付は履歴に保存しません。</span></p>
+    <button type="button" id="clear"><span data-i18n="mail301">完了した検査履歴を消去</span></button>
+    <p class="hint"><span data-i18n="mail302">履歴の消去では、メール自体は削除されません。</span></p>
 
   </section>
   <section id="panel-setup" role="tabpanel" aria-labelledby="tab-setup" tabindex="0" hidden>
-    <h2>セットアップ</h2>
+    <h2><span data-i18n="mail106">セットアップ</span></h2>
     <section class="connection-status" aria-labelledby="connection-title">
-      <h3 id="connection-title">ClamAVの状態</h3>
-      <p id="health-result">接続はまだ確認していません。</p>
-      <p id="last-scan-result">実検査の記録はありません。</p>
-      <button type="button" id="health">接続を再確認</button>
-      <p class="hint">接続確認ではメールの検査は行いません。表示は確認時点の結果です。</p>
+      <h3 id="connection-title"><span data-i18n="mail303">ClamAVの状態</span></h3>
+      <p id="health-result"><span data-i18n="mail304">接続はまだ確認していません。</span></p>
+      <p id="last-scan-result"><span data-i18n="mail158">実検査の記録はありません。</span></p>
+      <button type="button" id="health"><span data-i18n="mail305">接続を再確認</span></button>
+      <p class="hint"><span data-i18n="mail306">接続確認ではメールの検査は行いません。表示は確認時点の結果です。</span></p>
     </section>
     <section class="connection-status" aria-labelledby="installation-title">
-      <h3 id="installation-title" tabindex="-1">補助プログラムの導入・更新</h3>
-      <p id="installation-status" role="status">導入状態を確認しています。</p>
-      <p>Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。初回登録と接続不能時の修復は、同梱ファイルを保存してTerminalで実行します。GUIアプリやsudoは不要です。</p>
-      <button type="button" id="installer-download">導入用ファイルを保存</button>
-      <p>表示される名前でファイルを保存し、その保存先のフォルダーをTerminalで開いて次のコマンドを実行してください。名前が変わった場合はコマンドも合わせてください。導入済みなら更新・修復します。</p>
-      <pre><code id="installer-command"></code></pre><button type="button" id="copy-install">導入コマンドをコピー</button>
-      <div class="actions"><button type="button" id="helper-check">導入を確認</button><button type="button" id="helper-update" disabled hidden>補助プログラムを更新</button></div>
+      <h3 id="installation-title" tabindex="-1"><span data-i18n="mail307">補助プログラムの導入・更新</span></h3>
+      <p id="installation-status" role="status"><span data-i18n="mail308">導入状態を確認しています。</span></p>
+      <p><span data-i18n="mail309">Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。初回登録と接続不能時の修復は、同梱ファイルを保存してTerminalで実行します。GUIアプリやsudoは不要です。</span></p>
+      <button type="button" id="installer-download"><span data-i18n="mail310">導入用ファイルを保存</span></button>
+      <p><span data-i18n="mail311">表示される名前でファイルを保存し、その保存先のフォルダーをTerminalで開いて次のコマンドを実行してください。名前が変わった場合はコマンドも合わせてください。導入済みなら更新・修復します。</span></p>
+      <pre><code id="installer-command"></code></pre><button type="button" id="copy-install"><span data-i18n="mail312">導入コマンドをコピー</span></button>
+      <div class="actions"><button type="button" id="helper-check"><span data-i18n="mail313">導入を確認</span></button><button type="button" id="helper-update" disabled hidden><span data-i18n="mail231">補助プログラムを更新</span></button></div>
       <p id="helper-action-hint" class="hint"></p>
       <p id="installation-report"></p>
 
     </section>
   </section>
   <section id="panel-uninstall" role="tabpanel" aria-labelledby="tab-uninstall" tabindex="0" hidden>
-    <h2>アンインストール</h2>
-    <p>この拡張と補助プログラムを取り除く手順を案内します。このタブを開いただけでは、削除や設定変更は行いません。</p>
-    <h3>削除するもの・残すもの</h3>
-    <p>補助プログラムと接続登録を削除し、続いてThunderbirdの確認で拡張を削除します。拡張の設定・検査履歴・再開情報は失われる可能性があります。メール本体・アカウント・ClamAVは残ります。</p>
-    <p>先に自動検査をオフにし、実行中の検査を中止して停止を待ってください。再導入したい場合は、手順内で導入用ファイルを保存しておいてください。</p>
-    <button type="button" id="uninstall-start">アンインストールの手順へ</button>
+    <h2><span data-i18n="mail241">アンインストール</span></h2>
+    <p><span data-i18n="mail314">この拡張と補助プログラムを取り除く手順を案内します。このタブを開いただけでは、削除や設定変更は行いません。</span></p>
+    <h3><span data-i18n="mail315">削除するもの・残すもの</span></h3>
+    <p><span data-i18n="mail316">補助プログラムと接続登録を削除し、続いてThunderbirdの確認で拡張を削除します。拡張の設定・検査履歴・再開情報は失われる可能性があります。メール本体・アカウント・ClamAVは残ります。</span></p>
+    <p><span data-i18n="mail317">先に自動検査をオフにし、実行中の検査を中止して停止を待ってください。再導入したい場合は、手順内で導入用ファイルを保存しておいてください。</span></p>
+    <button type="button" id="uninstall-start"><span data-i18n="mail318">アンインストールの手順へ</span></button>
     <div id="uninstall-steps" hidden>
-      <h3>補助プログラムの削除</h3>
+      <h3><span data-i18n="mail319">補助プログラムの削除</span></h3>
       <p id="uninstall-status" role="status"></p>
-      <button type="button" id="uninstall-download">再導入・削除用ファイルを保存</button>
-      <button type="button" id="helper-uninstall" class="danger" disabled>補助プログラムを削除して次へ</button>
+      <button type="button" id="uninstall-download"><span data-i18n="mail320">再導入・削除用ファイルを保存</span></button>
+      <button type="button" id="helper-uninstall" class="danger" disabled><span data-i18n="mail321">補助プログラムを削除して次へ</span></button>
       <div id="cli-uninstall-guide" hidden>
-        <p>この環境では、先にTerminalで補助プログラムを削除します。上のファイルを保存し、その保存先のフォルダーをTerminalで開いて次のコマンドを実行してください。名前が変わった場合はコマンドも合わせてください。</p>
-        <pre><code id="uninstaller-command"></code></pre><button type="button" id="copy-uninstall">削除コマンドをコピー</button>
-        <p>Terminalに表示される変更内容を確認して承認してください。削除完了の表示を確認した後、下のチェックを入れて拡張の削除へ進みます。接続できないだけでは、削除済みとは判断しません。</p>
-        <label><input type="checkbox" id="manual-uninstall-ack">Terminalで補助プログラムの削除が完了したことを確認した</label>
-        <button type="button" id="finish-manual-uninstall" disabled>拡張の削除へ進む</button>
+        <p><span data-i18n="mail322">この環境では、先にTerminalで補助プログラムを削除します。上のファイルを保存し、その保存先のフォルダーをTerminalで開いて次のコマンドを実行してください。名前が変わった場合はコマンドも合わせてください。</span></p>
+        <pre><code id="uninstaller-command"></code></pre><button type="button" id="copy-uninstall"><span data-i18n="mail323">削除コマンドをコピー</span></button>
+        <p><span data-i18n="mail324">Terminalに表示される変更内容を確認して承認してください。削除完了の表示を確認した後、下のチェックを入れて拡張の削除へ進みます。接続できないだけでは、削除済みとは判断しません。</span></p>
+        <label><input type="checkbox" id="manual-uninstall-ack"><span data-i18n="mail325">Terminalで補助プログラムの削除が完了したことを確認した</span></label>
+        <button type="button" id="finish-manual-uninstall" disabled><span data-i18n="mail326">拡張の削除へ進む</span></button>
       </div>
-      <button type="button" id="remove-extension" hidden>拡張の削除を続ける</button>
+      <button type="button" id="remove-extension" hidden><span data-i18n="mail327">拡張の削除を続ける</span></button>
     </div>
     <p id="uninstall-report" role="status"></p>
   </section>
   <section id="panel-help" role="tabpanel" aria-labelledby="tab-help" tabindex="0" hidden>
-    <h2>ヘルプ</h2>
-    <h3>セットアップ</h3>
+    <h2><span data-i18n="mail256">ヘルプ</span></h2>
+    <h3><span data-i18n="mail106">セットアップ</span></h3>
     <ol>
-      <li>「セットアップ」タブで補助プログラムの導入状態を確認します。</li>
-      <li>初回または接続できない場合は、導入用ファイルを保存し、その保存先のフォルダーをTerminalで開いて表示されたコマンドを実行します。</li>
-      <li>変更内容を確認して承認し、完了後に「導入を確認」を押します。対応済みなら、以後の更新・修復はアドオン内で実行できます。</li>
+      <li><span data-i18n="mail328">「セットアップ」タブで補助プログラムの導入状態を確認します。</span></li>
+      <li><span data-i18n="mail329">初回または接続できない場合は、導入用ファイルを保存し、その保存先のフォルダーをTerminalで開いて表示されたコマンドを実行します。</span></li>
+      <li><span data-i18n="mail330">変更内容を確認して承認し、完了後に「導入を確認」を押します。対応済みなら、以後の更新・修復はアドオン内で実行できます。</span></li>
     </ol>
-    <p>Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。ファイルの保存だけでは設置・削除は行いません。sudoは不要です。</p>
-    <button type="button" data-open-tab="setup">セットアップを開く</button>
-    <h3>アンインストール</h3>
+    <p><span data-i18n="mail331">Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。ファイルの保存だけでは設置・削除は行いません。sudoは不要です。</span></p>
+    <button type="button" data-open-tab="setup"><span data-i18n="mail209">セットアップを開く</span></button>
+    <h3><span data-i18n="mail241">アンインストール</span></h3>
     <ol>
-      <li>自動検査をオフにし、実行中の検査を中止して停止を待ちます。</li>
-      <li>「アンインストール」タブで削除するもの・残すものを確認し、「アンインストールの手順へ」を押します。</li>
-      <li>対応済みの補助プログラムは画面内で確認して削除します。旧版などの場合だけ、手順の途中でTerminalの操作を案内します。</li>
-      <li>補助プログラムの削除後、Thunderbirdの確認画面で拡張を削除します。取り消した場合は同じタブから再試行できます。</li>
+      <li><span data-i18n="mail332">自動検査をオフにし、実行中の検査を中止して停止を待ちます。</span></li>
+      <li><span data-i18n="mail333">「アンインストール」タブで削除するもの・残すものを確認し、「アンインストールの手順へ」を押します。</span></li>
+      <li><span data-i18n="mail334">対応済みの補助プログラムは画面内で確認して削除します。旧版などの場合だけ、手順の途中でTerminalの操作を案内します。</span></li>
+      <li><span data-i18n="mail335">補助プログラムの削除後、Thunderbirdの確認画面で拡張を削除します。取り消した場合は同じタブから再試行できます。</span></li>
     </ol>
-    <p>拡張の設定・履歴・再開情報は失われる可能性があります。メール・アカウント・ClamAVは残ります。補助プログラムはこのOSユーザー共通のため、他のThunderbirdプロファイルも接続できなくなります。再導入用のファイルを先に保存しておけます。</p>
-    <p>Thunderbirdのアドオン一覧で直接拡張を削除しても、補助プログラムは残ります。両方を取り除く場合は、この拡張の「アンインストール」タブから進めてください。通常のバージョンアップでは旧版を削除せず、XPIを上書きインストールします。</p>
-    <button type="button" data-open-tab="uninstall">アンインストールを開く</button>
-    <h3>検査範囲</h3>
-    <p>受信後にメール全体を検査します。検査完了前の閲覧や添付操作は止めません。メール本文・添付は外部サービスに送信しません。暗号化メールは復号せず、未検査として扱います。</p>
-    <p>上限は1通25MiB、展開後の合計100MiB、検査時間は最大120秒です。専用clamdの初回起動には、別に最大60秒かかります。ClamAVの定義が3日超古い場合は検査失敗として扱います。URLの評判によるフィッシング判定は無効です。</p>
-    <h3>状態の意味</h3>
-    <p>未検出は脅威を検出しなかった状態で、安全の保証ではありません。「確認が必要」には検出・未検査・失敗が含まれます。</p>
-    <h3>検査と結果への対処</h3>
-    <p>「検査」で対象を選び、範囲を確認して開始します。中止・再開と進捗も同じタブに表示します。「検査結果」では絞り込み、再検査、確認付きの完全削除ができます。</p>
-    <p>個別メールやフォルダーの右クリックからも検査できます。フォルダーを右クリックした場合は、選んだ対象の確認画面が開きます。</p>
+    <p><span data-i18n="mail336">拡張の設定・履歴・再開情報は失われる可能性があります。メール・アカウント・ClamAVは残ります。補助プログラムはこのOSユーザー共通のため、他のThunderbirdプロファイルも接続できなくなります。再導入用のファイルを先に保存しておけます。</span></p>
+    <p><span data-i18n="mail337">Thunderbirdのアドオン一覧で直接拡張を削除しても、補助プログラムは残ります。両方を取り除く場合は、この拡張の「アンインストール」タブから進めてください。通常のバージョンアップでは旧版を削除せず、XPIを上書きインストールします。</span></p>
+    <button type="button" data-open-tab="uninstall"><span data-i18n="mail338">アンインストールを開く</span></button>
+    <h3><span data-i18n="mail339">検査範囲</span></h3>
+    <p><span data-i18n="mail340">受信後にメール全体を検査します。検査完了前の閲覧や添付操作は止めません。メール本文・添付は外部サービスに送信しません。暗号化メールは復号せず、未検査として扱います。</span></p>
+    <p><span data-i18n="mail341">上限は1通25MiB、展開後の合計100MiB、検査時間は最大120秒です。専用clamdの初回起動には、別に最大60秒かかります。ClamAVの定義が3日超古い場合は検査失敗として扱います。URLの評判によるフィッシング判定は無効です。</span></p>
+    <h3><span data-i18n="mail342">状態の意味</span></h3>
+    <p><span data-i18n="mail343">未検出は脅威を検出しなかった状態で、安全の保証ではありません。「確認が必要」には検出・未検査・失敗が含まれます。</span></p>
+    <h3><span data-i18n="mail344">検査と結果への対処</span></h3>
+    <p><span data-i18n="mail345">「検査」で対象を選び、範囲を確認して開始します。中止・再開と進捗も同じタブに表示します。「検査結果」では絞り込み、再検査、確認付きの完全削除ができます。</span></p>
+    <p><span data-i18n="mail346">個別メールやフォルダーの右クリックからも検査できます。フォルダーを右クリックした場合は、選んだ対象の確認画面が開きます。</span></p>
   </section>
 
 </main>
 <dialog id="helper-dialog" aria-labelledby="helper-dialog-title" aria-describedby="helper-dialog-detail">
   <form method="dialog"><h2 id="helper-dialog-title"></h2><p id="helper-dialog-detail"></p>
-    <ul id="helper-paths"></ul><label><input type="checkbox" id="helper-ack">対象と影響を確認した</label>
-    <div class="actions"><button id="helper-cancel" value="cancel" autofocus>キャンセル</button><button id="helper-confirm" value="apply" disabled>実行</button></div>
+    <ul id="helper-paths"></ul><label><input type="checkbox" id="helper-ack"><span data-i18n="mail347">対象と影響を確認した</span></label>
+    <div class="actions"><button id="helper-cancel" value="cancel" autofocus><span data-i18n="mail348">キャンセル</span></button><button id="helper-confirm" value="apply" disabled><span data-i18n="mail349">実行</span></button></div>
   </form>
 </dialog>
 <dialog id="folder-dialog" aria-labelledby="folder-dialog-title" aria-describedby="folder-warning">
   <form method="dialog">
-    <h2 id="folder-dialog-title">フォルダーを検査</h2>
+    <h2 id="folder-dialog-title"><span data-i18n="mail350">フォルダーを検査</span></h2>
     <p id="folder-target"></p>
-    <label><input type="checkbox" id="folder-subfolders"> サブフォルダーも含める</label>
-    <p id="folder-warning">先にThunderbirdの受信・同期を完了してください。対象一覧を取得してから1通ずつ検査します。IMAPでは本文の取得に通信が発生する場合があります。大きなフォルダーは時間がかかります。</p>
-    <p>進捗は検査タブに表示します。中止時は実行中の処理を終えて停止します。Thunderbird終了後は自動再開しません。「再開」で処理済みメールを照合して続行できます。新しい検査を開始すると、前回の再開情報を置き換えます。</p>
-    <div class="actions"><button id="folder-cancel" value="cancel" autofocus>キャンセル</button><button id="folder-confirm" value="start">検査を開始</button></div>
+    <label><input type="checkbox" id="folder-subfolders"> <span data-i18n="mail351">サブフォルダーも含める</span></label>
+    <p id="folder-warning"><span data-i18n="mail352">先にThunderbirdの受信・同期を完了してください。対象一覧を取得してから1通ずつ検査します。IMAPでは本文の取得に通信が発生する場合があります。大きなフォルダーは時間がかかります。</span></p>
+    <p><span data-i18n="mail353">進捗は検査タブに表示します。中止時は実行中の処理を終えて停止します。Thunderbird終了後は自動再開しません。「再開」で処理済みメールを照合して続行できます。新しい検査を開始すると、前回の再開情報を置き換えます。</span></p>
+    <div class="actions"><button id="folder-cancel" value="cancel" autofocus><span data-i18n="mail348">キャンセル</span></button><button id="folder-confirm" value="start"><span data-i18n="mail354">検査を開始</span></button></div>
   </form>
 </dialog>
 <dialog id="folder-delete-dialog" aria-labelledby="folder-delete-title" aria-describedby="folder-delete-warning">
   <form method="dialog">
-    <h2 id="folder-delete-title">フォルダー検査の記録を削除</h2>
+    <h2 id="folder-delete-title"><span data-i18n="mail355">フォルダー検査の記録を削除</span></h2>
     <p id="folder-delete-target"></p>
-    <p id="folder-delete-warning">進捗と再開用の記録を削除します。この検査は再開できなくなります。メール本体と各メールの検査結果は削除しません。</p>
-    <div class="actions"><button id="folder-delete-cancel" value="cancel" autofocus>キャンセル</button><button id="folder-delete-confirm" value="delete">検査記録を削除</button></div>
+    <p id="folder-delete-warning"><span data-i18n="mail356">進捗と再開用の記録を削除します。この検査は再開できなくなります。メール本体と各メールの検査結果は削除しません。</span></p>
+    <div class="actions"><button id="folder-delete-cancel" value="cancel" autofocus><span data-i18n="mail348">キャンセル</span></button><button id="folder-delete-confirm" value="delete"><span data-i18n="mail266">検査記録を削除</span></button></div>
   </form>
 </dialog>
 <dialog id="delete-dialog" aria-labelledby="delete-title" aria-describedby="delete-warning">
   <form method="dialog">
-    <h2 id="delete-title">メールの完全削除</h2>
-    <p id="delete-warning">ごみ箱を経由せず完全に削除します。元には戻せません。IMAPではサーバーと他端末にも反映されます。</p>
+    <h2 id="delete-title"><span data-i18n="mail357">メールの完全削除</span></h2>
+    <p id="delete-warning"><span data-i18n="mail358">ごみ箱を経由せず完全に削除します。元には戻せません。IMAPではサーバーと他端末にも反映されます。</span></p>
     <p id="delete-count"></p>
     <div class="dialog-targets"><ol id="delete-targets"></ol></div>
-    <label><input type="checkbox" id="delete-ack"> 上の対象を確認し、元に戻せないことを理解しました</label>
-    <div class="actions"><button id="delete-cancel" value="cancel" autofocus>キャンセル</button><button id="delete-confirm" class="danger" value="delete" disabled>完全に削除する</button></div>
+    <label><input type="checkbox" id="delete-ack"> <span data-i18n="mail359">上の対象を確認し、元に戻せないことを理解しました</span></label>
+    <div class="actions"><button id="delete-cancel" value="cancel" autofocus><span data-i18n="mail348">キャンセル</span></button><button id="delete-confirm" class="danger" value="delete" disabled><span data-i18n="mail360">完全に削除する</span></button></div>
   </form>
 </dialog>
 </body>

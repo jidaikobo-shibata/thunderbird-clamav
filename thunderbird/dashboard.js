@@ -1,7 +1,10 @@
+import { t, uiLanguage, localizeDocument, localizeDetail } from "./i18n.mjs";
 import { installationUI, helperNotice } from "./installation.mjs";
 import { LABELS, needsAttention } from "./core.mjs";
 import { selectable, canDelete, filterRecords, resultPage } from "./results.mjs";
 import { FOLDER_STATES } from "./folder-scan.mjs";
+
+localizeDocument();
 
 const $ = id => document.getElementById(id);
 let latest, initialized = false, refreshing = false, busy = false, page = 0;
@@ -15,7 +18,7 @@ let folderChoices = [], foldersLoading = false, settingsSaving = false;
 
 async function request(type, values = {}) {
   const response = await messenger.runtime.sendMessage({ ...values, type });
-  if (!response?.ok) throw new Error(response?.error || "拡張の処理に接続できませんでした。");
+  if (!response?.ok) throw new Error(response?.error || t("mail102", "拡張の処理に接続できませんでした。"));
   return response;
 }
 function setText(element, text) {
@@ -26,7 +29,7 @@ const installer = installationUI({ request, action, latest: () => latest, busy: 
 function selection() { return visible.filter(record => selected.has(record.key)); }
 function updateControls() {
   const locked = blocked() || Boolean(latest?.helperRemoved), chosen = selection();
-  setText($("selected-count"), `選択${chosen.length}件`);
+  setText($("selected-count"), t("mail103", "選択$1件", [chosen.length]));
   $("retry-selected").disabled = locked || !chosen.length;
   $("delete-selected").disabled = locked || !chosen.length || !chosen.every(canDelete);
   $("deselect").disabled = locked || !chosen.length;
@@ -69,9 +72,9 @@ async function action(callback, success) {
   busy = true;
   updateControls();
   try {
-    setText($("action-status"), "処理しています。");
+    setText($("action-status"), t("mail104", "処理しています。"));
     const message = await callback();
-    setText($("action-status"), success || message || "処理が完了しました。");
+    setText($("action-status"), success || message || t("mail105", "処理が完了しました。"));
     await refresh();
   } catch (error) { setText($("action-status"), error.message); }
   finally {
@@ -92,8 +95,8 @@ function renderHelperNotice() {
   const tab = $("tab-setup"), dot = $("setup-dot");
   dot.hidden = !notice;
   dot.dataset.kind = notice?.kind || "";
-  tab.title = notice?.message || "セットアップ";
-  tab.setAttribute("aria-label", notice ? `セットアップ：${notice.message}` : "セットアップ");
+  tab.title = notice?.message || t("mail106", "セットアップ");
+  tab.setAttribute("aria-label", notice ? t("mail107", "セットアップ：$1", [notice.message]) : t("mail106", "セットアップ"));
 }
 function openSetup() {
   userNavigated = true;
@@ -126,36 +129,36 @@ function renderFolder() {
     folderFilterId = null; $("folder-only").checked = false; selected.clear(); page = 0;
   }
   const account = latest.accounts.find(account => account.id === job.folder.accountId)?.name || job.folder.accountId;
-  setText($("folder-title"), `フォルダー検査：${account} ／ ${job.folder.path}${job.includeSubfolders ? "（サブフォルダーを含む）" : ""}`);
+  setText($("folder-title"), t("mail108", "フォルダー検査：$1 ／ $2$3", [account, job.folder.path, job.includeSubfolders ? t("mail109", "（サブフォルダーを含む）") : ""]));
   const elapsed = Math.max(0, Math.floor(((job.finishedAt ? new Date(job.finishedAt).getTime() : Date.now()) - new Date(job.startedAt).getTime()) / 1000));
-  const time = `経過${Math.floor(elapsed / 60)}分${elapsed % 60}秒`;
+  const time = t("mail110", "経過$1分$2秒", [Math.floor(elapsed / 60), elapsed % 60]);
   if (job.total === null) {
     if (["collecting", "stopping"].includes(job.status)) $("folder-bar").removeAttribute("value");
     else { $("folder-bar").max = 1; $("folder-bar").value = 0; }
-    setText($("folder-status"), `${FOLDER_STATES[job.status]} ／ 対象${job.discovered}件を確認 ／ ${time}`);
+    setText($("folder-status"), t("mail111", "$1 ／ 対象$2件を確認 ／ $3", [FOLDER_STATES[job.status], job.discovered, time]));
   } else {
     $("folder-bar").max = Math.max(1, job.total);
     $("folder-bar").value = job.total === 0 && job.status === "completed" ? 1 : job.completed;
     const percent = job.total ? (100 * job.completed / job.total).toFixed(1) : "100.0";
     const waiting = Math.max(0, job.total - job.completed - job.scanning);
-    setText($("folder-status"), `${FOLDER_STATES[job.status]} ／ 処理済み${job.completed} / ${job.total}件（${percent}%） ／ 検査中${job.scanning}件・未処理${waiting}件 ／ ${time}`);
+    setText($("folder-status"), t("mail112", "$1 ／ 処理済み$2 / $3件（$4%） ／ 検査中$5件・未処理$6件 ／ $7", [FOLDER_STATES[job.status], job.completed, job.total, percent, job.scanning, waiting, time]));
   }
-  setText($("folder-counts"), `未検出${job.counts.clean}件 ／ 検出${job.counts.detected}件 ／ 未検査${job.counts.incomplete}件 ／ 失敗${job.counts.error}件`);
+  setText($("folder-counts"), t("mail113", "未検出$1件 ／ 検出$2件 ／ 未検査$3件 ／ 失敗$4件", [job.counts.clean, job.counts.detected, job.counts.incomplete, job.counts.error]));
   const milestone = `${job.id}:${job.status}:${Math.floor(job.completed / 10)}`;
   if (milestone !== folderAnnouncement) {
     folderAnnouncement = milestone;
-    setText($("folder-announcement"), `フォルダー検査 ${FOLDER_STATES[job.status]}。処理済み${job.completed}件${job.total === null ? "" : `、対象${job.total}件`}。`);
+    setText($("folder-announcement"), t("mail114", "フォルダー検査 $1。処理済み$2件$3。", [FOLDER_STATES[job.status], job.completed, job.total === null ? "" : t("mail115", "、対象$1件", [job.total])]));
   }
-  setText($("folder-detail"), job.detail + (job.resumeCount ? " 再開時は現在のフォルダーと照合します。総件数はこれまでの処理済み件数と、今回の未処理件数の合計です。" : "") + (job.skippedFolders ? ` 対象外のフォルダー：${job.skippedFolders}件。` : ""));
+  setText($("folder-detail"), job.detail + (job.resumeCount ? t("mail116", " 再開時は現在のフォルダーと照合します。総件数はこれまでの処理済み件数と、今回の未処理件数の合計です。") : "") + (job.skippedFolders ? t("mail117", " 対象外のフォルダー：$1件。", [job.skippedFolders]) : ""));
   const retained = latest.records.filter(record => record.folderJobId === job.id).length;
-  setText($("folder-retained"), `この検査の履歴を${retained}件保持しています。履歴上限は1000件で、未検出・完全削除済みの古い履歴から入れ替えます。進捗の処理件数は別に保持します。検出・未検査・失敗の履歴で上限に達した場合は停止します。`);
+  setText($("folder-retained"), t("mail118", "この検査の履歴を$1件保持しています。履歴上限は1000件で、未検出・完全削除済みの古い履歴から入れ替えます。進捗の処理件数は別に保持します。検出・未検査・失敗の履歴で上限に達した場合は停止します。", [retained]));
 }
 
 function showFolderDialog(context) {
   seenFolderRequest = context.token;
   activateTab("scan");
   const account = latest.accounts.find(account => account.id === context.folder.accountId)?.name || context.folder.accountId;
-  setText($("folder-target"), `${account} ／ ${context.folder.path}`);
+  setText($("folder-target"), [account, context.folder.path].join(t("listSeparator", " ／ ")));
   $("folder-subfolders").checked = false;
   const dialog = $("folder-dialog");
   dialog.returnValue = "cancel";
@@ -168,7 +171,7 @@ function showFolderDialog(context) {
     void action(async () => {
       await request("folderStart", { token: context.token, includeSubfolders });
       folderFilterId = null; $("folder-only").checked = false; selected.clear(); page = 0;
-      return "フォルダー検査を開始しました。進捗パネルで確認できます。";
+      return t("mail119", "フォルダー検査を開始しました。進捗パネルで確認できます。");
     });
   }, { once: true });
   dialog.showModal();
@@ -179,25 +182,25 @@ $("scan-folder").addEventListener("click", () => {
   let context;
   void action(async () => {
     context = await request("folderContext", { folderId: $("scan-target").value });
-    return "対象とサブフォルダーの範囲を確認してください。";
+    return t("mail120", "対象とサブフォルダーの範囲を確認してください。");
   }).then(() => { if (context && !$("folder-dialog").open) showFolderDialog(context); });
 });
 $("folder-stop").addEventListener("click", () => {
   const jobId = latest?.folderJob?.id;
-  void action(() => request("folderStop", { jobId }), "中止を受け付けました。実行中の処理を終えて停止します。");
+  void action(() => request("folderStop", { jobId }), t("mail121", "中止を受け付けました。実行中の処理を終えて停止します。"));
 });
 $("folder-resume").addEventListener("click", () => {
   const jobId = latest?.folderJob?.id;
-  void action(() => request("folderResume", { jobId }), "再開を受け付けました。処理済みメールと照合しています。");
+  void action(() => request("folderResume", { jobId }), t("mail122", "再開を受け付けました。処理済みメールと照合しています。"));
 });
 $("folder-delete").addEventListener("click", () => {
   if (blocked() || !latest?.folderJob) return;
   const job = latest.folderJob, dialog = $("folder-delete-dialog");
-  setText($("folder-delete-target"), `${job.folder.path} ／ 処理済み${job.completed}件`);
+  setText($("folder-delete-target"), t("mail123", "$1 ／ 処理済み$2件", [job.folder.path, job.completed]));
   dialog.returnValue = "cancel";
   dialog.onclose = () => {
     if (dialog.returnValue !== "delete") return;
-    void action(() => request("folderDelete", { jobId: job.id }), "フォルダー検査の記録を削除しました。メールと検査結果は残っています。");
+    void action(() => request("folderDelete", { jobId: job.id }), t("mail124", "フォルダー検査の記録を削除しました。メールと検査結果は残っています。"));
   };
   dialog.showModal();
   $("folder-delete-cancel").focus();
@@ -229,14 +232,14 @@ for (const button of document.querySelectorAll("[data-open-tab]")) {
 function confirmDeletion(targets) {
   const dialog = $("delete-dialog");
   $("delete-targets").replaceChildren();
-  setText($("delete-count"), `完全削除する対象：${targets.length}件（下の全件をご確認ください）`);
+  setText($("delete-count"), t("mail125", "完全削除する対象：$1件（下の全件をご確認ください）", [targets.length]));
   for (const target of targets) {
     const item = document.createElement("li");
     const subject = item.appendChild(document.createElement("strong"));
     subject.textContent = target.subject;
     const detail = item.appendChild(document.createElement("div"));
     const account = latest.accounts.find(account => account.id === target.accountId)?.name || target.accountId;
-    detail.textContent = [target.author, account, target.folder, LABELS[target.status], target.signatures.join(" / ")].filter(Boolean).join(" ／ ");
+    detail.textContent = [target.author, account, target.folder, LABELS[target.status], target.signatures.join(" / ")].filter(Boolean).join(t("listSeparator", " ／ "));
     $("delete-targets").append(item);
   }
   $("delete-ack").checked = false;
@@ -254,20 +257,20 @@ async function requireDeletePermission() {
   // Called synchronously from the delete click, before any other awaited work.
   // Already-granted permissions resolve without another permission prompt.
   const granted = await messenger.permissions.request({ permissions: ["messagesDelete"] });
-  if (!granted) throw new Error("完全削除が許可されなかったため、メールは削除していません。");
+  if (!granted) throw new Error(t("mail126", "完全削除が許可されなかったため、メールは削除していません。"));
 }
 
 async function deleteOne(key) {
   await requireDeletePermission();
-  setText($("action-status"), "削除対象を照合しています。");
+  setText($("action-status"), t("mail127", "削除対象を照合しています。"));
   const target = await request("prepareDelete", { key });
   if (!await confirmDeletion([target])) {
     await request("cancelDelete", { token: target.token });
-    return "削除をキャンセルしました。";
+    return t("mail128", "削除をキャンセルしました。");
   }
   await request("deletePermanently", { key, token: target.token });
   selected.delete(key);
-  return "対象メールを完全削除しました。";
+  return t("mail129", "対象メールを完全削除しました。");
 }
 
 function makeRow(record) {
@@ -288,24 +291,24 @@ function makeRow(record) {
     parts[key].className = key === "location" ? "mail-location" : key;
   }
   const details = cells[3].appendChild(document.createElement("details"));
-  details.appendChild(document.createElement("summary")).textContent = "検出名・検査情報";
+  details.appendChild(document.createElement("summary")).textContent = t("mail130", "検出名・検査情報");
   for (const key of ["signatures", "engine"]) {
     parts[key] = details.appendChild(document.createElement("span"));
     parts[key].className = key;
   }
   const open = cells[4].appendChild(document.createElement("button"));
-  open.textContent = "メールを開く";
+  open.textContent = t("mail131", "メールを開く");
   open.addEventListener("click", () => {
     if (blocked()) return;
     const current = latest.records.find(item => item.key === record.key);
-    if (current?.status === "detected" && !confirm("脅威候補を検出したメールを開きます。本文が表示されます。添付ファイルやリンクは開かずに確認してください。")) return;
-    void action(() => request("open", { key: record.key }), "Thunderbirdで対象メールを開きました。");
+    if (current?.status === "detected" && !confirm(t("mail132", "脅威候補を検出したメールを開きます。本文が表示されます。添付ファイルやリンクは開かずに確認してください。"))) return;
+    void action(() => request("open", { key: record.key }), t("mail133", "Thunderbirdで対象メールを開きました。"));
   });
   const retry = cells[4].appendChild(document.createElement("button"));
-  retry.textContent = "再検査";
-  retry.addEventListener("click", () => { void action(() => request("retry", { key: record.key }), "再検査を受け付けました。"); });
+  retry.textContent = t("mail134", "再検査");
+  retry.addEventListener("click", () => { void action(() => request("retry", { key: record.key }), t("mail135", "再検査を受け付けました。")); });
   const remove = cells[4].appendChild(document.createElement("button"));
-  remove.textContent = "完全削除";
+  remove.textContent = t("mail136", "完全削除");
   remove.className = "danger";
   remove.addEventListener("click", () => { void action(() => deleteOne(record.key)); });
   return { row, parts, checkbox, open, retry, remove };
@@ -329,35 +332,35 @@ function renderRecords() {
     const entry = rows.get(record.key) || makeRow(record);
     rows.set(record.key, entry);
     entry.row.dataset.status = record.status;
-    setText(entry.parts.state, LABELS[record.status] || "不明");
+    setText(entry.parts.state, LABELS[record.status] || t("mail137", "不明"));
     entry.parts.time.dateTime = record.updatedAt;
-    setText(entry.parts.time, new Date(record.updatedAt).toLocaleString());
-    setText(entry.parts.sender, record.locator.author || "差出人なし");
-    setText(entry.parts.subject, record.locator.subject || "件名なし");
+    setText(entry.parts.time, new Date(record.updatedAt).toLocaleString(uiLanguage()));
+    setText(entry.parts.sender, record.locator.author || t("mail021", "差出人なし"));
+    setText(entry.parts.subject, record.locator.subject || t("mail022", "件名なし"));
     const account = latest.accounts.find(account => account.id === record.locator.accountId)?.name || record.locator.accountId || "";
-    setText(entry.parts.location, [account, record.locator.folder?.path].filter(Boolean).join(" ／ "));
-    setText(entry.parts.detail, record.detail || "");
+    setText(entry.parts.location, [account, record.locator.folder?.path].filter(Boolean).join(t("listSeparator", " ／ ")));
+    setText(entry.parts.detail, localizeDetail(record));
     setText(entry.parts.signatures, (record.signatures || []).join(" / "));
     setText(entry.parts.engine, record.engine || "");
     entry.remove.hidden = !selectable(record);
-    for (const [button, label] of [[entry.checkbox, "一括操作の対象に選択"], [entry.remove, "ごみ箱を経由せず完全削除"], [entry.open, "メールを開く"], [entry.retry, "再検査"]]) {
-      button.setAttribute("aria-label", `${record.locator.subject || "件名なし"}：${label}`);
+    for (const [button, label] of [[entry.checkbox, t("mail138", "一括操作の対象に選択")], [entry.remove, t("mail139", "ごみ箱を経由せず完全削除")], [entry.open, t("mail131", "メールを開く")], [entry.retry, t("mail134", "再検査")]]) {
+      button.setAttribute("aria-label", t("namedDetail", "$1：$2", [record.locator.subject || t("mail022", "件名なし"), label]));
     }
     const at = $("results").children[index];
     if (at !== entry.row) $("results").insertBefore(entry.row, at || null);
   }
   const waiting = latest.records.filter(record => record.status === "queued").length;
   const attention = latest.records.filter(needsAttention).length;
-  setText($("tab-results"), attention ? `検査結果（${attention}）` : "検査結果");
-  $("tab-results").setAttribute("aria-label", `検査結果、確認が必要${attention}件`);
-  $("tab-results").title = `確認が必要${attention}件`;
-  setText($("summary"), `履歴${latest.records.length}件 ／ 確認が必要${attention}件 ／ 検査待ち${waiting}件 ／ 絞り込み結果${filtered.length}件`);
-  setText($("page-label"), `${page + 1} / ${result.pages}ページ（1ページ50件）`);
+  setText($("tab-results"), attention ? t("mail140", "検査結果（$1）", [attention]) : t("mail141", "検査結果"));
+  $("tab-results").setAttribute("aria-label", t("mail142", "検査結果、確認が必要$1件", [attention]));
+  $("tab-results").title = t("mail143", "確認が必要$1件", [attention]);
+  setText($("summary"), t("mail144", "履歴$1件 ／ 確認が必要$2件 ／ 検査待ち$3件 ／ 絞り込み結果$4件", [latest.records.length, attention, waiting, filtered.length]));
+  setText($("page-label"), t("mail145", "$1 / $2ページ（1ページ50件）", [page + 1, result.pages]));
   $("page-label").dataset.pages = String(result.pages);
   $("empty-results").hidden = visible.length > 0;
   const progress = latest.batch;
   $("batch-progress").hidden = !progress?.active;
-  if (progress?.active) setText($("batch-progress"), `一括削除：${progress.completed} / ${progress.total}件を処理（削除${progress.deleted}件、失敗${progress.failed}件）`);
+  if (progress?.active) setText($("batch-progress"), t("mail146", "一括削除：$1 / $2件を処理（削除$3件、失敗$4件）", [progress.completed, progress.total, progress.deleted, progress.failed]));
   updateControls();
 }
 
@@ -426,7 +429,7 @@ $("retry-selected").addEventListener("click", () => {
   void action(async () => {
     const response = await request("retryMany", { keys });
     selected.clear();
-    return `${response.count}件の再検査を受け付けました。`;
+    return t("mail147", "$1件の再検査を受け付けました。", [response.count]);
   });
 });
 $("delete-selected").addEventListener("click", () => {
@@ -434,11 +437,11 @@ $("delete-selected").addEventListener("click", () => {
   void action(async () => {
     await requireDeletePermission();
     $("batch-report").replaceChildren(); $("batch-report").hidden = true;
-    setText($("action-status"), "選択した削除対象を照合しています。");
+    setText($("action-status"), t("mail148", "選択した削除対象を照合しています。"));
     const prepared = await request("prepareDeleteBatch", { keys });
     if (!await confirmDeletion(prepared.targets)) {
       await request("cancelDeleteBatch", { token: prepared.token });
-      return "一括削除をキャンセルしました。";
+      return t("mail149", "一括削除をキャンセルしました。");
     }
     const response = await request("deleteBatch", { token: prepared.token });
     const failed = response.results.filter(result => !result.deleted);
@@ -446,11 +449,11 @@ $("delete-selected").addEventListener("click", () => {
     for (const result of failed) {
       const item = document.createElement("li");
       const target = prepared.targets.find(target => target.key === result.key);
-      item.textContent = `${target?.subject || "対象メール"}：${result.error}`;
+      item.textContent = t("namedDetail", "$1：$2", [target?.subject || t("mail150", "対象メール"), result.error]);
       $("batch-report").append(item);
     }
     $("batch-report").hidden = failed.length === 0;
-    return `一括削除：完全削除${response.results.length - failed.length}件、未削除${failed.length}件。`;
+    return t("mail151", "一括削除：完全削除$1件、未削除$2件。", [response.results.length - failed.length, failed.length]);
   });
 });
 function syncSettings(settings) {
@@ -465,27 +468,26 @@ function syncSettings(settings) {
     if (!checkbox) {
       const label = document.createElement("label"); checkbox = document.createElement("input");
       checkbox.type = "checkbox"; checkbox.value = account.id;
-      label.append(checkbox, document.createTextNode(`${account.name}（${account.type}）`));
+      label.append(checkbox, document.createTextNode(t("accountType", "$1（$2）", [account.name, account.type])));
       $("accounts").append(label);
     }
     checkbox.checked = settings.accountIds.includes(account.id);
   }
-  if (!latest.accounts.length) setText($("accounts"), "対象アカウントがありません。");
+  if (!latest.accounts.length) setText($("accounts"), t("mail152", "対象アカウントがありません。"));
 }
 
 function renderConnection() {
   const health = latest.lastHealth;
   setText($("health-result"), health ?
-    `最終接続確認：${health.status === "ready" ? "応答あり" : "確認失敗"} ／ ${new Date(health.checkedAt).toLocaleString()}。${health.engine || ""} ${health.detail || ""}` :
-    "接続はまだ確認していません。「接続を再確認」で確認できます。");
+    t("mail153", "最終接続確認：$1 ／ $2。$3 $4", [health.status === "ready" ? t("mail154", "応答あり") : t("mail155", "確認失敗"), new Date(health.checkedAt).toLocaleString(uiLanguage()), health.engine || "", localizeDetail(health)]) :
+    t("mail156", "接続はまだ確認していません。「接続を再確認」で確認できます。"));
   const scan = latest.lastScan;
-  setText($("last-scan-result"), scan ? `最終実検査：${new Date(scan.checkedAt).toLocaleString()} ／ ${
-    scan.engine?.includes("(clamd)") ? "clamd" : "clamscan"} ／ ${scan.engine || ""}` : "実検査の記録はありません。");
+  setText($("last-scan-result"), scan ? t("mail157", "最終実検査：$1 ／ $2 ／ $3", [new Date(scan.checkedAt).toLocaleString(uiLanguage()), scan.engine?.includes("(clamd)") ? "clamd" : "clamscan", scan.engine || ""]) : t("mail158", "実検査の記録はありません。"));
 }
 
 function renderFolderChoices() {
   const accountId = $("scan-account").value, previous = $("scan-target").value;
-  $("scan-target").replaceChildren(new Option("選択してください", ""));
+  $("scan-target").replaceChildren(new Option(t("mail159", "選択してください"), ""));
   for (const folder of folderChoices.filter(folder => folder.accountId === accountId)) {
     $("scan-target").append(new Option(folder.path, folder.id));
   }
@@ -495,25 +497,25 @@ function renderFolderChoices() {
 function renderTarget() {
   const folder = folderChoices.find(folder => folder.id === $("scan-target").value && folder.accountId === $("scan-account").value);
   const account = latest?.accounts.find(account => account.id === folder?.accountId);
-  setText($("scan-target-label"), folder ? `検査対象：${account?.name || folder.accountId} ／ ${folder.path}` : "検査するアカウントとフォルダーを選択してください。");
+  setText($("scan-target-label"), folder ? t("mail160", "検査対象：$1 ／ $2", [account?.name || folder.accountId, folder.path]) : t("mail161", "検査するアカウントとフォルダーを選択してください。"));
   updateControls();
 }
 async function loadFolders() {
   if (foldersLoading) return;
   foldersLoading = true; updateControls();
-  setText($("folder-load-status"), "フォルダー一覧を取得しています。");
+  setText($("folder-load-status"), t("mail162", "フォルダー一覧を取得しています。"));
   try {
     const response = await request("folderChoices");
     folderChoices = response.folders;
     const previous = $("scan-account").value;
-    $("scan-account").replaceChildren(new Option("選択してください", ""));
+    $("scan-account").replaceChildren(new Option(t("mail159", "選択してください"), ""));
     for (const account of latest.accounts) $("scan-account").append(new Option(account.name, account.id));
     if (latest.accounts.some(account => account.id === previous)) $("scan-account").value = previous;
     else if (latest.accounts.length === 1) $("scan-account").value = latest.accounts[0].id;
     renderFolderChoices();
-    setText($("folder-load-status"), response.limited ? "フォルダー数の上限に達しました。一覧にない対象はThunderbirdの右クリックから指定してください。" :
-      folderChoices.length ? "" : "検査できるフォルダーがありません。");
-  } catch (error) { setText($("folder-load-status"), "一覧を取得できませんでした。「一覧を更新」で再試行してください。" + error.message); }
+    setText($("folder-load-status"), response.limited ? t("mail163", "フォルダー数の上限に達しました。一覧にない対象はThunderbirdの右クリックから指定してください。") :
+      folderChoices.length ? "" : t("mail164", "検査できるフォルダーがありません。"));
+  } catch (error) { setText($("folder-load-status"), t("mail165", "一覧を取得できませんでした。「一覧を更新」で再試行してください。") + error.message); }
   finally { foldersLoading = false; updateControls(); }
 }
 $("scan-account").addEventListener("change", () => { $("scan-target").value = ""; renderFolderChoices(); });
@@ -527,18 +529,18 @@ $("settings-form").addEventListener("change", () => {
   const settings = { enabled: $("enabled").checked, notifications: $("notifications").checked, accountIds };
   settingsSaving = true;
   void action(async () => {
-    setText($("settings-status"), "保存しています。");
+    setText($("settings-status"), t("mail166", "保存しています。"));
     try {
       await request("settings", { settings });
       latest.settings = settings;
       syncSettings(settings);
-      setText($("settings-status"), !accountIds.length && wasEnabled ? "対象アカウントがなくなったため、自動検査を停止して保存しました。" : "保存しました。");
+      setText($("settings-status"), !accountIds.length && wasEnabled ? t("mail167", "対象アカウントがなくなったため、自動検査を停止して保存しました。") : t("mail168", "保存しました。"));
     } catch (error) {
       syncSettings(latest.settings);
-      setText($("settings-status"), "保存できませんでした。変更前の設定に戻しました。");
+      setText($("settings-status"), t("mail169", "保存できませんでした。変更前の設定に戻しました。"));
       throw error;
     } finally { settingsSaving = false; }
-  }, "設定を保存しました。");
+  }, t("mail170", "設定を保存しました。"));
 });
 $("health").addEventListener("click", () => {
   void action(async () => {
@@ -546,11 +548,11 @@ $("health").addEventListener("click", () => {
     latest.lastHealth = health;
     renderConnection();
     if (health.status !== "ready") throw new Error(health.detail);
-  }, "接続の確認結果を更新しました。");
+  }, t("mail171", "接続の確認結果を更新しました。"));
 });
 $("clear").addEventListener("click", () => {
-  if (blocked() || !confirm("検出・失敗を含む、完了した検査履歴を消去します。メール自体は削除しません。続けますか？")) return;
-  void action(() => request("clear"), "完了した検査履歴を消去しました。");
+  if (blocked() || !confirm(t("mail172", "検出・失敗を含む、完了した検査履歴を消去します。メール自体は削除しません。続けますか？"))) return;
+  void action(() => request("clear"), t("mail173", "完了した検査履歴を消去しました。"));
 });
 void refresh().catch(error => setText($("action-status"), error.message));
 setInterval(() => {

@@ -1,5 +1,7 @@
 """Linux user installation lifecycle. No GTK dependency or privilege escalation."""
 
+from . import tr, current_language
+
 from contextlib import contextmanager
 import fcntl
 import hashlib
@@ -39,7 +41,7 @@ def encoded(value):
 def desktop_argument(value):
     # Desktop Entry string escaping followed by Exec argument escaping.
     if any(char in value for char in "\n\r\x00"):
-        raise SetupError("改行を含むインストール先は使用できません。")
+        raise SetupError(tr('改行を含むインストール先は使用できません。'))
     value = value.replace("%", "%%")
     for char in ("\\", '"', "`", "$"):
         value = value.replace(char, "\\" + char)
@@ -59,22 +61,22 @@ class Layout:
     def safe(self, path):
         path = Path(path)
         if not path.is_relative_to(self.home) or ".." in path.parts:
-            raise SetupError("インストール先の範囲が不正です。")
+            raise SetupError(tr('インストール先の範囲が不正です。'))
         for item in (path, *path.parents):
             if item == self.home:
                 break
             if item.is_symlink():
-                raise SetupError("シンボリックリンクのある設置先は変更しません: " + str(item))
+                raise SetupError(tr('シンボリックリンクのある設置先は変更しません: ') + str(item))
 
     def read(self, path):
         self.safe(path)
         if path.exists() and not path.is_file():
-            raise SetupError("通常ファイルではない対象があります: " + str(path))
+            raise SetupError(tr('通常ファイルではない対象があります: ') + str(path))
         return path.read_bytes() if path.exists() else None
 
 
 def probe_host(path):
-    request = json.dumps({"id": "setup", "op": "health"}).encode()
+    request = json.dumps({"id": "setup", "op": "health", "language": current_language()}).encode()
     try:
         result = subprocess.run(["/usr/bin/python3", "-I", str(path)],
                                 input=struct.pack("=I", len(request)) + request,
@@ -89,7 +91,7 @@ def probe_host(path):
             raise ValueError("not ready")
         return reply
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        raise SetupError("補助プログラムとClamAVの接続確認に失敗しました。変更は確定しません。") from exc
+        raise SetupError(tr('補助プログラムとClamAVの接続確認に失敗しました。変更は確定しません。')) from exc
 
 
 def environment():
@@ -100,7 +102,7 @@ def environment():
         engine = result.stdout.decode("utf-8", "replace").strip()[:300]
         clam = bool(engine)
     except (OSError, subprocess.SubprocessError):
-        engine, clam = "ClamAVが見つからないか、起動できません。", False
+        engine, clam = tr('ClamAVが見つからないか、起動できません。'), False
     binary = shutil.which("thunderbird")
     kind = "unknown"
     if binary:
@@ -131,7 +133,7 @@ class Manager:
         self.version = manifest["version"]
         if (not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", self.version) or
                 manifest["browser_specific_settings"]["gecko"]["id"] != EXTENSION):
-            raise SetupError("セットアップの識別情報が一致しません。")
+            raise SetupError(tr('セットアップの識別情報が一致しません。'))
 
     def receipt(self):
         data = self.layout.read(self.layout.receipt)
@@ -157,7 +159,7 @@ class Manager:
                 raise ValueError("desktop")
             return value
         except (ValueError, TypeError, KeyError) as exc:
-            raise SetupError("設置記録を確認できません。既存ファイルは変更しません。") from exc
+            raise SetupError(tr('設置記録を確認できません。既存ファイルは変更しません。')) from exc
 
     def snapshot(self):
         paths = (self.layout.receipt, self.layout.registration, self.layout.desktop)
@@ -170,7 +172,7 @@ class Manager:
         for path, key in controls:
             data = self.layout.read(path)
             if data is not None and (not receipt or digest(data) != receipt[key]):
-                raise SetupError("既存の登録または起動メニューに変更があります。上書きしません: " + str(path))
+                raise SetupError(tr('既存の登録または起動メニューに変更があります。上書きしません: ') + str(path))
         if receipt is None:
             return {"installed": False, "healthy": False, "version": None}
         release = self.layout.base / receipt["release"]
@@ -194,7 +196,7 @@ class Manager:
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
-                raise SetupError("別のセットアップが実行中です。") from exc
+                raise SetupError(tr('別のセットアップが実行中です。')) from exc
             yield
         finally:
             os.close(descriptor)
@@ -269,16 +271,16 @@ class Manager:
     def plan(self, operation):
         state = self.state()
         if operation not in ("install", "repair", "uninstall"):
-            raise SetupError("未対応の操作です。")
+            raise SetupError(tr('未対応の操作です。'))
         if operation == "install" and state["installed"]:
-            raise SetupError("既に導入済みです。更新／修復を選択してください。")
+            raise SetupError(tr('既に導入済みです。更新／修復を選択してください。'))
         if operation != "install" and not state["installed"]:
-            raise SetupError("このセットアップで管理する設置記録がありません。")
+            raise SetupError(tr('このセットアップで管理する設置記録がありません。'))
         if operation == "repair":
             current = tuple(map(int, state["version"].split(".")))
             wanted = tuple(map(int, self.version.split(".")))
             if wanted < current:
-                raise SetupError("導入済みより古いセットアップでは更新できません。")
+                raise SetupError(tr('導入済みより古いセットアップでは更新できません。'))
         return {"token": self.snapshot(), "operation": operation,
                 "paths": [str(self.layout.base), str(self.layout.registration), str(self.layout.desktop)]}
 
@@ -286,7 +288,7 @@ class Manager:
         with self.lock():
             plan = self.plan(operation)
             if token != plan["token"]:
-                raise SetupError("確認後に設置状態が変わりました。状態を再確認してください。")
+                raise SetupError(tr('確認後に設置状態が変わりました。状態を再確認してください。'))
             previous = self.receipt()
             if operation == "uninstall":
                 self.transaction([(self.layout.registration, None, 0o600),
@@ -304,11 +306,11 @@ class Manager:
                     if name == "extension.xpi" and not source.exists():
                         source = self.root / "dist" / ("clam-mail-check-" + self.version + ".xpi")
                     if source.is_symlink() or not source.is_file():
-                        raise SetupError("配布ファイルが不足しています: " + name)
+                        raise SetupError(tr('配布ファイルが不足しています: ') + name)
                     data = source.read_bytes()
                     if previous and self.root == self.layout.base / previous["release"]:
                         if digest(data) != previous["files"][name]:
-                            raise SetupError("設置済みの配布ファイルに変更があります。ダウンロードしたセットアップから修復してください。")
+                            raise SetupError(tr('設置済みの配布ファイルに変更があります。ダウンロードしたセットアップから修復してください。'))
                     target = release / name
                     self.replace(target, data, 0o700 if name == "native/host.py" else 0o600)
                     files[name] = digest(data)
@@ -326,7 +328,7 @@ class Manager:
                            "release": str(release.relative_to(self.layout.base)), "files": files,
                            "registration": digest(registration), "desktop": digest(desktop) if desktop is not None else None}
                 if self.snapshot() != token:
-                    raise SetupError("処理中に設置状態が変わりました。変更を確定しません。")
+                    raise SetupError(tr('処理中に設置状態が変わりました。変更を確定しません。'))
                 self.transaction([(self.layout.registration, registration, 0o600),
                                   (self.layout.desktop, desktop, 0o644),
                                   (self.layout.receipt, encoded(receipt), 0o600)])

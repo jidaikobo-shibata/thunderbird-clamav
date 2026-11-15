@@ -17,6 +17,128 @@ import sys
 import tempfile
 import time
 
+# Translation catalog; keep protocol/status values independent of language.
+_LANGUAGE = "ja"
+_EN_MESSAGES = {'メールが空か、検査上限の25MiBを超えています。': 'The message is empty or exceeds the 25 MiB scan limit.',
+ '脅威は検出されませんでした。安全を保証するものではありません。': 'No threats were detected. This does not guarantee safety.',
+ 'ClamAVが警告を返しました。検査範囲を確認できません。': 'ClamAV returned a warning. Scan coverage could not be confirmed.',
+ ' clamdを利用できないため、通常のclamscanで検査しました。': ' clamd was unavailable, so the message was scanned using regular '
+                                        'clamscan.',
+ '通信データのサイズが上限を超えています。': 'The communication data exceeds the size limit.',
+ '通信データはオブジェクトである必要があります。': 'Communication data must be an object.',
+ '暗号化または検査上限により、検査できない部分があります。': 'Some content could not be scanned due to encryption or scan limits.',
+ '検出結果を解釈できませんでした。': 'Could not interpret the detection result.',
+ 'ClamAVの検査完了を確認できませんでした。': 'Could not confirm that ClamAV completed the scan.',
+ '暗号化または外部参照の内容は検査していません。': 'Encrypted or externally referenced content was not scanned.',
+ '連続検査では専用clamdを利用します。初回は定義を読み込みます。起動できない場合はclamscanを利用します。': 'Continuous scans use a dedicated clamd. '
+                                                              'Definitions are loaded on first use. clamscan '
+                                                              'is used if clamd cannot start.',
+ '検査はclamscanで1通ずつ実行します。': 'Each message is scanned individually with clamscan.',
+ '通信が途中で終了しました。': 'Communication ended unexpectedly.',
+ '通信データの形式が不正です。': 'Invalid communication data format.',
+ 'ClamAVが検査を完了できませんでした。終了コード: ': 'ClamAV could not complete the scan. Exit code: ',
+ '脅威候補を検出しました。': 'A potential threat was detected.',
+ '検査が120秒以内に完了しませんでした。': 'The scan did not complete within 120 seconds.',
+ 'ClamAVを起動できません。インストール状態を確認してください。': 'Cannot start ClamAV. Check its installation.',
+ 'clamdとの通信に失敗しました。検査は完了していません。': 'Communication with clamd failed. The scan has not completed.',
+ '暗号化されている部分は検査していません。': 'Encrypted parts were not scanned.',
+ 'ClamAVのバージョンを取得できません。': 'Cannot retrieve the ClamAV version.',
+ '検査できない部分もあります。': 'Some content could not be scanned.',
+ 'clamdの応答が途中で終了しました。': 'clamd stopped responding before the response was complete.',
+ 'メール検査用clamdが終了しました。': 'The mail-scanning clamd exited.',
+ 'clamdの使用中の定義が古いか、更新日時を確認できません。': "clamd's loaded definitions are outdated, or their age could not be "
+                                   'determined.',
+ 'clamdが警告を返しました。検査範囲を確認できません。': 'clamd returned a warning. Scan coverage could not be confirmed.',
+ 'メール転送中は管理操作を実行できません。': 'Maintenance cannot run during message transfer.',
+ '検査データの受信中です。': 'Scan data is being received.',
+ 'メールサイズが不正か、25MiBを超えています。': 'The message size is invalid or exceeds 25 MiB.',
+ '受信データの順序が不正です。': 'Received data is out of sequence.',
+ 'データ片のサイズが不正です。': 'Invalid chunk size.',
+ '受信サイズが宣言サイズを超えています。': 'Received data exceeds the declared size.',
+ 'メールデータが不足しています。': 'Message data is incomplete.',
+ 'メールデータの照合に失敗しました。': 'Message data verification failed.',
+ '通信IDが不正です。': 'Invalid communication ID.',
+ 'clamdの応答が長すぎます。': 'The clamd response is too long.',
+ 'データ片の形式が不正です。': 'Invalid chunk format.',
+ '管理機能を利用できません。CLIで導入・修復してください。': 'Maintenance is unavailable. Use the command-line installer to install or '
+                                  'repair the helper.',
+ '未対応の操作です。': 'This operation is not supported.'}
+
+def set_language(language):
+    global _LANGUAGE
+    _LANGUAGE = "ja" if str(language).lower().replace("_", "-").startswith("ja") else "en-US"
+
+def current_language():
+    return _LANGUAGE
+
+class LocalizedText(str):
+    def __new__(cls, text, parts):
+        value = super().__new__(cls, text)
+        value.parts = parts
+        return value
+
+    def __add__(self, other):
+        parts = other.parts if isinstance(other, LocalizedText) else [{"text": str(other)}]
+        return LocalizedText(str(self) + str(other), self.parts + parts)
+
+    def __radd__(self, other):
+        return LocalizedText(str(other) + str(self), [{"text": str(other)}] + self.parts)
+
+
+_MESSAGE_KEYS = {'メールが空か、検査上限の25MiBを超えています。': 'mail033',
+ '脅威は検出されませんでした。安全を保証するものではありません。': 'mail361',
+ 'ClamAVが警告を返しました。検査範囲を確認できません。': 'mail362',
+ ' clamdを利用できないため、通常のclamscanで検査しました。': 'mail363',
+ '通信データのサイズが上限を超えています。': 'mail364',
+ '通信データはオブジェクトである必要があります。': 'mail365',
+ '暗号化または検査上限により、検査できない部分があります。': 'mail366',
+ '検出結果を解釈できませんでした。': 'mail367',
+ 'ClamAVの検査完了を確認できませんでした。': 'mail368',
+ '暗号化または外部参照の内容は検査していません。': 'mail369',
+ '連続検査では専用clamdを利用します。初回は定義を読み込みます。起動できない場合はclamscanを利用します。': 'mail370',
+ '検査はclamscanで1通ずつ実行します。': 'mail371',
+ '通信が途中で終了しました。': 'mail372',
+ '通信データの形式が不正です。': 'mail373',
+ 'ClamAVが検査を完了できませんでした。終了コード: ': 'mail374',
+ '脅威候補を検出しました。': 'mail375',
+ '検査が120秒以内に完了しませんでした。': 'mail376',
+ 'ClamAVを起動できません。インストール状態を確認してください。': 'mail377',
+ 'clamdとの通信に失敗しました。検査は完了していません。': 'mail378',
+ '暗号化されている部分は検査していません。': 'mail379',
+ 'ClamAVのバージョンを取得できません。': 'mail380',
+ '検査できない部分もあります。': 'mail381',
+ 'clamdの応答が途中で終了しました。': 'mail382',
+ 'メール検査用clamdが終了しました。': 'mail383',
+ 'clamdの使用中の定義が古いか、更新日時を確認できません。': 'mail384',
+ 'clamdが警告を返しました。検査範囲を確認できません。': 'mail385',
+ 'メール転送中は管理操作を実行できません。': 'mail386',
+ '検査データの受信中です。': 'mail387',
+ 'メールサイズが不正か、25MiBを超えています。': 'mail388',
+ '受信データの順序が不正です。': 'mail389',
+ 'データ片のサイズが不正です。': 'mail390',
+ '受信サイズが宣言サイズを超えています。': 'mail391',
+ 'メールデータが不足しています。': 'mail392',
+ 'メールデータの照合に失敗しました。': 'mail393',
+ '通信IDが不正です。': 'mail394',
+ 'clamdの応答が長すぎます。': 'mail395',
+ 'データ片の形式が不正です。': 'mail396',
+ '管理機能を利用できません。CLIで導入・修復してください。': 'mail397',
+ '未対応の操作です。': 'mail082'}
+
+
+def tr(message):
+    text = message if _LANGUAGE == "ja" else _EN_MESSAGES.get(message, message)
+    key = _MESSAGE_KEYS.get(message)
+    return LocalizedText(text, [{"key": key, "text": text}]) if key else text
+
+
+def describe_result(value):
+    detail = value.get("detail")
+    if isinstance(detail, LocalizedText):
+        value = {**value, "detailMessages": detail.parts}
+    return value
+
+
 HOST_NAME = "local.clam_mail_check"
 PROTOCOL = 1
 MAX_MAIL = 25 * 1024 * 1024
@@ -38,7 +160,7 @@ def read_exact(stream, size):
     while len(data) < size:
         part = stream.read(size - len(data))
         if not part:
-            raise ProtocolError("通信が途中で終了しました。")
+            raise ProtocolError(tr('通信が途中で終了しました。'))
         data.extend(part)
     return bytes(data)
 
@@ -49,13 +171,13 @@ def read_frame(stream):
         return None
     length = struct.unpack("=I", first + read_exact(stream, 3))[0]
     if not 0 < length <= MAX_FRAME:
-        raise ProtocolError("通信データのサイズが上限を超えています。")
+        raise ProtocolError(tr('通信データのサイズが上限を超えています。'))
     try:
         value = json.loads(read_exact(stream, length).decode("utf-8"))
     except (ValueError, UnicodeError) as exc:
-        raise ProtocolError("通信データの形式が不正です。") from exc
+        raise ProtocolError(tr('通信データの形式が不正です。')) from exc
     if not isinstance(value, dict):
-        raise ProtocolError("通信データはオブジェクトである必要があります。")
+        raise ProtocolError(tr('通信データはオブジェクトである必要があります。'))
     return value
 
 
@@ -80,24 +202,24 @@ def classify(returncode, output):
     threats = [s for s in signatures if s not in incomplete]
     if returncode not in (0, 1):
         return {"status": "error", "signatures": signatures,
-                "detail": "ClamAVが検査を完了できませんでした。終了コード: "
+                "detail": tr('ClamAVが検査を完了できませんでした。終了コード: ')
                           + str(returncode)}
     if threats:
         return {"status": "detected", "signatures": signatures,
-                "detail": "脅威候補を検出しました。" + (
-                    "検査できない部分もあります。" if incomplete else "")}
+                "detail": tr('脅威候補を検出しました。') + (
+                    tr('検査できない部分もあります。') if incomplete else "")}
     if incomplete:
         return {"status": "incomplete", "signatures": signatures,
-                "detail": "暗号化または検査上限により、検査できない部分があります。"}
+                "detail": tr('暗号化または検査上限により、検査できない部分があります。')}
     if returncode == 1:
         return {"status": "error", "signatures": [],
-                "detail": "検出結果を解釈できませんでした。"}
+                "detail": tr('検出結果を解釈できませんでした。')}
     if "ERROR" in output or "stdin: OK" not in output.splitlines():
         return {"status": "error", "signatures": [],
-                "detail": "ClamAVの検査完了を確認できませんでした。"}
+                "detail": tr('ClamAVの検査完了を確認できませんでした。')}
     # An encrypted OpenPGP/S/MIME message isn't useful as ciphertext to ClamAV.
     return {"status": "clean", "signatures": [],
-            "detail": "脅威は検出されませんでした。安全を保証するものではありません。"}
+            "detail": tr('脅威は検出されませんでした。安全を保証するものではありません。')}
 
 
 def encrypted_mail(data):
@@ -174,9 +296,9 @@ class MailDaemon:
                     break
                 reply.extend(chunk)
                 if len(reply) > MAX_FRAME:
-                    raise ProtocolError("clamdの応答が長すぎます。")
+                    raise ProtocolError(tr('clamdの応答が長すぎます。'))
             if not reply or not reply.endswith(b"\0"):
-                raise ProtocolError("clamdの応答が途中で終了しました。")
+                raise ProtocolError(tr('clamdの応答が途中で終了しました。'))
             return bytes(reply[:-1]).decode("utf-8", "replace")
 
     def start(self):
@@ -185,7 +307,7 @@ class MailDaemon:
         if self.process is not None:
             if self.process.poll() is not None:
                 # A failed running daemon is an error, never silently clean.
-                raise ProtocolError("メール検査用clamdが終了しました。")
+                raise ProtocolError(tr('メール検査用clamdが終了しました。'))
             return
         if not os.access(CLAMD, os.X_OK):
             self.disabled = True
@@ -246,7 +368,7 @@ class MailDaemon:
                 raise ValueError("stale database")
         except (ValueError, IndexError):
             return {"status": "error", "signatures": [],
-                    "detail": "clamdの使用中の定義が古いか、更新日時を確認できません。"}
+                    "detail": tr('clamdの使用中の定義が古いか、更新日時を確認できません。')}
         output = self.exchange(b"INSTREAM", data)
         # INSTREAM reports one match; preserve limit/encryption alerts as incomplete.
         lines = output.split("\0")
@@ -263,7 +385,7 @@ class MailDaemon:
             if size > MAX_FRAME or b"WARNING" in diagnostic or b"ERROR" in diagnostic:
                 if value["status"] == "clean":
                     value["status"] = "incomplete"
-                    value["detail"] = "clamdが警告を返しました。検査範囲を確認できません。"
+                    value["detail"] = tr('clamdが警告を返しました。検査範囲を確認できません。')
         return value
 
     def close(self):
@@ -300,23 +422,23 @@ def scan_clamscan(data):
                                     check=False)
     except subprocess.TimeoutExpired:
         return {"status": "error", "signatures": [],
-                "detail": "検査が120秒以内に完了しませんでした。"}
+                "detail": tr('検査が120秒以内に完了しませんでした。')}
     except OSError:
         return {"status": "error", "signatures": [],
-                "detail": "ClamAVを起動できません。インストール状態を確認してください。"}
+                "detail": tr('ClamAVを起動できません。インストール状態を確認してください。')}
     value = classify(result.returncode, result.stdout.decode("utf-8", "replace"))
     if value["status"] == "clean" and (
         result.stderr.strip() or "Warning:" in result.stdout.decode("utf-8", "replace")
     ):
         value["status"] = "incomplete"
-        value["detail"] = "ClamAVが警告を返しました。検査範囲を確認できません。"
+        value["detail"] = tr('ClamAVが警告を返しました。検査範囲を確認できません。')
     return value
 
 
 def scan(data, scanner=None):
     if not data or len(data) > MAX_MAIL:
         return {"status": "incomplete", "signatures": [],
-                "detail": "メールが空か、検査上限の25MiBを超えています。"}
+                "detail": tr('メールが空か、検査上限の25MiBを超えています。')}
     fallback = False
     try:
         value = scanner.scan(data) if scanner else scan_clamscan(data)
@@ -328,9 +450,9 @@ def scan(data, scanner=None):
             scanner.close()
             scanner.disabled = True
         value = {"status": "error", "signatures": [],
-                 "detail": "clamdとの通信に失敗しました。検査は完了していません。"}
+                 "detail": tr('clamdとの通信に失敗しました。検査は完了していません。')}
     if fallback:
-        value["detail"] += " clamdを利用できないため、通常のclamscanで検査しました。"
+        value["detail"] += tr(' clamdを利用できないため、通常のclamscanで検査しました。')
     try:
         encrypted = encrypted_mail(data)
     except (ValueError, RecursionError):
@@ -338,9 +460,9 @@ def scan(data, scanner=None):
     if encrypted:
         if value["status"] == "clean":
             value["status"] = "incomplete"
-            value["detail"] = "暗号化または外部参照の内容は検査していません。"
+            value["detail"] = tr('暗号化または外部参照の内容は検査していません。')
         elif value["status"] == "detected":
-            value["detail"] += "暗号化されている部分は検査していません。"
+            value["detail"] += tr('暗号化されている部分は検査していません。')
     value["sha256"] = hashlib.sha256(data).hexdigest()
     return value
 
@@ -353,12 +475,11 @@ def health():
             raise OSError("version failed")
         version = result.stdout.decode("utf-8", "replace").strip()[:300]
     except (OSError, subprocess.TimeoutExpired):
-        return {"status": "error", "detail": "ClamAVのバージョンを取得できません。"}
+        return {"status": "error", "detail": tr('ClamAVのバージョンを取得できません。')}
     return {"status": "ready", "protocol": PROTOCOL, "engine": version,
             "maxBytes": MAX_MAIL, "chunkBytes": CHUNK_SIZE,
-            "detail": ("連続検査では専用clamdを利用します。初回は定義を読み込みます。"
-                       "起動できない場合はclamscanを利用します。"
-                       if os.access(CLAMD, os.X_OK) else "検査はclamscanで1通ずつ実行します。" )}
+            "detail": (tr('連続検査では専用clamdを利用します。初回は定義を読み込みます。起動できない場合はclamscanを利用します。')
+                       if os.access(CLAMD, os.X_OK) else tr('検査はclamscanで1通ずつ実行します。') )}
 
 
 class Session:
@@ -383,18 +504,21 @@ class Session:
         self.sequence = 0
 
     def handle(self, request):
+        set_language(request.get("language", "ja"))
         operation = request.get("op")
         if operation == "health":
             return health()
         if operation in {"manageInfo", "managePlan", "manageApply"}:
             if self.buffer is not None:
-                raise ProtocolError("メール転送中は管理操作を実行できません。")
+                raise ProtocolError(tr('メール転送中は管理操作を実行できません。'))
             try:
                 if self.administration is None:
                     root = Path(__file__).resolve().parents[1]
                     sys.path.insert(0, str(root))
                     from setup.cli import Administration
                     self.administration = Administration(root)
+                from setup import set_language as set_setup_language
+                set_setup_language(current_language())
                 if operation == "manageInfo":
                     return self.administration.info()
                 if operation == "managePlan":
@@ -402,7 +526,7 @@ class Session:
                 self.scanner.close()
                 return self.administration.apply(request.get("token"))
             except (ImportError, OSError, ValueError) as error:
-                raise ProtocolError("管理機能を利用できません。CLIで導入・修復してください。" + str(error)) from error
+                raise ProtocolError(tr('管理機能を利用できません。CLIで導入・修復してください。') + str(error)) from error
             except Exception as error:
                 # SetupError is imported lazily: scanning has no setup dependency.
                 if error.__class__.__name__ == "SetupError":
@@ -410,10 +534,10 @@ class Session:
                 raise
         if operation == "begin":
             if self.buffer is not None:
-                raise ProtocolError("検査データの受信中です。")
+                raise ProtocolError(tr('検査データの受信中です。'))
             size = request.get("size")
             if type(size) is not int or not 0 < size <= MAX_MAIL:
-                raise ProtocolError("メールサイズが不正か、25MiBを超えています。")
+                raise ProtocolError(tr('メールサイズが不正か、25MiBを超えています。'))
             self.expected = size
             self.sequence = 0
             self.buffer = io.BytesIO()
@@ -423,29 +547,29 @@ class Session:
             return {"status": "aborted"}
         if operation == "chunk":
             if self.buffer is None or request.get("seq") != self.sequence:
-                raise ProtocolError("受信データの順序が不正です。")
+                raise ProtocolError(tr('受信データの順序が不正です。'))
             encoded = request.get("data")
             if not isinstance(encoded, str) or len(encoded) > 4 * ((CHUNK_SIZE + 2) // 3):
-                raise ProtocolError("データ片のサイズが不正です。")
+                raise ProtocolError(tr('データ片のサイズが不正です。'))
             try:
                 data = base64.b64decode(encoded, validate=True)
             except (ValueError, binascii.Error) as exc:
-                raise ProtocolError("データ片の形式が不正です。") from exc
+                raise ProtocolError(tr('データ片の形式が不正です。')) from exc
             if not data or len(data) > CHUNK_SIZE or self.buffer.tell() + len(data) > self.expected:
-                raise ProtocolError("受信サイズが宣言サイズを超えています。")
+                raise ProtocolError(tr('受信サイズが宣言サイズを超えています。'))
             self.buffer.write(data)
             self.sequence += 1
             return {"status": "accepted", "seq": self.sequence}
         if operation == "end":
             if self.buffer is None or self.buffer.tell() != self.expected:
-                raise ProtocolError("メールデータが不足しています。")
+                raise ProtocolError(tr('メールデータが不足しています。'))
             data = self.buffer.getvalue()
             digest = hashlib.sha256(data).hexdigest()
             if request.get("sha256") != digest:
-                raise ProtocolError("メールデータの照合に失敗しました。")
+                raise ProtocolError(tr('メールデータの照合に失敗しました。'))
             self.reset()
             return scan(data, self.scanner)
-        raise ProtocolError("未対応の操作です。")
+        raise ProtocolError(tr('未対応の操作です。'))
 
 
 def main(input_stream=None, output_stream=None):
@@ -459,13 +583,13 @@ def main(input_stream=None, output_stream=None):
                 break
             request_id = request.get("id")
             if not isinstance(request_id, str) or len(request_id) > 80:
-                raise ProtocolError("通信IDが不正です。")
+                raise ProtocolError(tr('通信IDが不正です。'))
             try:
                 value = session.handle(request)
             except ProtocolError as exc:
                 session.reset()
-                value = {"status": "error", "detail": str(exc)}
-            write_frame(output_stream, {"id": request_id, **value})
+                value = {"status": "error", "detail": exc.args[0] if exc.args else str(exc)}
+            write_frame(output_stream, {"id": request_id, "detailLocale": current_language(), **describe_result(value)})
     except (ProtocolError, BrokenPipeError):
         return 1
     finally:

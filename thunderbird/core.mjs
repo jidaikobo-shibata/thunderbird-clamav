@@ -1,3 +1,4 @@
+import { t, uiLanguage, localizeDetail } from "./i18n.mjs";
 export const MAX_BYTES = 25 * 1024 * 1024;
 export const CHUNK_BYTES = 64 * 1024;
 export const HOST = "local.clam_mail_check";
@@ -5,9 +6,9 @@ export const DEFAULTS = Object.freeze({
   enabled: false, accountIds: [], notifications: true
 });
 export const LABELS = Object.freeze({
-  queued: "検査待ち", scanning: "検査中", clean: "未検出",
-  detected: "脅威候補を検出", incomplete: "一部または全部が未検査", error: "検査失敗",
-  deleted: "完全削除済み"
+  queued: t("mail084", "検査待ち"), scanning: t("mail085", "検査中"), clean: t("mail086", "未検出"),
+  detected: t("mail087", "脅威候補を検出"), incomplete: t("mail088", "一部または全部が未検査"), error: t("mail089", "検査失敗"),
+  deleted: t("mail090", "完全削除済み")
 });
 export const needsAttention = record => ["detected", "incomplete", "error"].includes(record.status);
 
@@ -37,10 +38,10 @@ export function validateSettings(value, knownIds) {
   if (!value || typeof value.enabled !== "boolean" ||
       typeof value.notifications !== "boolean" || !Array.isArray(value.accountIds) ||
       value.accountIds.some(id => typeof id !== "string" || !knownIds.includes(id))) {
-    throw new Error("設定値が不正です。画面を開き直してください。");
+    throw new Error(t("mail091", "設定値が不正です。画面を開き直してください。"));
   }
   if (value.enabled && !value.accountIds.length) {
-    throw new Error("自動検査するアカウントを選択してください。");
+    throw new Error(t("mail092", "自動検査するアカウントを選択してください。"));
   }
   return { enabled: value.enabled, notifications: value.notifications,
     accountIds: [...new Set(value.accountIds)] };
@@ -86,25 +87,26 @@ export class NativeClient {
       if (!request) return;
       clearTimeout(request.timer);
       this.pending.delete(message.id);
+      if (message.detailMessages) message.detail = localizeDetail(message);
       request.resolve(message);
     });
     this.port.onDisconnect.addListener(() => this.close(
-      "補助プログラムとの接続が切れました。登録状態を確認してください。"
+      t("mail093", "補助プログラムとの接続が切れました。登録状態を確認してください。")
     ));
   }
 
   request(op, values = {}, timeout = 15000) {
-    if (this.closed) return Promise.reject(new Error("補助プログラムに接続できません。"));
+    if (this.closed) return Promise.reject(new Error(t("mail094", "補助プログラムに接続できません。")));
     const id = String(++this.sequence);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => this.close("補助プログラムの応答がありません。"), timeout);
+      const timer = setTimeout(() => this.close(t("mail095", "補助プログラムの応答がありません。")), timeout);
       this.pending.set(id, { resolve, reject, timer });
-      try { this.port.postMessage({ ...values, op, id }); }
-      catch { this.close("補助プログラムに送信できません。"); }
+      try { this.port.postMessage({ ...values, language: uiLanguage(), op, id }); }
+      catch { this.close(t("mail096", "補助プログラムに送信できません。")); }
     });
   }
 
-  close(reason = "接続を終了しました。") {
+  close(reason = t("mail097", "接続を終了しました。")) {
     if (this.closed) return;
     this.closed = true;
     for (const request of this.pending.values()) {
@@ -117,7 +119,7 @@ export class NativeClient {
 
   async scan(bytes, digest) {
     let result = await this.request("begin", { size: bytes.length });
-    if (result.status !== "accepted") throw new Error(result.detail || "検査を開始できません。");
+    if (result.status !== "accepted") throw new Error(result.detail || t("mail098", "検査を開始できません。"));
     let seq = 0;
     for (let offset = 0; offset < bytes.length; offset += CHUNK_BYTES) {
       result = await this.request("chunk", {
@@ -125,15 +127,15 @@ export class NativeClient {
       });
       seq++;
       if (result.status !== "accepted" || result.seq !== seq) {
-        throw new Error(result.detail || "メールの転送に失敗しました。");
+        throw new Error(result.detail || t("mail099", "メールの転送に失敗しました。"));
       }
     }
     result = await this.request("end", { sha256: digest }, 225000);
     if (!["clean", "detected", "incomplete", "error"].includes(result.status)) {
-      throw new Error("補助プログラムの結果を解釈できません。");
+      throw new Error(t("mail100", "補助プログラムの結果を解釈できません。"));
     }
     if (result.status !== "error" && result.sha256 !== digest) {
-      throw new Error("検査対象の照合に失敗しました。");
+      throw new Error(t("mail101", "検査対象の照合に失敗しました。"));
     }
     return result;
   }

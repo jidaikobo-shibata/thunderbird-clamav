@@ -55,10 +55,10 @@ def build(root):
         installer_info.external_attr = 0o100644 << 16
         installer_info.compress_type = zipfile.ZIP_DEFLATED
         archive.writestr(installer_info, installer)
-        for path in sorted(source.iterdir()):
-            if path.suffix not in {".html", ".js", ".mjs", ".css", ".json", ".svg"}:
+        for path in sorted(source.rglob("*")):
+            if not path.is_file() or path.suffix not in {".html", ".js", ".mjs", ".css", ".json", ".svg"}:
                 continue
-            info = zipfile.ZipInfo(path.name, (2026, 1, 1, 0, 0, 0))
+            info = zipfile.ZipInfo(path.relative_to(source).as_posix(), (2026, 1, 1, 0, 0, 0))
             info.external_attr = 0o100644 << 16
             info.compress_type = zipfile.ZIP_DEFLATED
             archive.writestr(info, path.read_bytes())

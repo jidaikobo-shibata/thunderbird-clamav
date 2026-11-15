@@ -1,0 +1,2090 @@
+{
+  "mail001": {
+    "message": "An update is required for integration.",
+    "description": "連携用の更新が必要です。"
+  },
+  "mail002": {
+    "message": "ClamAV: folder scan ",
+    "description": "ClamAV：フォルダー検査 "
+  },
+  "mail003": {
+    "message": "Processed: $ARG1$; detected: $ARG2$; unscanned: $ARG3$; failed: $ARG4$. Check the scan results.",
+    "description": "処理済み$1件、検出$2件、未検査$3件、失敗$4件。結果画面を確認してください。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      },
+      "arg4": {
+        "content": "$4"
+      }
+    }
+  },
+  "mail004": {
+    "message": "Could not show the folder scan notification. Check the scan results.",
+    "description": "フォルダー検査の通知を表示できません。結果画面を確認してください。"
+  },
+  "mail005": {
+    "message": "Wait until helper maintenance is complete.",
+    "description": "補助プログラムの管理が完了してから操作してください。"
+  },
+  "mail006": {
+    "message": "A folder scan is already running.",
+    "description": "フォルダー検査は既に実行中です。"
+  },
+  "mail007": {
+    "message": "Select one regular mail folder. Unified, search, and tag folders are not supported.",
+    "description": "通常のメールフォルダーを1つ選択してください。統合・検索・タグの仮想フォルダーは対象外です。"
+  },
+  "mail008": {
+    "message": "Select a target in Thunderbird's folder list.",
+    "description": "Thunderbirdのフォルダー一覧で対象を選択してください。"
+  },
+  "mail009": {
+    "message": "Select a message that has finished processing and has not been deleted.",
+    "description": "処理が終了した未削除のメールを選択してください。"
+  },
+  "mail010": {
+    "message": "Could not identify the stored message.",
+    "description": "保存されているメールを特定できません。"
+  },
+  "mail011": {
+    "message": "The message differs from the scanned version. Scan it again.",
+    "description": "対象メールが検査時と一致しません。再検査してください。"
+  },
+  "mail012": {
+    "message": "Could not read the message to be deleted.",
+    "description": "削除対象のメール内容を取得できませんでした。"
+  },
+  "mail013": {
+    "message": "Could not read the entire message to be deleted.",
+    "description": "削除対象のメール内容を最後まで取得できませんでした。"
+  },
+  "mail014": {
+    "message": "The message changed after confirmation. Confirm it again.",
+    "description": "確認後にメール内容が変わりました。もう一度確認してください。"
+  },
+  "mail015": {
+    "message": "Select 1–100 unique results for a bulk action.",
+    "description": "一括操作は重複のない1〜100件を選択してください。"
+  },
+  "mail016": {
+    "message": "Bulk deletion is in progress.",
+    "description": "一括削除の処理中です。"
+  },
+  "mail017": {
+    "message": "Permanent deletion is not permitted. Try again using the delete button.",
+    "description": "完全削除の権限がありません。削除ボタンからもう一度操作してください。"
+  },
+  "mail018": {
+    "message": "A message is being deleted.",
+    "description": "削除処理中のメールがあります。"
+  },
+  "mail019": {
+    "message": "The scan result changed. Select it again.",
+    "description": "検査結果が変わりました。選び直してください。"
+  },
+  "mail020": {
+    "message": "Some results refer to the same message. Remove the duplicate selections.",
+    "description": "同じメールを指す履歴が含まれています。重複を外してください。"
+  },
+  "mail021": {
+    "message": "No sender",
+    "description": "差出人なし"
+  },
+  "mail022": {
+    "message": "No subject",
+    "description": "件名なし"
+  },
+  "mail023": {
+    "message": "Too many confirmations are pending. Close the other confirmation dialogs and try again.",
+    "description": "未完了の確認が多いため、ほかの確認画面を閉じてやり直してください。"
+  },
+  "mail024": {
+    "message": "This message is being deleted.",
+    "description": "このメールは削除処理中です。"
+  },
+  "mail025": {
+    "message": "Permanent deletion is not permitted.",
+    "description": "完全削除の権限がありません。"
+  },
+  "mail026": {
+    "message": "The scan result changed. Confirm it again.",
+    "description": "検査結果が変わりました。再確認してください。"
+  },
+  "mail027": {
+    "message": "The message location or scan result changed after confirmation. Confirm it again.",
+    "description": "確認後にメールの場所や検査結果が変わりました。再確認してください。"
+  },
+  "mail028": {
+    "message": "Permanently deleted without moving to Trash. This cannot be undone.",
+    "description": "ごみ箱を経由せず完全削除しました。元には戻せません。"
+  },
+  "mail029": {
+    "message": "The message was deleted, but the history could not be saved.",
+    "description": "メールの削除は完了しましたが、履歴を保存できませんでした。"
+  },
+  "mail030": {
+    "message": "Check the message in Thunderbird's scan results.",
+    "description": "Thunderbirdの検査結果画面で対象メールを確認してください。"
+  },
+  "mail031": {
+    "message": "Could not show the desktop notification. Check the scan results.",
+    "description": "デスクトップ通知を表示できません。結果画面を確認してください。"
+  },
+  "mail032": {
+    "message": "Could not obtain the message data as a File.",
+    "description": "メールデータをFile形式で取得できませんでした。"
+  },
+  "mail033": {
+    "message": "The message is empty or exceeds the 25 MiB scan limit.",
+    "description": "メールが空か、検査上限の25MiBを超えています。"
+  },
+  "mail034": {
+    "message": "Could not locate the message again. Select it in Thunderbird and scan it again.",
+    "description": "対象を再特定できません。Thunderbirdで選択して再検査してください。"
+  },
+  "mail035": {
+    "message": "Too many messages share the same identifying information to identify this message.",
+    "description": "同じ識別情報のメールが多いため、対象を特定できません。"
+  },
+  "mail036": {
+    "message": "The message is missing or matches multiple candidates. Select it and scan it again.",
+    "description": "対象メールが存在しないか、複数候補があり特定できません。選択して再検査してください。"
+  },
+  "mail037": {
+    "message": "Confirm the helper installation before scanning.",
+    "description": "補助プログラムの導入を確認してから検査してください。"
+  },
+  "mail038": {
+    "message": "Waiting to scan.",
+    "description": "検査を待っています。"
+  },
+  "mail039": {
+    "message": "History has reached 1,000 results. Some new messages cannot be scanned. Review and clear history as needed.",
+    "description": "結果が1000件に達しました。新着の一部を検査できません。履歴を整理してください。"
+  },
+  "mail040": {
+    "message": "Stopped because results requiring attention reached the 1,000-result history limit. Review and clear history as needed, then start again.",
+    "description": "検出・未検査・失敗などの履歴で上限1000件に達したため停止しました。履歴を確認・整理し、改めて開始してください。"
+  },
+  "mail041": {
+    "message": "Waiting for the folder scan.",
+    "description": "フォルダー検査を待っています。"
+  },
+  "mail042": {
+    "message": "Retrieving and scanning the message.",
+    "description": "メールを取得して検査しています。"
+  },
+  "mail043": {
+    "message": "Only the message headers have been downloaded. Download the body and scan it again.",
+    "description": "ヘッダーのみ取得されたメールです。本文をダウンロードして再検査してください。"
+  },
+  "mail044": {
+    "message": "This helper version is not supported.",
+    "description": "補助プログラムのバージョンが対応していません。"
+  },
+  "mail045": {
+    "message": "The scan failed.",
+    "description": "検査に失敗しました。"
+  },
+  "mail046": {
+    "message": "Could not save the scan state. Check available storage and scan again.",
+    "description": "検査状態の保存に失敗しました。保存領域を確認して再検査してください。"
+  },
+  "mail047": {
+    "message": "Stopped because the scan state could not be saved or another error occurred. Check the results and start again.",
+    "description": "検査状態の保存などに失敗したため停止しました。結果を確認して改めて開始してください。"
+  },
+  "mail048": {
+    "message": "Select a target in the message list.",
+    "description": "メール一覧で対象を選択してください。"
+  },
+  "mail049": {
+    "message": "Thunderbird closed during the folder scan. This message's result is unconfirmed.",
+    "description": "フォルダー検査中に終了したため、このメールの結果は未確認です。"
+  },
+  "mail050": {
+    "message": "Resuming the interrupted scan.",
+    "description": "前回中断された検査を再開します。"
+  },
+  "mail051": {
+    "message": "Scan selected messages with ClamAV",
+    "description": "ClamAVで選択メールを検査"
+  },
+  "mail052": {
+    "message": "Scan folder with ClamAV",
+    "description": "ClamAVでフォルダーを検査"
+  },
+  "mail053": {
+    "message": "Select one folder.",
+    "description": "フォルダーを1つ選択してください。"
+  },
+  "mail054": {
+    "message": "Helper maintenance is in progress, or the helper was removed. Confirm installation before continuing.",
+    "description": "補助プログラムの管理中か削除後です。導入を確認してから操作してください。"
+  },
+  "mail055": {
+    "message": "Wait until scanning and deletion finish. Stop the folder scan first if it is running.",
+    "description": "検査・削除の処理が終了してから操作してください。フォルダー検査中は先に中止してください。"
+  },
+  "mail056": {
+    "message": "Maintenance is not supported. Use the bundled command-line installer.",
+    "description": "管理機能が未対応です。同梱のCLIファイルを利用してください。"
+  },
+  "mail057": {
+    "message": "The maintenance confirmation is invalid.",
+    "description": "管理操作の確認が無効です。"
+  },
+  "mail058": {
+    "message": "Maintenance is already in progress.",
+    "description": "管理操作は既に実行中です。"
+  },
+  "mail059": {
+    "message": "The maintenance confirmation has expired.",
+    "description": "管理操作の確認が期限切れです。"
+  },
+  "mail060": {
+    "message": "Could not complete the helper operation.",
+    "description": "補助プログラムの処理を完了できませんでした。"
+  },
+  "mail061": {
+    "message": "The helper was removed. You can continue removing the extension.",
+    "description": "補助プログラムを削除しました。拡張の削除を続けられます。"
+  },
+  "mail062": {
+    "message": "The helper was updated or repaired.",
+    "description": "補助プログラムを更新・修復しました。"
+  },
+  "mail063": {
+    "message": " Could not save the state. Check the result on this screen.",
+    "description": " 状態の保存に失敗したため、この画面で結果を確認してください。"
+  },
+  "mail064": {
+    "message": "Could not confirm removal. Check installation, or use the installer's status/uninstall command.",
+    "description": "削除の完了を確認できませんでした。導入を確認するか、CLIのstatus/uninstallで状態を確認してください。"
+  },
+  "mail065": {
+    "message": "Stop processing and confirm that helper removal has completed in Terminal.",
+    "description": "処理を停止し、Terminalで補助プログラムの削除が完了したことを確認してください。"
+  },
+  "mail066": {
+    "message": "The user confirmed that removal in Terminal completed.",
+    "description": "Terminalでの削除完了を利用者が確認しました。"
+  },
+  "mail067": {
+    "message": "Select a folder to scan.",
+    "description": "検査するフォルダーを選択してください。"
+  },
+  "mail068": {
+    "message": "The folder selection changed. Select it again.",
+    "description": "フォルダーの選択が変わりました。選び直してください。"
+  },
+  "mail069": {
+    "message": "The subfolder selection is invalid.",
+    "description": "サブフォルダーの選択が不正です。"
+  },
+  "mail070": {
+    "message": "The folder is missing or has moved. Select it again.",
+    "description": "フォルダーが見つからないか、場所が変わりました。選び直してください。"
+  },
+  "mail071": {
+    "message": "This scan cannot be resumed. Refresh the screen.",
+    "description": "この検査は再開できません。画面を更新してください。"
+  },
+  "mail072": {
+    "message": "The original folder is missing or has moved.",
+    "description": "元のフォルダーが見つからないか、場所が変わりました。"
+  },
+  "mail073": {
+    "message": "The scan target changed. Refresh the screen.",
+    "description": "検査の対象が変わりました。画面を更新してください。"
+  },
+  "mail074": {
+    "message": "This result cannot be rescanned.",
+    "description": "この結果は再検査できません。"
+  },
+  "mail075": {
+    "message": "Some selected results cannot be rescanned. Select them again.",
+    "description": "再検査できない結果が含まれています。選び直してください。"
+  },
+  "mail076": {
+    "message": "The deletion confirmation expired. Select the messages again.",
+    "description": "削除確認が期限切れです。選び直してください。"
+  },
+  "mail077": {
+    "message": "Deletion failed.",
+    "description": "削除に失敗しました。"
+  },
+  "mail078": {
+    "message": "Could not verify the scan target. Check it in the message list.",
+    "description": "検査対象を照合できません。メール一覧から確認してください。"
+  },
+  "mail079": {
+    "message": "The message changed since it was scanned. Scan it again.",
+    "description": "メール内容が検査時から変わっています。再検査してください。"
+  },
+  "mail080": {
+    "message": "The scan result changed. Try the operation again.",
+    "description": "検査結果が変わりました。操作をやり直してください。"
+  },
+  "mail081": {
+    "message": "The deletion confirmation is invalid or expired. Try again.",
+    "description": "削除確認が無効か期限切れです。もう一度操作してください。"
+  },
+  "mail082": {
+    "message": "This operation is not supported.",
+    "description": "未対応の操作です。"
+  },
+  "mail083": {
+    "message": "The operation failed.",
+    "description": "操作に失敗しました。"
+  },
+  "mail084": {
+    "message": "Queued",
+    "description": "検査待ち"
+  },
+  "mail085": {
+    "message": "Scanning",
+    "description": "検査中"
+  },
+  "mail086": {
+    "message": "No threat detected",
+    "description": "未検出"
+  },
+  "mail087": {
+    "message": "Potential threat detected",
+    "description": "脅威候補を検出"
+  },
+  "mail088": {
+    "message": "Partly or entirely unscanned",
+    "description": "一部または全部が未検査"
+  },
+  "mail089": {
+    "message": "Scan failed",
+    "description": "検査失敗"
+  },
+  "mail090": {
+    "message": "Permanently deleted",
+    "description": "完全削除済み"
+  },
+  "mail091": {
+    "message": "Invalid settings. Reopen the screen.",
+    "description": "設定値が不正です。画面を開き直してください。"
+  },
+  "mail092": {
+    "message": "Select accounts for automatic scanning.",
+    "description": "自動検査するアカウントを選択してください。"
+  },
+  "mail093": {
+    "message": "Disconnected from the helper. Check its registration.",
+    "description": "補助プログラムとの接続が切れました。登録状態を確認してください。"
+  },
+  "mail094": {
+    "message": "Cannot connect to the helper.",
+    "description": "補助プログラムに接続できません。"
+  },
+  "mail095": {
+    "message": "The helper is not responding.",
+    "description": "補助プログラムの応答がありません。"
+  },
+  "mail096": {
+    "message": "Could not send data to the helper.",
+    "description": "補助プログラムに送信できません。"
+  },
+  "mail097": {
+    "message": "Connection closed.",
+    "description": "接続を終了しました。"
+  },
+  "mail098": {
+    "message": "Could not start the scan.",
+    "description": "検査を開始できません。"
+  },
+  "mail099": {
+    "message": "Message transfer failed.",
+    "description": "メールの転送に失敗しました。"
+  },
+  "mail100": {
+    "message": "Could not interpret the helper's result.",
+    "description": "補助プログラムの結果を解釈できません。"
+  },
+  "mail101": {
+    "message": "Could not verify the scan target.",
+    "description": "検査対象の照合に失敗しました。"
+  },
+  "mail102": {
+    "message": "Could not connect to the extension's background process.",
+    "description": "拡張の処理に接続できませんでした。"
+  },
+  "mail103": {
+    "message": "Selected: $ARG1$",
+    "description": "選択$1件",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "mail104": {
+    "message": "Processing.",
+    "description": "処理しています。"
+  },
+  "mail105": {
+    "message": "Done.",
+    "description": "処理が完了しました。"
+  },
+  "mail106": {
+    "message": "Setup",
+    "description": "セットアップ"
+  },
+  "mail107": {
+    "message": "Setup: $ARG1$",
+    "description": "セットアップ：$1",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "mail108": {
+    "message": "Folder scan: $ARG1$ / $ARG2$$ARG3$",
+    "description": "フォルダー検査：$1 ／ $2$3",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "mail109": {
+    "message": " (including subfolders)",
+    "description": "（サブフォルダーを含む）"
+  },
+  "mail110": {
+    "message": "Elapsed: $ARG1$m $ARG2$s",
+    "description": "経過$1分$2秒",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "mail111": {
+    "message": "$ARG1$ / Found: $ARG2$ / $ARG3$",
+    "description": "$1 ／ 対象$2件を確認 ／ $3",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "mail112": {
+    "message": "$ARG1$ / Processed: $ARG2$ / $ARG3$ ($ARG4$%) / Scanning: $ARG5$; remaining: $ARG6$ / $ARG7$",
+    "description": "$1 ／ 処理済み$2 / $3件（$4%） ／ 検査中$5件・未処理$6件 ／ $7",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      },
+      "arg4": {
+        "content": "$4"
+      },
+      "arg5": {
+        "content": "$5"
+      },
+      "arg6": {
+        "content": "$6"
+      },
+      "arg7": {
+        "content": "$7"
+      }
+    }
+  },
+  "mail113": {
+    "message": "No threat: $ARG1$ / Detected: $ARG2$ / Unscanned: $ARG3$ / Failed: $ARG4$",
+    "description": "未検出$1件 ／ 検出$2件 ／ 未検査$3件 ／ 失敗$4件",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      },
+      "arg4": {
+        "content": "$4"
+      }
+    }
+  },
+  "mail114": {
+    "message": "Folder scan: $ARG1$. Processed: $ARG2$$ARG3$.",
+    "description": "フォルダー検査 $1。処理済み$2件$3。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "mail115": {
+    "message": "; total: $ARG1$",
+    "description": "、対象$1件",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "mail116": {
+    "message": " On resume, messages are checked against the current folder. The total includes previously processed messages and messages remaining in this run.",
+    "description": " 再開時は現在のフォルダーと照合します。総件数はこれまでの処理済み件数と、今回の未処理件数の合計です。"
+  },
+  "mail117": {
+    "message": " Excluded folders: $ARG1$.",
+    "description": " 対象外のフォルダー：$1件。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "mail118": {
+    "message": "Retained results for this scan: $ARG1$. History is limited to 1,000 results; the oldest no-threat and permanently deleted results are replaced first. Progress counts are kept separately. The scan stops if results requiring attention fill the history limit.",
+    "description": "この検査の履歴を$1件保持しています。履歴上限は1000件で、未検出・完全削除済みの古い履歴から入れ替えます。進捗の処理件数は別に保持します。検出・未検査・失敗の履歴で上限に達した場合は停止します。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "mail119": {
+    "message": "Folder scan started. Check the progress panel.",
+    "description": "フォルダー検査を開始しました。進捗パネルで確認できます。"
+  },
+  "mail120": {
+    "message": "Confirm the target and whether to include subfolders.",
+    "description": "対象とサブフォルダーの範囲を確認してください。"
+  },
+  "mail121": {
+    "message": "Stop requested. The scan will stop after the current operation finishes.",
+    "description": "中止を受け付けました。実行中の処理を終えて停止します。"
+  },
+  "mail122": {
+    "message": "Resume requested. Checking previously processed messages.",
+    "description": "再開を受け付けました。処理済みメールと照合しています。"
+  },
+  "mail123": {
+    "message": "$ARG1$ / Processed: $ARG2$",
+    "description": "$1 ／ 処理済み$2件",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "mail124": {
+    "message": "Folder scan record removed. Messages and scan results have been kept.",
+    "description": "フォルダー検査の記録を削除しました。メールと検査結果は残っています。"
+  },
+  "mail125": {
+    "message": "Messages to permanently delete: $ARG1$ (review every message below)",
+    "description": "完全削除する対象：$1件（下の全件をご確認ください）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "mail126": {
+    "message": "Permanent deletion was not permitted. No messages were deleted.",
+    "description": "完全削除が許可されなかったため、メールは削除していません。"
+  },
+  "mail127": {
+    "message": "Verifying messages to delete.",
+    "description": "削除対象を照合しています。"
+  },
+  "mail128": {
+    "message": "Deletion canceled.",
+    "description": "削除をキャンセルしました。"
+  },
+  "mail129": {
+    "message": "The message was permanently deleted.",
+    "description": "対象メールを完全削除しました。"
+  },
+  "mail130": {
+    "message": "Detection names and scan information",
+    "description": "検出名・検査情報"
+  },
+  "mail131": {
+    "message": "Open message",
+    "description": "メールを開く"
+  },
+  "mail132": {
+    "message": "You are opening a message with a potential threat. Its body will be displayed. Do not open attachments or links while reviewing it.",
+    "description": "脅威候補を検出したメールを開きます。本文が表示されます。添付ファイルやリンクは開かずに確認してください。"
+  },
+  "mail133": {
+    "message": "Opened the message in Thunderbird.",
+    "description": "Thunderbirdで対象メールを開きました。"
+  },
+  "mail134": {
+    "message": "Rescan",
+    "description": "再検査"
+  },
+  "mail135": {
+    "message": "Rescan requested.",
+    "description": "再検査を受け付けました。"
+  },
+  "mail136": {
+    "message": "Delete permanently",
+    "description": "完全削除"
+  },
+  "mail137": {
+    "message": "Unknown",
+    "description": "不明"
+  },
+  "mail138": {
+    "message": "Select for bulk action",
+    "description": "一括操作の対象に選択"
+  },
+  "mail139": {
+    "message": "Permanently delete without moving to Trash",
+    "description": "ごみ箱を経由せず完全削除"
+  },
+  "mail140": {
+    "message": "Results ($ARG1$)",
+    "description": "検査結果（$1）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "mail141": {
+    "message": "Results",
+    "description": "検査結果"
+  },
+  "mail142": {
+    "message": "Results: $ARG1$ requiring attention",
+    "description": "検査結果、確認が必要$1件",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "mail143": {
+    "message": "Requiring attention: $ARG1$",
+    "description": "確認が必要$1件",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "mail144": {
+    "message": "History: $ARG1$ / Requiring attention: $ARG2$ / Queued: $ARG3$ / Matching filters: $ARG4$",
+    "description": "履歴$1件 ／ 確認が必要$2件 ／ 検査待ち$3件 ／ 絞り込み結果$4件",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      },
+      "arg4": {
+        "content": "$4"
+      }
+    }
+  },
+  "mail145": {
+    "message": "Page $ARG1$ / $ARG2$ (50 results per page)",
+    "description": "$1 / $2ページ（1ページ50件）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "mail146": {
+    "message": "Bulk deletion: processed $ARG1$ / $ARG2$ (deleted: $ARG3$; failed: $ARG4$)",
+    "description": "一括削除：$1 / $2件を処理（削除$3件、失敗$4件）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      },
+      "arg4": {
+        "content": "$4"
+      }
+    }
+  },
+  "mail147": {
+    "message": "Rescan requested for $ARG1$ messages.",
+    "description": "$1件の再検査を受け付けました。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "mail148": {
+    "message": "Verifying the selected messages to delete.",
+    "description": "選択した削除対象を照合しています。"
+  },
+  "mail149": {
+    "message": "Bulk deletion canceled.",
+    "description": "一括削除をキャンセルしました。"
+  },
+  "mail150": {
+    "message": "Target message",
+    "description": "対象メール"
+  },
+  "mail151": {
+    "message": "Bulk deletion: permanently deleted: $ARG1$; not deleted: $ARG2$.",
+    "description": "一括削除：完全削除$1件、未削除$2件。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "mail152": {
+    "message": "No eligible accounts.",
+    "description": "対象アカウントがありません。"
+  },
+  "mail153": {
+    "message": "Last connection check: $ARG1$ / $ARG2$. $ARG3$ $ARG4$",
+    "description": "最終接続確認：$1 ／ $2。$3 $4",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      },
+      "arg4": {
+        "content": "$4"
+      }
+    }
+  },
+  "mail154": {
+    "message": "Responding",
+    "description": "応答あり"
+  },
+  "mail155": {
+    "message": "Check failed",
+    "description": "確認失敗"
+  },
+  "mail156": {
+    "message": "Connection has not been checked. Use “Check connection again”.",
+    "description": "接続はまだ確認していません。「接続を再確認」で確認できます。"
+  },
+  "mail157": {
+    "message": "Last actual scan: $ARG1$ / $ARG2$ / $ARG3$",
+    "description": "最終実検査：$1 ／ $2 ／ $3",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "mail158": {
+    "message": "No actual scans recorded.",
+    "description": "実検査の記録はありません。"
+  },
+  "mail159": {
+    "message": "Select an option",
+    "description": "選択してください"
+  },
+  "mail160": {
+    "message": "Scan target: $ARG1$ / $ARG2$",
+    "description": "検査対象：$1 ／ $2",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "mail161": {
+    "message": "Select an account and folder to scan.",
+    "description": "検査するアカウントとフォルダーを選択してください。"
+  },
+  "mail162": {
+    "message": "Loading folders.",
+    "description": "フォルダー一覧を取得しています。"
+  },
+  "mail163": {
+    "message": "The folder limit was reached. For folders not listed, use Thunderbird's context menu.",
+    "description": "フォルダー数の上限に達しました。一覧にない対象はThunderbirdの右クリックから指定してください。"
+  },
+  "mail164": {
+    "message": "No scannable folders.",
+    "description": "検査できるフォルダーがありません。"
+  },
+  "mail165": {
+    "message": "Could not load the list. Use “Refresh list” to try again.",
+    "description": "一覧を取得できませんでした。「一覧を更新」で再試行してください。"
+  },
+  "mail166": {
+    "message": "Saving.",
+    "description": "保存しています。"
+  },
+  "mail167": {
+    "message": "No accounts remain selected. Automatic scanning was disabled and saved.",
+    "description": "対象アカウントがなくなったため、自動検査を停止して保存しました。"
+  },
+  "mail168": {
+    "message": "Saved.",
+    "description": "保存しました。"
+  },
+  "mail169": {
+    "message": "Could not save. The previous settings have been restored.",
+    "description": "保存できませんでした。変更前の設定に戻しました。"
+  },
+  "mail170": {
+    "message": "Settings saved.",
+    "description": "設定を保存しました。"
+  },
+  "mail171": {
+    "message": "Connection check results updated.",
+    "description": "接続の確認結果を更新しました。"
+  },
+  "mail172": {
+    "message": "Clear completed scan history, including detections and failures? Messages themselves will not be deleted.",
+    "description": "検出・失敗を含む、完了した検査履歴を消去します。メール自体は削除しません。続けますか？"
+  },
+  "mail173": {
+    "message": "Completed scan history cleared.",
+    "description": "完了した検査履歴を消去しました。"
+  },
+  "mail174": {
+    "message": "Finding target messages",
+    "description": "対象メールを確認中"
+  },
+  "mail175": {
+    "message": "Stopping",
+    "description": "中止しています"
+  },
+  "mail176": {
+    "message": "Completed",
+    "description": "完了"
+  },
+  "mail177": {
+    "message": "Stopped",
+    "description": "中止"
+  },
+  "mail178": {
+    "message": "Interrupted",
+    "description": "中断"
+  },
+  "mail179": {
+    "message": "Blocked",
+    "description": "停止"
+  },
+  "mail180": {
+    "message": "Failed",
+    "description": "失敗"
+  },
+  "mail181": {
+    "message": "Interrupted by Thunderbird closing or an extension update. Use “Resume” to verify processed messages and continue.",
+    "description": "Thunderbirdの終了または拡張の更新で中断しました。「再開」すると処理済みメールを照合して続行できます。"
+  },
+  "mail182": {
+    "message": "Finding target messages.",
+    "description": "対象メールを確認しています。"
+  },
+  "mail183": {
+    "message": "Could not save the initial scan state.",
+    "description": "検査の開始状態を保存できませんでした。"
+  },
+  "mail184": {
+    "message": "Could not retrieve the target list.",
+    "description": "対象一覧の取得に失敗しました。"
+  },
+  "mail185": {
+    "message": "This folder scan cannot be resumed.",
+    "description": "このフォルダー検査は再開できません。"
+  },
+  "mail186": {
+    "message": "Verifying previously processed messages, including new and changed messages.",
+    "description": "処理済みメールと照合しています。新着・変更されたメールも確認します。"
+  },
+  "mail187": {
+    "message": "A running scan cannot be removed. Stop it first.",
+    "description": "実行中の検査は削除できません。先に中止してください。"
+  },
+  "mail188": {
+    "message": "Stopped while retrieving the target list.",
+    "description": "対象一覧の取得中に中止しました。"
+  },
+  "mail189": {
+    "message": "Stopped because too many folders were selected. Scan a smaller range.",
+    "description": "対象フォルダーが多いため停止しました。範囲を分けてください。"
+  },
+  "mail190": {
+    "message": "The message limit was reached. Scan the folders separately.",
+    "description": "対象メール数の上限に達しました。フォルダーを分けて検査してください。"
+  },
+  "mail191": {
+    "message": "No unprocessed target messages were found.",
+    "description": "未処理の対象メールはありませんでした。"
+  },
+  "mail192": {
+    "message": "Verified $ARG1$ previously processed messages.",
+    "description": "前回の処理済み$1件を照合しました。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "mail193": {
+    "message": "Scanning one message at a time, prioritizing new messages and manual scans.",
+    "description": "新着・手動検査を優先しながら1通ずつ検査します。"
+  },
+  "mail194": {
+    "message": "The folder scan result state is invalid.",
+    "description": "フォルダー検査の結果状態が不正です。"
+  },
+  "mail195": {
+    "message": "Stopped after finishing the current message.",
+    "description": "実行中の1通を終えて中止しました。"
+  },
+  "mail196": {
+    "message": "Processing of target messages is complete. Also check the unscanned and failed counts.",
+    "description": "対象メールの処理が完了しました。未検査・失敗の内訳も確認してください。"
+  },
+  "mail197": {
+    "message": "Stopping after the current operation finishes.",
+    "description": "実行中の処理を終えて中止します。"
+  },
+  "mail198": {
+    "message": "Stopped with messages still queued.",
+    "description": "検査待ちのメールを残して中止しました。"
+  },
+  "mail199": {
+    "message": "Update",
+    "description": "更新"
+  },
+  "mail200": {
+    "message": "Update available",
+    "description": "更新あり"
+  },
+  "mail201": {
+    "message": "A helper update is available.",
+    "description": "補助プログラムの更新があります。"
+  },
+  "mail202": {
+    "message": "Review update",
+    "description": "更新を確認"
+  },
+  "mail203": {
+    "message": "Action required",
+    "description": "要対応"
+  },
+  "mail204": {
+    "message": "The helper needs repair.",
+    "description": "補助プログラムの修復が必要です。"
+  },
+  "mail205": {
+    "message": "Review repair",
+    "description": "修復を確認"
+  },
+  "mail206": {
+    "message": "Update the helper to use its maintenance features.",
+    "description": "補助プログラムの管理機能を利用するには更新が必要です。"
+  },
+  "mail207": {
+    "message": "Check connection",
+    "description": "接続確認"
+  },
+  "mail208": {
+    "message": "Cannot connect to the helper. Check its installation.",
+    "description": "補助プログラムに接続できません。導入状態を確認してください。"
+  },
+  "mail209": {
+    "message": "Open Setup",
+    "description": "セットアップを開く"
+  },
+  "mail210": {
+    "message": "ClamAV Mail Check: $ARG1$ messages require attention",
+    "description": "ClamAV メール検査：確認が必要なメール$1件",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "mail211": {
+    "message": "ClamAV Mail Check: ",
+    "description": "ClamAV メール検査："
+  },
+  "mail212": {
+    "message": "ClamAV Mail Check",
+    "description": "ClamAV メール検査"
+  },
+  "mail213": {
+    "message": "Saving was canceled or could not be completed.",
+    "description": "保存が中止されたか、完了できませんでした。"
+  },
+  "mail214": {
+    "message": "Could not confirm that saving finished. Try again.",
+    "description": "保存の完了を確認できませんでした。もう一度お試しください。"
+  },
+  "mail215": {
+    "message": "File saving was not permitted. Nothing was saved. You can grant permission using the save button again.",
+    "description": "ファイル保存が許可されなかったため、保存していません。保存ボタンから再度許可できます。"
+  },
+  "mail216": {
+    "message": "Choose where to save the file. Saving alone does not install or remove anything.",
+    "description": "保存先を選択してください。ファイルの保存だけで設置や削除は行いません。"
+  },
+  "mail217": {
+    "message": "Cannot read the bundled installer.",
+    "description": "同梱の導入用ファイルを読み取れません。"
+  },
+  "mail218": {
+    "message": "Saving the file.",
+    "description": "ファイルを保存しています。"
+  },
+  "mail219": {
+    "message": "Saved: $ARG1$. Open this folder in Terminal and run the displayed command.",
+    "description": "保存しました：$1。この保存先のフォルダーをTerminalで開いて、表示されたコマンドを実行してください。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "mail220": {
+    "message": "Could not save. Canceling the save dialog makes no changes. You can try again. ",
+    "description": "保存できませんでした。保存画面を中止した場合は変更ありません。再試行できます。 "
+  },
+  "mail221": {
+    "message": "Command copied. Run it in Terminal from the folder where you saved the file.",
+    "description": "コマンドをコピーしました。保存先のフォルダーのTerminalで実行してください。"
+  },
+  "mail222": {
+    "message": "Could not copy. Select and copy the displayed command.",
+    "description": "コピーできませんでした。表示されたコマンドを選択してコピーしてください。"
+  },
+  "mail223": {
+    "message": "Not yet checked. Click “Confirm installation”.",
+    "description": "まだ確認していません。「導入を確認」を押してください。"
+  },
+  "mail224": {
+    "message": "Installed: $ARG1$ / $ARG2$",
+    "description": "導入済み：$1 ／ $2",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "mail225": {
+    "message": "Installed files match",
+    "description": "設置ファイルは一致しています"
+  },
+  "mail226": {
+    "message": "Repair required",
+    "description": "修復が必要です"
+  },
+  "mail227": {
+    "message": "The existing helper does not support maintenance. Use Terminal to update, repair, or remove it.",
+    "description": "既存の補助プログラムは管理機能に未対応です。Terminalで更新・修復または削除できます。"
+  },
+  "mail228": {
+    "message": "The helper was removed. You can continue removing the extension.",
+    "description": "補助プログラムを削除済みです。拡張の削除を続けられます。"
+  },
+  "mail229": {
+    "message": "Cannot connect to the helper. Install or repair it using the bundled file, then click “Confirm installation”.",
+    "description": "補助プログラムに接続できません。同梱ファイルで導入・修復し、「導入を確認」を押してください。"
+  },
+  "mail230": {
+    "message": "Repair helper",
+    "description": "補助プログラムを修復"
+  },
+  "mail231": {
+    "message": "Update helper",
+    "description": "補助プログラムを更新"
+  },
+  "mail232": {
+    "message": "You can update to bundled helper $ARG1$.",
+    "description": "同梱の補助プログラム$1へ更新できます。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "mail233": {
+    "message": "Installed files are inconsistent and need repair.",
+    "description": "設置ファイルに不整合があるため、修復が必要です。"
+  },
+  "mail234": {
+    "message": "The installed version is newer than the bundled version, so this bundle will not update or repair it. Use an installer with the same or a newer version to repair it.",
+    "description": "導入済みの版が同梱版より新しいため、この同梱版で更新・修復は行いません。修復には同じ版か新しい版の導入用ファイルを使ってください。"
+  },
+  "mail235": {
+    "message": "No update or repair is needed.",
+    "description": "更新・修復は不要です。"
+  },
+  "mail236": {
+    "message": "You can remove the helper here. Use the next button to review the targets.",
+    "description": "画面内で補助プログラムを削除できます。次のボタンから対象を確認してください。"
+  },
+  "mail237": {
+    "message": "Helper removal has been confirmed. You can continue removing the extension.",
+    "description": "補助プログラムの削除を確認済みです。拡張の削除を続けられます。"
+  },
+  "mail238": {
+    "message": "To remove the helper, follow the Terminal instructions below.",
+    "description": "補助プログラムの削除には、次のTerminalの手順が必要です。"
+  },
+  "mail239": {
+    "message": "Remove ClamAV Mail Check? Settings, scan history, and resume data may be lost. Messages and ClamAV will remain.",
+    "description": "ClamAV Mail Checkを削除します。設定・検査履歴・再開情報は失われる可能性があります。メールとClamAVは残ります。"
+  },
+  "mail240": {
+    "message": "Extension removal has not completed. If canceled, the extension remains installed. Use “Continue removing extension” to try again. To use it again, install the helper with the bundled file.",
+    "description": "拡張の削除は完了していません。削除を取り消した場合はこのまま残り、「拡張の削除を続ける」で再試行できます。再利用には同梱ファイルで補助プログラムを導入してください。"
+  },
+  "mail241": {
+    "message": "Uninstall",
+    "description": "アンインストール"
+  },
+  "mail242": {
+    "message": "Remove the managed files and connection registration listed below, then confirm extension removal in Thunderbird. Settings, scan history, and resume data may be lost. Messages, accounts, and ClamAV will remain. The helper is shared by this OS user, so other Thunderbird profiles will also lose access. Modified files will be kept and listed. Save the installer first if you plan to reinstall.",
+    "description": "次の場所の管理対象ファイルと接続登録を削除し、続いてThunderbirdの確認画面で拡張を削除します。設定・検査履歴・再開情報は失われる可能性があります。メール・アカウント・ClamAVは残ります。補助プログラムはこのOSユーザーで共通のため、他のThunderbirdプロファイルも接続できなくなります。変更されたファイルは残して表示します。再導入する場合は、先に導入用ファイルを保存してください。"
+  },
+  "mail243": {
+    "message": "$ARG1$Messages, settings, and scan history will be kept. The managed files and connection registration listed below will be changed.",
+    "description": "$1メール・設定・検査履歴は残します。次の場所の管理対象ファイルと接続登録を変更します。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "mail244": {
+    "message": "Repair the installed files for helper $ARG1$. ",
+    "description": "補助プログラム$1の設置ファイルを修復します。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "mail245": {
+    "message": "Update the helper to bundled version $ARG1$. ",
+    "description": "補助プログラムを同梱の$1へ更新します。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "mail246": {
+    "message": "The installer exceeds the size limit.",
+    "description": "導入用ファイルのサイズが上限を超えています。"
+  },
+  "mail247": {
+    "message": "Maintenance canceled.",
+    "description": "管理操作をキャンセルしました。"
+  },
+  "mail248": {
+    "message": " Files kept: ",
+    "description": " 残したファイル："
+  },
+  "mail249": {
+    "message": "Removal instructions are shown for the current installation. Nothing has been removed yet.",
+    "description": "導入状態に応じた削除手順を表示しました。まだ削除は行っていません。"
+  },
+  "mail250": {
+    "message": "Installation checked.",
+    "description": "導入状態を確認しました。"
+  },
+  "mail251": {
+    "message": "Helper removal confirmed.",
+    "description": "補助プログラムの削除完了を確認しました。"
+  },
+  "mail252": {
+    "message": "Scan messages, review results, and take action when needed.",
+    "description": "メールを検査し、結果を確認して必要なメールに対処します。"
+  },
+  "mail253": {
+    "message": "Mail scanning screens",
+    "description": "メール検査の画面"
+  },
+  "mail254": {
+    "message": "Scan",
+    "description": "検査"
+  },
+  "mail255": {
+    "message": "Settings",
+    "description": "設定"
+  },
+  "mail256": {
+    "message": "Help",
+    "description": "ヘルプ"
+  },
+  "mail257": {
+    "message": "Account",
+    "description": "アカウント"
+  },
+  "mail258": {
+    "message": "Folder",
+    "description": "フォルダー"
+  },
+  "mail259": {
+    "message": "Refresh list",
+    "description": "一覧を更新"
+  },
+  "mail260": {
+    "message": "Review scope and start",
+    "description": "検査範囲を確認して開始"
+  },
+  "mail261": {
+    "message": "You can include subfolders in the next confirmation dialog. To scan individual messages, use the context menu in Thunderbird's message list.",
+    "description": "サブフォルダーを含めるかは次の確認画面で選べます。メール単位の検査はThunderbirdのメール一覧の右クリックから利用できます。"
+  },
+  "mail262": {
+    "message": "Folder scan",
+    "description": "フォルダー検査"
+  },
+  "mail263": {
+    "message": "Processed messages in the folder scan",
+    "description": "フォルダー検査の処理済み件数"
+  },
+  "mail264": {
+    "message": "Show results for this scan",
+    "description": "この検査の結果を表示"
+  },
+  "mail265": {
+    "message": "Resume",
+    "description": "再開"
+  },
+  "mail266": {
+    "message": "Remove scan record",
+    "description": "検査記録を削除"
+  },
+  "mail267": {
+    "message": "Status",
+    "description": "状態"
+  },
+  "mail268": {
+    "message": "All",
+    "description": "すべて"
+  },
+  "mail269": {
+    "message": "Needs attention",
+    "description": "確認が必要"
+  },
+  "mail270": {
+    "message": "Queued or scanning",
+    "description": "検査待ち・検査中"
+  },
+  "mail271": {
+    "message": "Search",
+    "description": "検索"
+  },
+  "mail272": {
+    "message": "Sender, subject, detection name, etc.",
+    "description": "差出人・件名・検出名など"
+  },
+  "mail273": {
+    "message": "Reset filters",
+    "description": "絞り込みを解除"
+  },
+  "mail274": {
+    "message": "Show only results from this folder scan",
+    "description": "今回のフォルダー検査の結果だけを表示"
+  },
+  "mail275": {
+    "message": "Actions for selected results",
+    "description": "選択した結果への操作"
+  },
+  "mail276": {
+    "message": "Selected: 0",
+    "description": "選択0件"
+  },
+  "mail277": {
+    "message": "Rescan selected messages",
+    "description": "選択したメールを再検査"
+  },
+  "mail278": {
+    "message": "Permanently delete selected messages",
+    "description": "選択したメールを完全削除"
+  },
+  "mail279": {
+    "message": "Deselect",
+    "description": "選択を解除"
+  },
+  "mail280": {
+    "message": "Selections apply only to the current page and are cleared when filters or pages change. You can permanently delete messages with no threat detected, detections, incomplete scans, or failures. On first use, Thunderbird asks for deletion permission when you click the delete button.",
+    "description": "選択は表示中のページのみです。絞り込み・ページ変更で解除します。一括完全削除は、未検出・検出・未検査・失敗のメールを選択すると利用できます。初回は削除ボタンからThunderbirdの権限確認が表示されます。"
+  },
+  "mail281": {
+    "message": "Results that could not be processed in the bulk action",
+    "description": "一括操作で処理できなかった結果"
+  },
+  "mail282": {
+    "message": "Scan results (scroll horizontally)",
+    "description": "検査結果一覧（横にスクロールできます）"
+  },
+  "mail283": {
+    "message": "Scan results for each message. Use the checkbox in each row to select messages for a bulk action.",
+    "description": "メールごとの検査結果。各行のチェックボックスで一括操作の対象を選べます。"
+  },
+  "mail284": {
+    "message": "Select all actionable results on this page",
+    "description": "このページの操作可能な結果をすべて選択"
+  },
+  "mail285": {
+    "message": "Status and scan time",
+    "description": "状態・検査日時"
+  },
+  "mail286": {
+    "message": "Sender and subject",
+    "description": "差出人・件名"
+  },
+  "mail287": {
+    "message": "Details",
+    "description": "詳細"
+  },
+  "mail288": {
+    "message": "Actions",
+    "description": "操作"
+  },
+  "mail289": {
+    "message": "No matching scan results.",
+    "description": "該当する検査結果はありません。"
+  },
+  "mail290": {
+    "message": "Results pagination",
+    "description": "結果一覧のページ送り"
+  },
+  "mail291": {
+    "message": "Previous page",
+    "description": "前のページ"
+  },
+  "mail292": {
+    "message": "Next page",
+    "description": "次のページ"
+  },
+  "mail293": {
+    "message": "Automatically scan new messages",
+    "description": "新着メールを自動検査する"
+  },
+  "mail294": {
+    "message": "Select accounts first. Deselecting all accounts stops automatic scanning.",
+    "description": "先に対象アカウントを選択してください。対象をすべて外すと自動検査を停止します。"
+  },
+  "mail295": {
+    "message": "Accounts to scan automatically",
+    "description": "自動検査するアカウント"
+  },
+  "mail296": {
+    "message": "Show desktop notifications for detections, incomplete scans, and failures",
+    "description": "検出・検査不能・失敗をデスクトップ通知する"
+  },
+  "mail297": {
+    "message": "Notifications omit senders and subjects. Applies to new messages received after the change.",
+    "description": "通知には差出人・件名を表示しません。変更後に届いた新着が対象です。"
+  },
+  "mail298": {
+    "message": "Changes are saved automatically.",
+    "description": "変更すると自動的に保存します。"
+  },
+  "mail299": {
+    "message": "Scan history",
+    "description": "検査履歴"
+  },
+  "mail300": {
+    "message": "Keeps up to 1,000 results. The oldest no-threat and permanently deleted results are replaced first. Sender, subject, and scan results are stored locally. Message bodies and attachments are not stored in history.",
+    "description": "最大1000件を保持します。上限時は古い未検出・完全削除済みの結果から置き換えます。差出人・件名・検査結果をローカルに保存し、本文と添付は履歴に保存しません。"
+  },
+  "mail301": {
+    "message": "Clear completed scan history",
+    "description": "完了した検査履歴を消去"
+  },
+  "mail302": {
+    "message": "Clearing history does not delete messages themselves.",
+    "description": "履歴の消去では、メール自体は削除されません。"
+  },
+  "mail303": {
+    "message": "ClamAV status",
+    "description": "ClamAVの状態"
+  },
+  "mail304": {
+    "message": "Connection has not been checked.",
+    "description": "接続はまだ確認していません。"
+  },
+  "mail305": {
+    "message": "Check connection again",
+    "description": "接続を再確認"
+  },
+  "mail306": {
+    "message": "A connection check does not scan messages. This information reflects the time of the check.",
+    "description": "接続確認ではメールの検査は行いません。表示は確認時点の結果です。"
+  },
+  "mail307": {
+    "message": "Install or update helper",
+    "description": "補助プログラムの導入・更新"
+  },
+  "mail308": {
+    "message": "Checking installation.",
+    "description": "導入状態を確認しています。"
+  },
+  "mail309": {
+    "message": "For regular Thunderbird installations on Linux. Requires Python 3 and ClamAV. For initial registration or repair when disconnected, save the bundled file and run it in Terminal. No GUI app or sudo is needed.",
+    "description": "Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。初回登録と接続不能時の修復は、同梱ファイルを保存してTerminalで実行します。GUIアプリやsudoは不要です。"
+  },
+  "mail310": {
+    "message": "Save installer",
+    "description": "導入用ファイルを保存"
+  },
+  "mail311": {
+    "message": "Save the file with the displayed name. Open its folder in Terminal and run the following command. If the filename changes, update the command too. An existing installation will be updated or repaired.",
+    "description": "表示される名前でファイルを保存し、その保存先のフォルダーをTerminalで開いて次のコマンドを実行してください。名前が変わった場合はコマンドも合わせてください。導入済みなら更新・修復します。"
+  },
+  "mail312": {
+    "message": "Copy install command",
+    "description": "導入コマンドをコピー"
+  },
+  "mail313": {
+    "message": "Confirm installation",
+    "description": "導入を確認"
+  },
+  "mail314": {
+    "message": "Follow these steps to remove this extension and its helper. Opening this tab alone does not remove anything or change settings.",
+    "description": "この拡張と補助プログラムを取り除く手順を案内します。このタブを開いただけでは、削除や設定変更は行いません。"
+  },
+  "mail315": {
+    "message": "What will be removed or kept",
+    "description": "削除するもの・残すもの"
+  },
+  "mail316": {
+    "message": "Remove the helper and its connection registration, then confirm extension removal in Thunderbird. Extension settings, scan history, and resume data may be lost. Messages, accounts, and ClamAV will remain.",
+    "description": "補助プログラムと接続登録を削除し、続いてThunderbirdの確認で拡張を削除します。拡張の設定・検査履歴・再開情報は失われる可能性があります。メール本体・アカウント・ClamAVは残ります。"
+  },
+  "mail317": {
+    "message": "Turn off automatic scanning first, stop any running scans, and wait for them to finish. If you plan to reinstall, save the installer during these steps.",
+    "description": "先に自動検査をオフにし、実行中の検査を中止して停止を待ってください。再導入したい場合は、手順内で導入用ファイルを保存しておいてください。"
+  },
+  "mail318": {
+    "message": "Start uninstall steps",
+    "description": "アンインストールの手順へ"
+  },
+  "mail319": {
+    "message": "Remove helper",
+    "description": "補助プログラムの削除"
+  },
+  "mail320": {
+    "message": "Save installer for reinstall or removal",
+    "description": "再導入・削除用ファイルを保存"
+  },
+  "mail321": {
+    "message": "Remove helper and continue",
+    "description": "補助プログラムを削除して次へ"
+  },
+  "mail322": {
+    "message": "In this environment, remove the helper in Terminal first. Save the file above, open its folder in Terminal, and run the following command. If the filename changes, update the command too.",
+    "description": "この環境では、先にTerminalで補助プログラムを削除します。上のファイルを保存し、その保存先のフォルダーをTerminalで開いて次のコマンドを実行してください。名前が変わった場合はコマンドも合わせてください。"
+  },
+  "mail323": {
+    "message": "Copy uninstall command",
+    "description": "削除コマンドをコピー"
+  },
+  "mail324": {
+    "message": "Review and approve the changes shown in Terminal. After removal is reported as complete, check the box below and continue removing the extension. A connection failure alone does not confirm removal.",
+    "description": "Terminalに表示される変更内容を確認して承認してください。削除完了の表示を確認した後、下のチェックを入れて拡張の削除へ進みます。接続できないだけでは、削除済みとは判断しません。"
+  },
+  "mail325": {
+    "message": "I confirmed that helper removal completed in Terminal",
+    "description": "Terminalで補助プログラムの削除が完了したことを確認した"
+  },
+  "mail326": {
+    "message": "Continue to extension removal",
+    "description": "拡張の削除へ進む"
+  },
+  "mail327": {
+    "message": "Continue removing extension",
+    "description": "拡張の削除を続ける"
+  },
+  "mail328": {
+    "message": "Check the helper installation in the Setup tab.",
+    "description": "「セットアップ」タブで補助プログラムの導入状態を確認します。"
+  },
+  "mail329": {
+    "message": "On first use, or if disconnected, save the installer, open its folder in Terminal, and run the displayed command.",
+    "description": "初回または接続できない場合は、導入用ファイルを保存し、その保存先のフォルダーをTerminalで開いて表示されたコマンドを実行します。"
+  },
+  "mail330": {
+    "message": "Review and approve the changes. When complete, click “Confirm installation”. Once supported, future updates and repairs can be performed within the extension.",
+    "description": "変更内容を確認して承認し、完了後に「導入を確認」を押します。対応済みなら、以後の更新・修復はアドオン内で実行できます。"
+  },
+  "mail331": {
+    "message": "For regular Thunderbird installations on Linux. Requires Python 3 and ClamAV. Saving the file alone does not install or remove anything. No sudo is needed.",
+    "description": "Linuxの通常版Thunderbird向けです。Python 3とClamAVが必要です。ファイルの保存だけでは設置・削除は行いません。sudoは不要です。"
+  },
+  "mail332": {
+    "message": "Turn off automatic scanning, stop running scans, and wait for them to finish.",
+    "description": "自動検査をオフにし、実行中の検査を中止して停止を待ちます。"
+  },
+  "mail333": {
+    "message": "In the Uninstall tab, review what will be removed or kept, then click “Start uninstall steps”.",
+    "description": "「アンインストール」タブで削除するもの・残すものを確認し、「アンインストールの手順へ」を押します。"
+  },
+  "mail334": {
+    "message": "Supported helpers can be reviewed and removed within the extension. Terminal steps are shown only when needed, such as for older helpers.",
+    "description": "対応済みの補助プログラムは画面内で確認して削除します。旧版などの場合だけ、手順の途中でTerminalの操作を案内します。"
+  },
+  "mail335": {
+    "message": "After removing the helper, confirm extension removal in Thunderbird. If canceled, you can try again from the same tab.",
+    "description": "補助プログラムの削除後、Thunderbirdの確認画面で拡張を削除します。取り消した場合は同じタブから再試行できます。"
+  },
+  "mail336": {
+    "message": "Extension settings, history, and resume data may be lost. Messages, accounts, and ClamAV will remain. The helper is shared by this OS user, so other Thunderbird profiles will also lose access. You can save the installer beforehand to reinstall later.",
+    "description": "拡張の設定・履歴・再開情報は失われる可能性があります。メール・アカウント・ClamAVは残ります。補助プログラムはこのOSユーザー共通のため、他のThunderbirdプロファイルも接続できなくなります。再導入用のファイルを先に保存しておけます。"
+  },
+  "mail337": {
+    "message": "Removing the extension directly from Thunderbird's add-on list leaves the helper installed. To remove both, use this extension's Uninstall tab. For normal upgrades, install the new XPI over the existing version without removing it first.",
+    "description": "Thunderbirdのアドオン一覧で直接拡張を削除しても、補助プログラムは残ります。両方を取り除く場合は、この拡張の「アンインストール」タブから進めてください。通常のバージョンアップでは旧版を削除せず、XPIを上書きインストールします。"
+  },
+  "mail338": {
+    "message": "Open Uninstall",
+    "description": "アンインストールを開く"
+  },
+  "mail339": {
+    "message": "Scan coverage",
+    "description": "検査範囲"
+  },
+  "mail340": {
+    "message": "Scans the entire message after receipt. It does not block reading messages or opening attachments before scanning completes. Message bodies and attachments are not sent to external services. Encrypted messages are not decrypted and are treated as unscanned.",
+    "description": "受信後にメール全体を検査します。検査完了前の閲覧や添付操作は止めません。メール本文・添付は外部サービスに送信しません。暗号化メールは復号せず、未検査として扱います。"
+  },
+  "mail341": {
+    "message": "Limits: 25 MiB per message, 100 MiB after extraction, and 120 seconds per scan. Starting the dedicated clamd for the first time may take up to 60 additional seconds. Scans fail if ClamAV definitions are more than three days old. URL reputation-based phishing detection is disabled.",
+    "description": "上限は1通25MiB、展開後の合計100MiB、検査時間は最大120秒です。専用clamdの初回起動には、別に最大60秒かかります。ClamAVの定義が3日超古い場合は検査失敗として扱います。URLの評判によるフィッシング判定は無効です。"
+  },
+  "mail342": {
+    "message": "What the statuses mean",
+    "description": "状態の意味"
+  },
+  "mail343": {
+    "message": "“No threat detected” means no threat was found; it does not guarantee safety. “Needs attention” includes detections, incomplete scans, and failures.",
+    "description": "未検出は脅威を検出しなかった状態で、安全の保証ではありません。「確認が必要」には検出・未検査・失敗が含まれます。"
+  },
+  "mail344": {
+    "message": "Scanning and acting on results",
+    "description": "検査と結果への対処"
+  },
+  "mail345": {
+    "message": "Select a target in Scan, review the scope, and start. Progress, stop, and resume are also available there. Results provides filters, rescanning, and permanent deletion with confirmation.",
+    "description": "「検査」で対象を選び、範囲を確認して開始します。中止・再開と進捗も同じタブに表示します。「検査結果」では絞り込み、再検査、確認付きの完全削除ができます。"
+  },
+  "mail346": {
+    "message": "You can also scan using the context menu on individual messages or folders. Right-clicking a folder opens a confirmation dialog for that target.",
+    "description": "個別メールやフォルダーの右クリックからも検査できます。フォルダーを右クリックした場合は、選んだ対象の確認画面が開きます。"
+  },
+  "mail347": {
+    "message": "I have reviewed the targets and effects",
+    "description": "対象と影響を確認した"
+  },
+  "mail348": {
+    "message": "Cancel",
+    "description": "キャンセル"
+  },
+  "mail349": {
+    "message": "Apply",
+    "description": "実行"
+  },
+  "mail350": {
+    "message": "Scan folder",
+    "description": "フォルダーを検査"
+  },
+  "mail351": {
+    "message": "Include subfolders",
+    "description": "サブフォルダーも含める"
+  },
+  "mail352": {
+    "message": "Let Thunderbird finish receiving and synchronizing first. Messages are scanned individually after the target list is retrieved. IMAP may need a network connection to retrieve message bodies. Large folders take time.",
+    "description": "先にThunderbirdの受信・同期を完了してください。対象一覧を取得してから1通ずつ検査します。IMAPでは本文の取得に通信が発生する場合があります。大きなフォルダーは時間がかかります。"
+  },
+  "mail353": {
+    "message": "Progress is shown in the Scan tab. Stopping waits for the current operation to finish. Scans do not resume automatically after Thunderbird exits. Use “Resume” to verify processed messages and continue. Starting a new scan replaces the previous resume data.",
+    "description": "進捗は検査タブに表示します。中止時は実行中の処理を終えて停止します。Thunderbird終了後は自動再開しません。「再開」で処理済みメールを照合して続行できます。新しい検査を開始すると、前回の再開情報を置き換えます。"
+  },
+  "mail354": {
+    "message": "Start scan",
+    "description": "検査を開始"
+  },
+  "mail355": {
+    "message": "Remove folder scan record",
+    "description": "フォルダー検査の記録を削除"
+  },
+  "mail356": {
+    "message": "Remove progress and resume data. This scan can no longer be resumed. Messages and individual scan results will not be deleted.",
+    "description": "進捗と再開用の記録を削除します。この検査は再開できなくなります。メール本体と各メールの検査結果は削除しません。"
+  },
+  "mail357": {
+    "message": "Permanently delete messages",
+    "description": "メールの完全削除"
+  },
+  "mail358": {
+    "message": "Permanently delete without moving to Trash. This cannot be undone. For IMAP, deletion also applies to the server and other devices.",
+    "description": "ごみ箱を経由せず完全に削除します。元には戻せません。IMAPではサーバーと他端末にも反映されます。"
+  },
+  "mail359": {
+    "message": "I have reviewed the targets above and understand this cannot be undone",
+    "description": "上の対象を確認し、元に戻せないことを理解しました"
+  },
+  "mail360": {
+    "message": "Delete permanently",
+    "description": "完全に削除する"
+  },
+  "mail361": {
+    "message": "No threats were detected. This does not guarantee safety.",
+    "description": "脅威は検出されませんでした。安全を保証するものではありません。"
+  },
+  "mail362": {
+    "message": "ClamAV returned a warning. Scan coverage could not be confirmed.",
+    "description": "ClamAVが警告を返しました。検査範囲を確認できません。"
+  },
+  "mail363": {
+    "message": " clamd was unavailable, so the message was scanned using regular clamscan.",
+    "description": " clamdを利用できないため、通常のclamscanで検査しました。"
+  },
+  "mail364": {
+    "message": "The communication data exceeds the size limit.",
+    "description": "通信データのサイズが上限を超えています。"
+  },
+  "mail365": {
+    "message": "Communication data must be an object.",
+    "description": "通信データはオブジェクトである必要があります。"
+  },
+  "mail366": {
+    "message": "Some content could not be scanned due to encryption or scan limits.",
+    "description": "暗号化または検査上限により、検査できない部分があります。"
+  },
+  "mail367": {
+    "message": "Could not interpret the detection result.",
+    "description": "検出結果を解釈できませんでした。"
+  },
+  "mail368": {
+    "message": "Could not confirm that ClamAV completed the scan.",
+    "description": "ClamAVの検査完了を確認できませんでした。"
+  },
+  "mail369": {
+    "message": "Encrypted or externally referenced content was not scanned.",
+    "description": "暗号化または外部参照の内容は検査していません。"
+  },
+  "mail370": {
+    "message": "Continuous scans use a dedicated clamd. Definitions are loaded on first use. clamscan is used if clamd cannot start.",
+    "description": "連続検査では専用clamdを利用します。初回は定義を読み込みます。起動できない場合はclamscanを利用します。"
+  },
+  "mail371": {
+    "message": "Each message is scanned individually with clamscan.",
+    "description": "検査はclamscanで1通ずつ実行します。"
+  },
+  "mail372": {
+    "message": "Communication ended unexpectedly.",
+    "description": "通信が途中で終了しました。"
+  },
+  "mail373": {
+    "message": "Invalid communication data format.",
+    "description": "通信データの形式が不正です。"
+  },
+  "mail374": {
+    "message": "ClamAV could not complete the scan. Exit code: ",
+    "description": "ClamAVが検査を完了できませんでした。終了コード: "
+  },
+  "mail375": {
+    "message": "A potential threat was detected.",
+    "description": "脅威候補を検出しました。"
+  },
+  "mail376": {
+    "message": "The scan did not complete within 120 seconds.",
+    "description": "検査が120秒以内に完了しませんでした。"
+  },
+  "mail377": {
+    "message": "Cannot start ClamAV. Check its installation.",
+    "description": "ClamAVを起動できません。インストール状態を確認してください。"
+  },
+  "mail378": {
+    "message": "Communication with clamd failed. The scan has not completed.",
+    "description": "clamdとの通信に失敗しました。検査は完了していません。"
+  },
+  "mail379": {
+    "message": "Encrypted parts were not scanned.",
+    "description": "暗号化されている部分は検査していません。"
+  },
+  "mail380": {
+    "message": "Cannot retrieve the ClamAV version.",
+    "description": "ClamAVのバージョンを取得できません。"
+  },
+  "mail381": {
+    "message": "Some content could not be scanned.",
+    "description": "検査できない部分もあります。"
+  },
+  "mail382": {
+    "message": "clamd stopped responding before the response was complete.",
+    "description": "clamdの応答が途中で終了しました。"
+  },
+  "mail383": {
+    "message": "The mail-scanning clamd exited.",
+    "description": "メール検査用clamdが終了しました。"
+  },
+  "mail384": {
+    "message": "clamd's loaded definitions are outdated, or their age could not be determined.",
+    "description": "clamdの使用中の定義が古いか、更新日時を確認できません。"
+  },
+  "mail385": {
+    "message": "clamd returned a warning. Scan coverage could not be confirmed.",
+    "description": "clamdが警告を返しました。検査範囲を確認できません。"
+  },
+  "mail386": {
+    "message": "Maintenance cannot run during message transfer.",
+    "description": "メール転送中は管理操作を実行できません。"
+  },
+  "mail387": {
+    "message": "Scan data is being received.",
+    "description": "検査データの受信中です。"
+  },
+  "mail388": {
+    "message": "The message size is invalid or exceeds 25 MiB.",
+    "description": "メールサイズが不正か、25MiBを超えています。"
+  },
+  "mail389": {
+    "message": "Received data is out of sequence.",
+    "description": "受信データの順序が不正です。"
+  },
+  "mail390": {
+    "message": "Invalid chunk size.",
+    "description": "データ片のサイズが不正です。"
+  },
+  "mail391": {
+    "message": "Received data exceeds the declared size.",
+    "description": "受信サイズが宣言サイズを超えています。"
+  },
+  "mail392": {
+    "message": "Message data is incomplete.",
+    "description": "メールデータが不足しています。"
+  },
+  "mail393": {
+    "message": "Message data verification failed.",
+    "description": "メールデータの照合に失敗しました。"
+  },
+  "mail394": {
+    "message": "Invalid communication ID.",
+    "description": "通信IDが不正です。"
+  },
+  "mail395": {
+    "message": "The clamd response is too long.",
+    "description": "clamdの応答が長すぎます。"
+  },
+  "mail396": {
+    "message": "Invalid chunk format.",
+    "description": "データ片の形式が不正です。"
+  },
+  "mail397": {
+    "message": "Maintenance is unavailable. Use the command-line installer to install or repair the helper.",
+    "description": "管理機能を利用できません。CLIで導入・修復してください。"
+  },
+  "mail398": {
+    "message": "Installation paths containing newlines are not supported.",
+    "description": "改行を含むインストール先は使用できません。"
+  },
+  "mail399": {
+    "message": "The installation path is outside the allowed range.",
+    "description": "インストール先の範囲が不正です。"
+  },
+  "mail400": {
+    "message": "Could not verify communication between the helper and ClamAV. Changes will not be committed.",
+    "description": "補助プログラムとClamAVの接続確認に失敗しました。変更は確定しません。"
+  },
+  "mail401": {
+    "message": "ClamAV was not found or could not be started.",
+    "description": "ClamAVが見つからないか、起動できません。"
+  },
+  "mail402": {
+    "message": "Setup identity does not match.",
+    "description": "セットアップの識別情報が一致しません。"
+  },
+  "mail403": {
+    "message": "Already installed. Choose update or repair.",
+    "description": "既に導入済みです。更新／修復を選択してください。"
+  },
+  "mail404": {
+    "message": "No installation record managed by this setup was found.",
+    "description": "このセットアップで管理する設置記録がありません。"
+  },
+  "mail405": {
+    "message": "A target is not a regular file: ",
+    "description": "通常ファイルではない対象があります: "
+  },
+  "mail406": {
+    "message": "Cannot verify the installation record. Existing files will not be changed.",
+    "description": "設置記録を確認できません。既存ファイルは変更しません。"
+  },
+  "mail407": {
+    "message": "An older installer cannot update a newer installation.",
+    "description": "導入済みより古いセットアップでは更新できません。"
+  },
+  "mail408": {
+    "message": "The installation changed after confirmation. Check its state again.",
+    "description": "確認後に設置状態が変わりました。状態を再確認してください。"
+  },
+  "mail409": {
+    "message": "Will not modify an installation path containing a symbolic link: ",
+    "description": "シンボリックリンクのある設置先は変更しません: "
+  },
+  "mail410": {
+    "message": "The existing registration or launch menu entry has changed. It will not be overwritten: ",
+    "description": "既存の登録または起動メニューに変更があります。上書きしません: "
+  },
+  "mail411": {
+    "message": "Another setup process is running.",
+    "description": "別のセットアップが実行中です。"
+  },
+  "mail412": {
+    "message": "The installation changed during processing. Changes will not be committed.",
+    "description": "処理中に設置状態が変わりました。変更を確定しません。"
+  },
+  "mail413": {
+    "message": "Missing distribution file: ",
+    "description": "配布ファイルが不足しています: "
+  },
+  "mail414": {
+    "message": "Installed distribution files were modified. Repair them using a downloaded installer.",
+    "description": "設置済みの配布ファイルに変更があります。ダウンロードしたセットアップから修復してください。"
+  },
+  "mail415": {
+    "message": "[Desktop Entry]\nType=Application\nName=ClamAV Mail Check Setup\nComment=Check, update, or remove the helper\nExec=/usr/bin/python3 -B -I ",
+    "description": "[Desktop Entry]\nType=Application\nName=ClamAV Mail Check セットアップ\nComment=補助プログラムの状態確認・更新・削除\nExec=/usr/bin/python3 -B -I "
+  },
+  "mail416": {
+    "message": "Installer version:",
+    "description": "導入用ファイルの版:"
+  },
+  "mail417": {
+    "message": "Helper:",
+    "description": "補助プログラム:"
+  },
+  "mail418": {
+    "message": "Messages, ClamAV itself, the Thunderbird extension, settings, and history will not be changed. No sudo is needed.",
+    "description": "メール、ClamAV本体、Thunderbirdの拡張と設定・履歴は変更しません。sudoは不要です。"
+  },
+  "mail419": {
+    "message": "Turn off automatic scanning of new messages, stop scans, and wait for them to finish before proceeding. The helper is shared by this OS user.",
+    "description": "実行前に新着メールの自動検査をオフにし、検査を中止して停止を待ってください。補助プログラムはこのOSユーザーで共通です。"
+  },
+  "mail420": {
+    "message": "Invalid installer size.",
+    "description": "導入用ファイルのサイズが不正です。"
+  },
+  "mail421": {
+    "message": "ClamAV Mail Check helper installation/removal (no GUI required)",
+    "description": "ClamAV Mail Check 補助プログラムの導入・削除（GUI不要）"
+  },
+  "mail422": {
+    "message": "Apply after approving the displayed changes",
+    "description": "表示される変更内容を承認済みとして実行"
+  },
+  "mail423": {
+    "message": "Not installed",
+    "description": "未導入"
+  },
+  "mail424": {
+    "message": "The helper is not installed. No changes were made.",
+    "description": "補助プログラムは未導入です。変更はありません。"
+  },
+  "mail425": {
+    "message": "Managed files at the following locations will be ",
+    "description": "次の場所の管理対象ファイルを"
+  },
+  "mail426": {
+    "message": "Canceled. No changes were made.",
+    "description": "キャンセルしました。変更はありません。"
+  },
+  "mail427": {
+    "message": "Helper removal is complete.",
+    "description": "補助プログラムの削除が完了しました。"
+  },
+  "mail428": {
+    "message": "Helper installation and the ClamAV response check are complete.",
+    "description": "補助プログラムの設置とClamAVの応答確認が完了しました。"
+  },
+  "mail429": {
+    "message": "Modified files were kept:",
+    "description": "変更されたファイルは残しました:"
+  },
+  "mail430": {
+    "message": "Return to the extension and ",
+    "description": "アドオンの画面に戻り、"
+  },
+  "mail431": {
+    "message": "Run as a regular user. No sudo is needed.",
+    "description": "通常のユーザーとして実行してください。sudoは不要です。"
+  },
+  "mail432": {
+    "message": "Cannot read the installer.",
+    "description": "導入用ファイルを読み取れません。"
+  },
+  "mail433": {
+    "message": "This is not a managed helper. Reinstall using the command-line installer.",
+    "description": "管理対象の補助プログラムではありません。CLIで導入し直してください。"
+  },
+  "mail434": {
+    "message": "This helper cannot be managed from the extension. Use the command-line installer.",
+    "description": "この補助プログラムはアドオンから管理できません。CLIを利用してください。"
+  },
+  "mail435": {
+    "message": "Unsupported maintenance operation.",
+    "description": "未対応の管理操作です。"
+  },
+  "mail436": {
+    "message": "The maintenance confirmation is invalid or expired.",
+    "description": "管理操作の確認が期限切れか、無効です。"
+  },
+  "mail437": {
+    "message": "removed.",
+    "description": "削除します。"
+  },
+  "mail438": {
+    "message": "created or updated.",
+    "description": "作成・更新します。"
+  },
+  "mail439": {
+    "message": "continue removing the extension.",
+    "description": "拡張の削除を続けてください。"
+  },
+  "mail440": {
+    "message": "click “Confirm installation”.",
+    "description": "「導入を確認」を押してください。"
+  },
+  "mail441": {
+    "message": "Could not complete the operation:",
+    "description": "処理できませんでした:"
+  },
+  "mail442": {
+    "message": "The installer contents do not match the expected files.",
+    "description": "導入用ファイルの構成が一致しません。"
+  },
+  "mail443": {
+    "message": "The unpacked installer exceeds the size limit.",
+    "description": "導入用ファイルの展開サイズが上限を超えています。"
+  },
+  "mail444": {
+    "message": "The bundled installer is required.",
+    "description": "同梱の導入用ファイルが必要です。"
+  },
+  "mail445": {
+    "message": "Invalid installer format.",
+    "description": "導入用ファイルの形式が不正です。"
+  },
+  "mail446": {
+    "message": "Proceed? [y/N]: ",
+    "description": "実行しますか？ [y/N]: "
+  },
+  "extensionDescription": {
+    "message": "Scan received messages with local ClamAV and review detections and incomplete scans."
+  },
+  "toolbarDefaultTitle": {
+    "message": "Open ClamAV scan results"
+  },
+  "namedDetail": {
+    "message": "$ARG1$: $ARG2$",
+    "description": "値と説明を並べる共通書式",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "accountType": {
+    "message": "$ARG1$ ($ARG2$)",
+    "description": "アカウント一覧の表示",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "listSeparator": {
+    "message": " / ",
+    "description": "画面内の情報を区切る文字"
+  }
+}

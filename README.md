@@ -71,11 +71,11 @@ node --check thunderbird/dashboard.js
 python3 scripts/build_mail_check.py
 ```
 
-`dist/clam-mail-check-0.9.5.xpi` と、確認用の補助プログラム・登録JSONを
+`dist/clam-mail-check-0.10.0.xpi` と、確認用の補助プログラム・登録JSONを
 `dist/native/` に生成します。GUI不要の導入用ファイル
-`dist/clam-mail-check-installer-0.9.5.pyz` をXPIに同梱し、単体でも生成します。
+`dist/clam-mail-check-installer-0.10.0.pyz` をXPIに同梱し、単体でも生成します。
 旧GUI配布物も必要な場合だけ `--legacy-gui` を指定します。この場合はCコンパイラーが必要です。
-`dist/clam-mail-check-setup-0.9.5-linux-<architecture>.tar.gz` に生成します。
+`dist/clam-mail-check-setup-0.10.0-linux-<architecture>.tar.gz` に生成します。
 旧GUI配布物にはXPI・補助プログラム・GUIを同梱します。通常配布のXPIにもCLI導入用ファイルが入り、ソースのチェックアウトは不要です。
 生成しただけではインストールされません。旧GUIの起動用実行ファイルはビルドした
 アーキテクチャ向けです。今回の確認対象はUbuntu 26.04 / x86_64です。
@@ -156,14 +156,14 @@ Python 3と更新済みClamAVはOS側に必要で、Snap/Flatpakとの連携は�
 導入用ファイルはネットワークからコードを取得せず、同梱内容だけを設置します。
 
 1. XPIを旧版削除なしで上書きインストールし、「セットアップ」タブを開きます。
-2. 「導入用ファイルを保存」で`clam-mail-check-installer-0.9.5.pyz`を保存します。
+2. 「導入用ファイルを保存」で`clam-mail-check-installer-0.10.0.pyz`を保存します。
 3. 保存先のフォルダーをTerminalで開き、アドオンに表示されたコマンドを実行します。
    保存時の名前が変わった場合はコマンドのファイル名も合わせてください。
 4. Terminalに表示される変更先と影響を確認して承認します。root/sudoは不要で、実行を拒否します。
 5. アドオンに戻って「導入を確認」を押します。設置が有効で管理機能に対応した場合は版と状態が表示されます。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.9.5.pyz install
+python3 -I ./clam-mail-check-installer-0.10.0.pyz install
 ```
 
 導入済みなら同じコマンドで更新・修復します。既存の旧GUI方式の設置記録（format 1）も引き継ぎます。
@@ -188,7 +188,7 @@ python3 -I ./clam-mail-check-installer-0.9.5.pyz install
 5. 再びXPIをインストールし、上記の`install`コマンドと「導入を確認」で初回導入を試せます。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.9.5.pyz uninstall
+python3 -I ./clam-mail-check-installer-0.10.0.pyz uninstall
 ```
 
 対応済みならアドオン内の「アンインストール」で補助プログラムを削除し、続いてThunderbirdの確認で拡張自身を削除します。
@@ -203,7 +203,7 @@ python3 -I ./clam-mail-check-installer-0.9.5.pyz uninstall
 状態だけの確認（読み取りのみ）と、隔離した設置先での自動テストは次のとおりです。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.9.5.pyz status
+python3 -I ./clam-mail-check-installer-0.10.0.pyz status
 python3 -B -m unittest discover -s tests -p 'test_cli_setup.py'
 ```
 
@@ -279,7 +279,7 @@ python3 scripts/register_mail_host.py --install
 ユーザーのホーム配下に、次の2ファイルを新規作成します。
 
 ```text
-$HOME/.local/lib/clam-mail-check/0.9.5/host.py
+$HOME/.local/lib/clam-mail-check/0.10.0/host.py
 $HOME/.mozilla/native-messaging-hosts/local.clam_mail_check.json
 ```
 
@@ -574,3 +574,15 @@ SHA-256を照合します。複数候補・Message-IDなし・消失したメー
 Thunderbird起動時と「導入を確認」で状態を調べます。同梱版への更新が必要なときは、セットアップタブの右上とツールバーアイコンの右上に小さな丸を表示します。修復・接続確認が必要な場合も丸で案内します。詳細はツールチップと読み上げ用のラベルで確認でき、タブ名や大きな案内枠は増やしません。
 
 ツールバーは確認が必要なメール件数を優先し、その場合は検査結果を開きます。補助プログラムの案内だけならセットアップを直接開きます。正常になれば丸は消えます。接続失敗だけでは未導入・修復と断定せず、削除済みの場合は再導入を催促しません。更新は同梱の補助プログラムとの比較で、インターネット上の最新版確認ではありません。
+
+
+## 日本語・英語の表示（0.10.0）
+Thunderbirdの表示言語に合わせ、日本語（ja）または英語（en-US向けの表現）を使用します。他の言語では英語へフォールバックします。独自の言語切り替え設定は設けていません。画面、通知、右クリックメニュー、確認ダイアログ、ツールチップ、読み上げ用ラベル、ヘルプ、導入・削除手順を対象にしています。日付も表示言語に合わせます。
+
+翻訳は`thunderbird/_locales/ja/messages.json`と`thunderbird/_locales/en/messages.json`に格納し、Thunderbird標準のi18n APIを使用します。`mailNNN`は既存の説明に対応する安定したキーです。番号の付け直し・再利用はせず、新規メッセージは新しいキーを追加してください。文中の値は名前付きプレースホルダーで渡し、翻訳や値をHTMLとして挿入しません。元の日本語は翻訳者向けのdescriptionと、拡張APIのない単体テスト用フォールバックにも保持しています。
+
+補助プログラムには要求ごとに言語を渡します。新しいネイティブ検査説明は翻訳キーと生の検出情報を分けて保持し、表示時に翻訳できます。従来の履歴の説明文、差出人、件名、検出名、ClamAVやOS自身の診断出力は書き換えません。古い補助プログラムの日本語の説明は、補助プログラムを更新するまでそのままです。
+
+Terminalに提示するコマンドには`--language ja`または`--language en-US`を付け、Thunderbirdと同じ言語で導入・削除手順を表示します。指定がなければLC_ALL、LC_MESSAGES、LANGの順に参照し、日本語以外では英語にします。既存の導入用ファイルの構成を保つため、Python側の翻訳表は`setup/__init__.py`と`native/host.py`に内蔵しています。Python側を変更したら、拡張の翻訳表・検査説明の翻訳キーとの一致も確認してください。旧GUIセットアップは互換用であり、今回のローカライズ対象には含みません。
+
+検証は`node --test tests/mail_*.test.mjs`、`python3 -m unittest discover -s tests`、`node scripts/smoke_mail_ui.mjs`で行います。画面検証は独立したヘッドレス環境と模擬APIで日英を確認し、実Thunderbirdの言語パック設定には触れません。

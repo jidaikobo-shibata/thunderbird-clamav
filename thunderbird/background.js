@@ -1,3 +1,4 @@
+import { t } from "./i18n.mjs";
 import { toolbarNotice } from "./installation.mjs";
 import {
   MAX_BYTES, DEFAULTS, LABELS, NativeClient, accountOf, locator, sameEnvelope,
@@ -37,7 +38,7 @@ async function helperInfo() {
     const info = await client.request("manageInfo");
     if (generation !== maintenanceGeneration) return installation;
     installation = { state: info.status === "managed" ? "managed" : "legacy",
-      version: info.version || null, healthy: info.healthy, detail: info.detail || "連携用の更新が必要です。" };
+      version: info.version || null, healthy: info.healthy, detail: info.detail || t("mail001", "連携用の更新が必要です。") };
     if (installation.state === "managed" && helperRemoved && !maintenanceActive()) {
       helperRemoved = false;
       await save();
@@ -61,17 +62,17 @@ const folderScan = new FolderScan(api, {
     if (!settings.notifications) return;
     try {
       await api.notifications.create("folder-" + job.id, { type: "basic", iconUrl: api.runtime.getURL("icon.svg"),
-        title: "ClamAV：フォルダー検査 " + FOLDER_STATES[job.status],
-        message: `処理済み${job.completed}件、検出${job.counts.detected}件、未検査${job.counts.incomplete}件、失敗${job.counts.error}件。結果画面を確認してください。` });
-    } catch { issue = "フォルダー検査の通知を表示できません。結果画面を確認してください。"; }
+        title: t("mail002", "ClamAV：フォルダー検査 ") + FOLDER_STATES[job.status],
+        message: t("mail003", "処理済み$1件、検出$2件、未検査$3件、失敗$4件。結果画面を確認してください。", [job.completed, job.counts.detected, job.counts.incomplete, job.counts.error]) });
+    } catch { issue = t("mail004", "フォルダー検査の通知を表示できません。結果画面を確認してください。"); }
   }
 });
 
 async function chooseFolder(folder) {
-  if (maintenanceActive() || helperRemoved) throw new Error("補助プログラムの管理が完了してから操作してください。");
-  if (folderScan.active) throw new Error("フォルダー検査は既に実行中です。");
+  if (maintenanceActive() || helperRemoved) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
+  if (folderScan.active) throw new Error(t("mail006", "フォルダー検査は既に実行中です。"));
   const current = folder?.id ? await api.folders.get(folder.id, false) : folder;
-  if (!realFolder(current)) throw new Error("通常のメールフォルダーを1つ選択してください。統合・検索・タグの仮想フォルダーは対象外です。");
+  if (!realFolder(current)) throw new Error(t("mail007", "通常のメールフォルダーを1つ選択してください。統合・検索・タグの仮想フォルダーは対象外です。"));
   folderRequest = { token: crypto.randomUUID(), folder: { id: current.id, accountId: current.accountId,
     path: current.path, name: current.name || current.path } };
   return folderRequest;
@@ -80,7 +81,7 @@ async function chooseFolder(folder) {
 async function currentFolder() {
   const tabs = await api.mailTabs.query({});
   const tab = tabs.find(tab => tab.id === lastMailTab) || tabs.find(tab => tab.active) || tabs[0];
-  if (!tab) throw new Error("Thunderbirdのフォルダー一覧で対象を選択してください。");
+  if (!tab) throw new Error(t("mail008", "Thunderbirdのフォルダー一覧で対象を選択してください。"));
   const full = await api.mailTabs.get(tab.id);
   return chooseFolder(full.displayedFolder);
 }
@@ -88,7 +89,7 @@ async function currentFolder() {
 function deletable(key) {
   const record = records.find(item => item.key === key);
   if (!record || !canDelete(record)) {
-    throw new Error("処理が終了した未削除のメールを選択してください。");
+    throw new Error(t("mail009", "処理が終了した未削除のメールを選択してください。"));
   }
   return record;
 }
@@ -99,24 +100,24 @@ function position(message) {
 
 async function verified(record, expectedFingerprint = null) {
   const message = await resolveRecord(record);
-  if (message.external || !message.folder) throw new Error("保存されているメールを特定できません。");
+  if (message.external || !message.folder) throw new Error(t("mail010", "保存されているメールを特定できません。"));
   let fingerprint;
   if (record.sha256) {
     const digest = await sha256(await rawBytes(message.id));
-    if (digest !== record.sha256) throw new Error("対象メールが検査時と一致しません。再検査してください。");
+    if (digest !== record.sha256) throw new Error(t("mail011", "対象メールが検査時と一致しません。再検査してください。"));
     fingerprint = "sha256:" + digest;
   } else {
     // Failed/oversized scans may have no scan digest. Establish a confirmation
     // snapshot without loading the entire message or invoking the scanner.
     const raw = await api.messages.getRaw(message.id, { data_format: "File", decrypt: false });
     if (!raw || !Number.isSafeInteger(raw.size) || raw.size < 0 || typeof raw.slice !== "function") {
-      throw new Error("削除対象のメール内容を取得できませんでした。");
+      throw new Error(t("mail012", "削除対象のメール内容を取得できませんでした。"));
     }
     let digest = await sha256(new TextEncoder().encode("clam-mail-check-delete-v1:" + raw.size));
     for (let offset = 0; offset < raw.size; offset += 512 * 1024) {
       const chunk = new Uint8Array(await raw.slice(offset, offset + 512 * 1024).arrayBuffer());
       if (chunk.length !== Math.min(512 * 1024, raw.size - offset)) {
-        throw new Error("削除対象のメール内容を最後まで取得できませんでした。");
+        throw new Error(t("mail013", "削除対象のメール内容を最後まで取得できませんでした。"));
       }
       const bytes = new Uint8Array(32 + chunk.length);
       bytes.set(digest.match(/../g).map(value => parseInt(value, 16)));
@@ -126,7 +127,7 @@ async function verified(record, expectedFingerprint = null) {
     fingerprint = "chunked-sha256-v1:" + digest;
   }
   if (expectedFingerprint && fingerprint !== expectedFingerprint) {
-    throw new Error("確認後にメール内容が変わりました。もう一度確認してください。");
+    throw new Error(t("mail014", "確認後にメール内容が変わりました。もう一度確認してください。"));
   }
   return { message, fingerprint };
 }
@@ -134,36 +135,36 @@ async function verified(record, expectedFingerprint = null) {
 function requestedKeys(keys) {
   if (!Array.isArray(keys) || !keys.length || keys.length > 100 ||
       keys.some(key => typeof key !== "string") || new Set(keys).size !== keys.length) {
-    throw new Error("一括操作は重複のない1〜100件を選択してください。");
+    throw new Error(t("mail015", "一括操作は重複のない1〜100件を選択してください。"));
   }
   return keys;
 }
 
 async function prepareBatch(keys) {
   requestedKeys(keys);
-  if (batchProgress?.active) throw new Error("一括削除の処理中です。");
+  if (batchProgress?.active) throw new Error(t("mail016", "一括削除の処理中です。"));
   if (!await api.permissions.contains({ permissions: ["messagesDelete"] })) {
-    throw new Error("完全削除の権限がありません。削除ボタンからもう一度操作してください。");
+    throw new Error(t("mail017", "完全削除の権限がありません。削除ボタンからもう一度操作してください。"));
   }
   const tickets = [], targets = [], positions = new Set();
   for (const key of keys) {
     const record = deletable(key);
-    if (deleting.has(key)) throw new Error("削除処理中のメールがあります。");
+    if (deleting.has(key)) throw new Error(t("mail018", "削除処理中のメールがあります。"));
     const hash = record.sha256;
     const { message, fingerprint } = await verified(record);
-    if (deletable(key).sha256 !== hash) throw new Error("検査結果が変わりました。選び直してください。");
+    if (deletable(key).sha256 !== hash) throw new Error(t("mail019", "検査結果が変わりました。選び直してください。"));
     const place = position(message);
-    if (positions.has(place)) throw new Error("同じメールを指す履歴が含まれています。重複を外してください。");
+    if (positions.has(place)) throw new Error(t("mail020", "同じメールを指す履歴が含まれています。重複を外してください。"));
     positions.add(place);
     tickets.push({ key, hash, fingerprint, position: place });
-    targets.push({ key, author: message.author || "差出人なし", subject: message.subject || "件名なし",
+    targets.push({ key, author: message.author || t("mail021", "差出人なし"), subject: message.subject || t("mail022", "件名なし"),
       accountId: message.folder.accountId, folder: message.folder.path || message.folder.name || "",
       status: record.status, signatures: record.signatures || [] });
   }
   for (const [token, batch] of batchTickets) {
     if (batch.expires < Date.now()) batchTickets.delete(token);
   }
-  if (batchTickets.size >= 10) throw new Error("未完了の確認が多いため、ほかの確認画面を閉じてやり直してください。");
+  if (batchTickets.size >= 10) throw new Error(t("mail023", "未完了の確認が多いため、ほかの確認画面を閉じてやり直してください。"));
   const token = crypto.randomUUID();
   batchTickets.set(token, { tickets, expires: Date.now() + 300000 });
   return { ok: true, token, targets };
@@ -171,29 +172,30 @@ async function prepareBatch(keys) {
 
 
 async function executeDeletion(ticket) {
-  if (deleting.has(ticket.key)) throw new Error("このメールは削除処理中です。");
+  if (deleting.has(ticket.key)) throw new Error(t("mail024", "このメールは削除処理中です。"));
   deleting.add(ticket.key);
   try {
     if (!await api.permissions.contains({ permissions: ["messagesDelete"] })) {
-      throw new Error("完全削除の権限がありません。");
+      throw new Error(t("mail025", "完全削除の権限がありません。"));
     }
     const record = deletable(ticket.key);
-    if (record.sha256 !== ticket.hash) throw new Error("検査結果が変わりました。再確認してください。");
+    if (record.sha256 !== ticket.hash) throw new Error(t("mail026", "検査結果が変わりました。再確認してください。"));
     const { message } = await verified(record, ticket.fingerprint);
     // Never follow a move/replacement after the user saw the confirmation.
     const current = await api.messages.get(message.id);
     if (position(current) !== ticket.position || !sameEnvelope(current, record.locator) ||
         deletable(ticket.key).sha256 !== ticket.hash) {
-      throw new Error("確認後にメールの場所や検査結果が変わりました。再確認してください。");
+      throw new Error(t("mail027", "確認後にメールの場所や検査結果が変わりました。再確認してください。"));
     }
     await api.messages.delete([current.id], { deletePermanently: true, isUserAction: true });
     record.status = "deleted";
     record.deletedAt = new Date().toISOString();
     record.updatedAt = record.deletedAt;
     record.nextRetry = null;
-    record.detail = "ごみ箱を経由せず完全削除しました。元には戻せません。";
+    delete record.detailMessages;
+    record.detail = t("mail028", "ごみ箱を経由せず完全削除しました。元には戻せません。");
     try { await save(); }
-    catch { issue = "メールの削除は完了しましたが、履歴を保存できませんでした。"; }
+    catch { issue = t("mail029", "メールの削除は完了しましたが、履歴を保存できませんでした。"); }
     await updateBadge().catch(report);
     return { ok: true };
   } finally { deleting.delete(ticket.key); }
@@ -230,10 +232,10 @@ async function notify(record) {
   try {
     await api.notifications.create(record.key, {
       type: "basic", iconUrl: api.runtime.getURL("icon.svg"),
-      title: "ClamAV：" + LABELS[record.status],
-      message: "Thunderbirdの検査結果画面で対象メールを確認してください。"
+      title: t("mail211", "ClamAV メール検査：") + LABELS[record.status],
+      message: t("mail030", "Thunderbirdの検査結果画面で対象メールを確認してください。")
     });
-  } catch { issue = "デスクトップ通知を表示できません。結果画面を確認してください。"; }
+  } catch { issue = t("mail031", "デスクトップ通知を表示できません。結果画面を確認してください。"); }
 }
 
 async function openDashboard() {
@@ -253,10 +255,10 @@ async function rawBytes(messageId) {
   // decrypted mail. Encrypted MIME is explicitly marked incomplete by the host.
   const raw = await api.messages.getRaw(messageId, { data_format: "File", decrypt: false });
   if (!raw || typeof raw.arrayBuffer !== "function") {
-    throw new Error("メールデータをFile形式で取得できませんでした。");
+    throw new Error(t("mail032", "メールデータをFile形式で取得できませんでした。"));
   }
   if (!raw.size || raw.size > MAX_BYTES) {
-    const error = new Error("メールが空か、検査上限の25MiBを超えています。");
+    const error = new Error(t("mail033", "メールが空か、検査上限の25MiBを超えています。"));
     error.incomplete = true;
     throw error;
   }
@@ -272,13 +274,13 @@ async function resolveRecord(record) {
     } catch { /* Moved/deleted messages are resolved below. */ }
   }
   if (!record.locator.headerMessageId) {
-    throw new Error("対象を再特定できません。Thunderbirdで選択して再検査してください。");
+    throw new Error(t("mail034", "対象を再特定できません。Thunderbirdで選択して再検査してください。"));
   }
   const candidates = [];
   const first = await api.messages.query({ headerMessageId: record.locator.headerMessageId });
   for await (const message of messagePages(api.messages, first)) {
     if (sameEnvelope(message, record.locator)) candidates.push(message);
-    if (candidates.length > 20) throw new Error("同じ識別情報のメールが多いため、対象を特定できません。");
+    if (candidates.length > 20) throw new Error(t("mail035", "同じ識別情報のメールが多いため、対象を特定できません。"));
   }
   const matches = [];
   for (const candidate of candidates) {
@@ -287,7 +289,7 @@ async function resolveRecord(record) {
     }
   }
   if (matches.length !== 1) {
-    throw new Error("対象メールが存在しないか、複数候補があり特定できません。選択して再検査してください。");
+    throw new Error(t("mail036", "対象メールが存在しないか、複数候補があり特定できません。選択して再検査してください。"));
   }
   record.messageId = matches[0].id;
   record.session = session;
@@ -299,7 +301,7 @@ function enqueue(first, source) {
   const work = async () => {
     let overflow = false;
     for await (const message of messagePages(api.messages, first)) {
-      if (source === "manual" && helperRemoved) throw new Error("補助プログラムの導入を確認してから検査してください。");
+      if (source === "manual" && helperRemoved) throw new Error(t("mail037", "補助プログラムの導入を確認してから検査してください。"));
       if (message.external || !message.folder) continue;
       if (source === "automatic" && (!settings.enabled ||
           !settings.accountIds.includes(accountOf(message)))) continue;
@@ -316,12 +318,12 @@ function enqueue(first, source) {
       const record = existing || { key: crypto.randomUUID(), createdAt: new Date().toISOString() };
       Object.assign(record, {
         messageId: message.id, session, locator: locator(message), source,
-        status: "queued", detail: "検査を待っています。", signatures: [],
+        status: "queued", detail: t("mail038", "検査を待っています。"), signatures: [],
         sha256: null, engine: null, attempts: 0, nextRetry: null, folderJobId: null, updatedAt: new Date().toISOString()
       });
       if (!existing) records.push(record);
     }
-    if (overflow) issue = "結果が1000件に達しました。新着の一部を検査できません。履歴を整理してください。";
+    if (overflow) issue = t("mail039", "結果が1000件に達しました。新着の一部を検査できません。履歴を整理してください。");
     await save();
     await updateBadge();
     void drain().catch(report);
@@ -344,7 +346,7 @@ async function drain() {
         if (records.length >= MAX_RECORDS) {
           const index = records.findIndex(item => ["clean", "deleted"].includes(item.status));
           if (index === -1) {
-            await folderScan.finish("blocked", "検出・未検査・失敗などの履歴で上限1000件に達したため停止しました。履歴を確認・整理し、改めて開始してください。");
+            await folderScan.finish("blocked", t("mail040", "検出・未検査・失敗などの履歴で上限1000件に達したため停止しました。履歴を確認・整理し、改めて開始してください。"));
             continue;
           }
           records.splice(index, 1);
@@ -353,7 +355,7 @@ async function drain() {
         if (message) {
           record = { key: crypto.randomUUID(), createdAt: new Date().toISOString(),
             messageId: message.id, session, locator: locator(message), source: "folder",
-            status: "queued", detail: "フォルダー検査を待っています。", signatures: [],
+            status: "queued", detail: t("mail041", "フォルダー検査を待っています。"), signatures: [],
             sha256: null, engine: null, attempts: 0, nextRetry: null, folderJobId: folderScan.job.id,
             updatedAt: new Date().toISOString() };
           records.push(record);
@@ -362,14 +364,15 @@ async function drain() {
       if (!record) break;
       const fromFolder = record.source === "folder";
       record.status = "scanning";
-      record.detail = "メールを取得して検査しています。";
+      delete record.detailMessages;
+      record.detail = t("mail042", "メールを取得して検査しています。");
       record.attempts++;
       record.updatedAt = new Date().toISOString();
       await save();
       try {
         const message = await resolveRecord(record);
         if (message.headersOnly) {
-          throw new Error("ヘッダーのみ取得されたメールです。本文をダウンロードして再検査してください。");
+          throw new Error(t("mail043", "ヘッダーのみ取得されたメールです。本文をダウンロードして再検査してください。"));
         }
         const bytes = await rawBytes(message.id);
         record.sha256 = await sha256(bytes);
@@ -378,7 +381,7 @@ async function drain() {
           const health = await client.request("health");
           if (health.status !== "ready" || health.protocol !== 1) {
             client.close();
-            throw new Error(health.detail || "補助プログラムのバージョンが対応していません。");
+            throw new Error(health.detail || t("mail044", "補助プログラムのバージョンが対応していません。"));
           }
           engine = health.engine;
         }
@@ -386,14 +389,17 @@ async function drain() {
         const result = await client.scan(bytes, record.sha256);
         record.status = result.status;
         record.engine = result.engine || engine;
+        delete record.detailMessages;
         record.detail = result.detail;
+        if (result.detailMessages) record.detailMessages = result.detailMessages;
         record.signatures = result.signatures || [];
         if (result.status !== "error") lastScan = { checkedAt: new Date().toISOString(),
           engine: record.engine, status: result.status };
         record.nextRetry = null;
       } catch (error) {
         record.status = error.incomplete ? "incomplete" : "error";
-        record.detail = error.message || "検査に失敗しました。";
+        delete record.detailMessages;
+        record.detail = error.message || t("mail045", "検査に失敗しました。");
       }
       record.updatedAt = new Date().toISOString();
       // Two automatic attempts total; no endless retry loop on bad mail/host.
@@ -419,10 +425,10 @@ async function drain() {
     const active = records.find(record => record.status === "scanning");
     if (active) {
       active.status = "error";
-      active.detail = "検査状態の保存に失敗しました。保存領域を確認して再検査してください。";
+      active.detail = t("mail046", "検査状態の保存に失敗しました。保存領域を確認して再検査してください。");
     }
     if (folderScan.active) {
-      await folderScan.finish("error", "検査状態の保存などに失敗したため停止しました。結果を確認して改めて開始してください。").catch(() => {});
+      await folderScan.finish("error", t("mail047", "検査状態の保存などに失敗したため停止しました。結果を確認して改めて開始してください。")).catch(() => {});
     }
     throw error;
   } finally {
@@ -436,9 +442,9 @@ async function scanSelection() {
     const tabs = await api.mailTabs.query({});
     lastMailTab = (tabs.find(tab => tab.active) || tabs[0])?.id;
   }
-  if (lastMailTab === undefined) throw new Error("メール一覧で対象を選択してください。");
+  if (lastMailTab === undefined) throw new Error(t("mail048", "メール一覧で対象を選択してください。"));
   const selected = await api.mailTabs.getSelectedMessages(lastMailTab);
-  if (!selected.messages.length) throw new Error("メール一覧で対象を選択してください。");
+  if (!selected.messages.length) throw new Error(t("mail048", "メール一覧で対象を選択してください。"));
   await enqueue(selected, "manual");
 }
 
@@ -470,13 +476,14 @@ const ready = (async () => {
     record.session = null;
     if (record.status === "scanning" || (record.source === "folder" && record.status === "queued")) {
       record.status = record.source === "folder" ? "error" : "queued";
-      record.detail = record.source === "folder" ? "フォルダー検査中に終了したため、このメールの結果は未確認です。" : "前回中断された検査を再開します。";
+      delete record.detailMessages;
+      record.detail = record.source === "folder" ? t("mail049", "フォルダー検査中に終了したため、このメールの結果は未確認です。") : t("mail050", "前回中断された検査を再開します。");
       if (record.source === "folder") record.nextRetry = null;
     }
   }
   await api.menus.removeAll();
-  api.menus.create({ id: "scan", title: "ClamAVで選択メールを検査", contexts: ["message_list"] });
-  api.menus.create({ id: "scan-folder", title: "ClamAVでフォルダーを検査", contexts: ["folder_pane"] });
+  api.menus.create({ id: "scan", title: t("mail051", "ClamAVで選択メールを検査"), contexts: ["message_list"] });
+  api.menus.create({ id: "scan-folder", title: t("mail052", "ClamAVでフォルダーを検査"), contexts: ["folder_pane"] });
   await save();
   await helperInfo();
   await updateBadge();
@@ -491,7 +498,7 @@ api.menus.onClicked.addListener((info, tab) => {
     void ready.then(async () => {
       if (!folderScan.active) {
         const folders = info.selectedFolders || (info.selectedFolder ? [info.selectedFolder] : []);
-        if (folders.length !== 1) throw new Error("フォルダーを1つ選択してください。");
+        if (folders.length !== 1) throw new Error(t("mail053", "フォルダーを1つ選択してください。"));
         await chooseFolder(folders[0]);
       }
       await openDashboard();
@@ -518,7 +525,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
   await ready;
   try {
     if ((maintenanceActive() || helperRemoved) && !["state", "helperInfo", "helperApply", "helperCancel", "helperMarkRemoved", "health"].includes(request.type)) {
-      throw new Error("補助プログラムの管理中か削除後です。導入を確認してから操作してください。");
+      throw new Error(t("mail054", "補助プログラムの管理中か削除後です。導入を確認してから操作してください。"));
     }
     switch (request.type) {
       case "state":
@@ -529,13 +536,13 @@ api.runtime.onMessage.addListener(async (request, sender) => {
       case "helperInfo":
         return { ok: true, installation: await helperInfo() };
       case "helperPlan": {
-        if (running || folderScan.active || batchProgress?.active || deleting.size) throw new Error("検査・削除の処理が終了してから操作してください。フォルダー検査中は先に中止してください。");
+        if (running || folderScan.active || batchProgress?.active || deleting.size) throw new Error(t("mail055", "検査・削除の処理が終了してから操作してください。フォルダー検査中は先に中止してください。"));
         maintenanceGeneration++;
         const client = new NativeClient(api.runtime);
         pendingMaintenance = { client, token: null, expires: Date.now() + 300000, operation: request.operation };
         try {
           const plan = await client.request("managePlan", { operation: request.operation, package: request.package });
-          if (plan.status !== "prepared" || !plan.token) throw new Error(plan.detail || "管理機能が未対応です。同梱のCLIファイルを利用してください。");
+          if (plan.status !== "prepared" || !plan.token) throw new Error(plan.detail || t("mail056", "管理機能が未対応です。同梱のCLIファイルを利用してください。"));
           pendingMaintenance.token = plan.token;
           return { ok: true, plan };
         } catch (error) { releaseMaintenance(); void drain().catch(report); throw error; }
@@ -547,10 +554,10 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         return { ok: true };
       case "helperApply": {
         const pending = pendingMaintenance;
-        if (!pending || request.token !== pending.token) throw new Error("管理操作の確認が無効です。");
-        if (pending.applying) throw new Error("管理操作は既に実行中です。");
+        if (!pending || request.token !== pending.token) throw new Error(t("mail057", "管理操作の確認が無効です。"));
+        if (pending.applying) throw new Error(t("mail058", "管理操作は既に実行中です。"));
         if (Date.now() > pending.expires) {
-          releaseMaintenance(); throw new Error("管理操作の確認が期限切れです。");
+          releaseMaintenance(); throw new Error(t("mail059", "管理操作の確認が期限切れです。"));
         }
         pending.applying = true;
         const removing = pending.operation === "uninstall";
@@ -561,25 +568,25 @@ api.runtime.onMessage.addListener(async (request, sender) => {
             await save();
           }
           const result = await pending.client.request("manageApply", { token: pending.token }, 60000);
-          if (!["removed", "updated"].includes(result.status)) throw new Error(result.detail || "補助プログラムの処理を完了できませんでした。");
+          if (!["removed", "updated"].includes(result.status)) throw new Error(result.detail || t("mail060", "補助プログラムの処理を完了できませんでした。"));
           installation = { state: result.status === "removed" ? "removed" : "managed",
             version: result.version, healthy: true, retained: result.retained || [],
-            detail: result.status === "removed" ? "補助プログラムを削除しました。拡張の削除を続けられます。" : "補助プログラムを更新・修復しました。" };
-          try { await save(); } catch { installation.detail += " 状態の保存に失敗したため、この画面で結果を確認してください。"; }
+            detail: result.status === "removed" ? t("mail061", "補助プログラムを削除しました。拡張の削除を続けられます。") : t("mail062", "補助プログラムを更新・修復しました。") };
+          try { await save(); } catch { installation.detail += t("mail063", " 状態の保存に失敗したため、この画面で結果を確認してください。"); }
           return { ok: true, installation };
         } catch (error) {
           if (removing) {
-            installation = { state: "unavailable", detail: "削除の完了を確認できませんでした。導入を確認するか、CLIのstatus/uninstallで状態を確認してください。" };
+            installation = { state: "unavailable", detail: t("mail064", "削除の完了を確認できませんでした。導入を確認するか、CLIのstatus/uninstallで状態を確認してください。") };
             await save().catch(report);
           }
           throw error;
         } finally { releaseMaintenance(); void drain().catch(report); }
       }
       case "helperMarkRemoved":
-        if (request.acknowledged !== true || running || folderScan.active || batchProgress?.active || deleting.size) throw new Error("処理を停止し、Terminalで補助プログラムの削除が完了したことを確認してください。");
+        if (request.acknowledged !== true || running || folderScan.active || batchProgress?.active || deleting.size) throw new Error(t("mail065", "処理を停止し、Terminalで補助プログラムの削除が完了したことを確認してください。"));
         helperRemoved = true;
         settings = { ...settings, enabled: false };
-        installation = { state: "removed", detail: "Terminalでの削除完了を利用者が確認しました。" };
+        installation = { state: "removed", detail: t("mail066", "Terminalでの削除完了を利用者が確認しました。") };
         await save();
         return { ok: true };
       case "settings": {
@@ -626,7 +633,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
       }
       case "folderContext":
         if (request.folderId !== undefined) {
-          if (typeof request.folderId !== "string" || !request.folderId) throw new Error("検査するフォルダーを選択してください。");
+          if (typeof request.folderId !== "string" || !request.folderId) throw new Error(t("mail067", "検査するフォルダーを選択してください。"));
           return { ok: true, ...await chooseFolder(await api.folders.get(request.folderId, false)) };
         }
         return { ok: true, ...await currentFolder() };
@@ -634,38 +641,38 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         if (folderRequest?.token === request.token) folderRequest = null;
         return { ok: true };
       case "folderStart": {
-        if (!folderRequest || folderRequest.token !== request.token) throw new Error("フォルダーの選択が変わりました。選び直してください。");
-        if (typeof request.includeSubfolders !== "boolean") throw new Error("サブフォルダーの選択が不正です。");
+        if (!folderRequest || folderRequest.token !== request.token) throw new Error(t("mail068", "フォルダーの選択が変わりました。選び直してください。"));
+        if (typeof request.includeSubfolders !== "boolean") throw new Error(t("mail069", "サブフォルダーの選択が不正です。"));
         const folder = folderRequest.folder;
         const current = folder.id ? await api.folders.get(folder.id, false) : folder;
-        if (!realFolder(current) || current.accountId !== folder.accountId || current.path !== folder.path) throw new Error("フォルダーが見つからないか、場所が変わりました。選び直してください。");
+        if (!realFolder(current) || current.accountId !== folder.accountId || current.path !== folder.path) throw new Error(t("mail070", "フォルダーが見つからないか、場所が変わりました。選び直してください。"));
         const job = await folderScan.start(current, request.includeSubfolders);
         folderRequest = null;
         void folderScan.collecting.catch(report);
         return { ok: true, job };
       }
       case "folderResume": {
-        if (request.jobId !== folderScan.job?.id || !folderScan.resumable) throw new Error("この検査は再開できません。画面を更新してください。");
+        if (request.jobId !== folderScan.job?.id || !folderScan.resumable) throw new Error(t("mail071", "この検査は再開できません。画面を更新してください。"));
         const job = folderScan.job, folder = job.folder;
         const current = folder.id ? await api.folders.get(folder.id, false) : folder;
-        if (folderScan.job !== job || !realFolder(current) || current.accountId !== folder.accountId || current.path !== folder.path) throw new Error("元のフォルダーが見つからないか、場所が変わりました。");
+        if (folderScan.job !== job || !realFolder(current) || current.accountId !== folder.accountId || current.path !== folder.path) throw new Error(t("mail072", "元のフォルダーが見つからないか、場所が変わりました。"));
         await folderScan.resume(current);
         void folderScan.collecting.catch(report);
         return { ok: true };
       }
       case "folderDelete":
-        if (!folderScan.job || request.jobId !== folderScan.job.id) throw new Error("検査の対象が変わりました。画面を更新してください。");
+        if (!folderScan.job || request.jobId !== folderScan.job.id) throw new Error(t("mail073", "検査の対象が変わりました。画面を更新してください。"));
         await folderScan.remove();
         folderRequest = null;
         return { ok: true };
       case "folderStop":
-        if (request.jobId !== folderScan.job?.id) throw new Error("検査の対象が変わりました。画面を更新してください。");
+        if (request.jobId !== folderScan.job?.id) throw new Error(t("mail073", "検査の対象が変わりました。画面を更新してください。"));
         await folderScan.stop();
         return { ok: true };
       case "retry": {
         const record = records.find(item => item.key === request.key);
         if (!record || deleting.has(record.key) || ["scanning", "queued", "deleted"].includes(record.status)) {
-          throw new Error("この結果は再検査できません。");
+          throw new Error(t("mail074", "この結果は再検査できません。"));
         }
         record.status = "queued";
         record.source = "manual";
@@ -681,7 +688,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         const targets = keys.map(key => records.find(record => record.key === key));
         if (targets.some(record => !record || deleting.has(record.key) ||
             !["clean", "detected", "incomplete", "error"].includes(record.status))) {
-          throw new Error("再検査できない結果が含まれています。選び直してください。");
+          throw new Error(t("mail075", "再検査できない結果が含まれています。選び直してください。"));
         }
         for (const record of targets) {
           Object.assign(record, { status: "queued", source: "manual", attempts: 0, nextRetry: null, folderJobId: null });
@@ -696,10 +703,10 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         batchTickets.delete(request.token);
         return { ok: true };
       case "deleteBatch": {
-        if (batchProgress?.active) throw new Error("一括削除の処理中です。");
+        if (batchProgress?.active) throw new Error(t("mail016", "一括削除の処理中です。"));
         const batch = batchTickets.get(request.token);
         batchTickets.delete(request.token);
-        if (!batch || batch.expires < Date.now()) throw new Error("削除確認が期限切れです。選び直してください。");
+        if (!batch || batch.expires < Date.now()) throw new Error(t("mail076", "削除確認が期限切れです。選び直してください。"));
         batchProgress = { active: true, total: batch.tickets.length, completed: 0, deleted: 0, failed: 0 };
         const results = [];
         try {
@@ -710,7 +717,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
               results.push({ key: ticket.key, deleted: true });
             } catch (error) {
               batchProgress.failed++;
-              results.push({ key: ticket.key, deleted: false, error: error.message || "削除に失敗しました。" });
+              results.push({ key: ticket.key, deleted: false, error: error.message || t("mail077", "削除に失敗しました。") });
             }
             batchProgress.completed++;
           }
@@ -719,30 +726,30 @@ api.runtime.onMessage.addListener(async (request, sender) => {
       }
       case "open": {
         const record = records.find(item => item.key === request.key);
-        if (!record || record.status === "deleted" || deleting.has(record.key) || !record.sha256) throw new Error("検査対象を照合できません。メール一覧から確認してください。");
+        if (!record || record.status === "deleted" || deleting.has(record.key) || !record.sha256) throw new Error(t("mail078", "検査対象を照合できません。メール一覧から確認してください。"));
         const message = await resolveRecord(record);
         if (await sha256(await rawBytes(message.id)) !== record.sha256) {
-          throw new Error("メール内容が検査時から変わっています。再検査してください。");
+          throw new Error(t("mail079", "メール内容が検査時から変わっています。再検査してください。"));
         }
         await api.messageDisplay.open({ messageId: message.id, location: "tab" });
         return { ok: true };
       }
       case "prepareDelete": {
         if (!await api.permissions.contains({ permissions: ["messagesDelete"] })) {
-          throw new Error("完全削除の権限がありません。削除ボタンからもう一度操作してください。");
+          throw new Error(t("mail017", "完全削除の権限がありません。削除ボタンからもう一度操作してください。"));
         }
         const record = deletable(request.key);
         const hash = record.sha256;
         const { message, fingerprint } = await verified(record);
-        if (deletable(record.key).sha256 !== hash) throw new Error("検査結果が変わりました。操作をやり直してください。");
+        if (deletable(record.key).sha256 !== hash) throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
         const token = crypto.randomUUID();
         for (const [key, ticket] of deletionTickets) {
           if (ticket.expires < Date.now() || ticket.key === record.key) deletionTickets.delete(key);
         }
         deletionTickets.set(token, { key: record.key, hash, fingerprint, position: position(message),
           expires: Date.now() + 60000 });
-        return { ok: true, token, author: message.author || "差出人なし",
-          subject: message.subject || "件名なし", folder: message.folder.path || message.folder.name || "",
+        return { ok: true, token, author: message.author || t("mail021", "差出人なし"),
+          subject: message.subject || t("mail022", "件名なし"), folder: message.folder.path || message.folder.name || "",
           accountId: message.folder.accountId, status: record.status, signatures: record.signatures || [] };
       }
       case "cancelDelete":
@@ -752,7 +759,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         const ticket = deletionTickets.get(request.token);
         deletionTickets.delete(request.token);
         if (!ticket || ticket.key !== request.key || ticket.expires < Date.now()) {
-          throw new Error("削除確認が無効か期限切れです。もう一度操作してください。");
+          throw new Error(t("mail081", "削除確認が無効か期限切れです。もう一度操作してください。"));
         }
         return await executeDeletion(ticket);
       }
@@ -764,9 +771,9 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         await save();
         await updateBadge();
         return { ok: true };
-      default: throw new Error("未対応の操作です。");
+      default: throw new Error(t("mail082", "未対応の操作です。"));
     }
-  } catch (error) { return { ok: false, error: error.message || "操作に失敗しました。" }; }
+  } catch (error) { return { ok: false, error: error.message || t("mail083", "操作に失敗しました。") }; }
 });
 
 // Timers are sufficient for a persistent MV2 background page. Restart recovery
