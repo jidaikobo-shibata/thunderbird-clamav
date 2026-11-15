@@ -497,8 +497,6 @@ function syncSettings(settings) {
     }
     checkbox.checked = settings.accountIds.includes(account.id);
   }
-  const names = latest.accounts.filter(account => settings.accountIds.includes(account.id)).map(account => account.name);
-  setText($("automatic-status"), names.length ? t("autoAccountsActive", "自動検査中：$1", [names.join(t("listSeparator", " ／ "))]) : t("autoAccountsStopped", "自動検査は停止しています。"));
   if (!latest.accounts.length) setText($("accounts"), t("mail152", "対象アカウントがありません。"));
 }
 
