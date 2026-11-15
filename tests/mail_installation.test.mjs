@@ -25,7 +25,8 @@ test("only necessary update or repair is offered and downgrade is never offered"
 test("helper notices distinguish connection failure and prioritize mail attention", () => {
   const old = { state: "managed", version: "0.9.2", healthy: true };
   assert.equal(helperNotice(old, "0.9.4").kind, "update");
-  assert.equal(toolbarNotice(old, "0.9.4", "", 0).text, "更新");
+  assert.equal(toolbarNotice(old, "0.9.4", "", 0).text, "");
+  assert.equal(toolbarNotice(old, "0.9.4", "", 0).dot, "update");
   assert.equal(toolbarNotice(old, "0.9.4", "", 0).setup, true);
   assert.equal(toolbarNotice(old, "0.9.4", "", 2).text, "2");
   assert.equal(toolbarNotice(old, "0.9.4", "", 2).setup, false);

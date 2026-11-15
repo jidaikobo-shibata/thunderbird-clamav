@@ -218,6 +218,7 @@ function toolbarState() {
 }
 async function updateBadge() {
   const notice = toolbarState();
+  await api.browserAction.setIcon({ path: notice.dot ? `icon-${notice.dot}.svg` : "icon.svg" });
   await api.browserAction.setBadgeText({ text: notice.text });
   await api.browserAction.setBadgeBackgroundColor({ color: notice.color });
   await api.browserAction.setTitle({ title: notice.title });

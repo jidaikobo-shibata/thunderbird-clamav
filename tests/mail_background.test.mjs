@@ -65,7 +65,7 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
     mailTabs: { onSelectedMessagesChanged: events.selected, query: async () => [{ id: 7, active: true }],
       get: async () => ({ displayedFolder: folderRefs[0] }),
       getSelectedMessages: async () => ({ messages: mails }) },
-    browserAction: { onClicked: event(), setTitle: async () => {}, setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
+    browserAction: { onClicked: event(), setIcon: async () => {}, setTitle: async () => {}, setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
     notifications: { onClicked: event(), create: async (...args) => notifications.push(args) },
     tabs: { query: async () => [], create: async () => {} }, windows: { update: async () => {} },
     messageDisplay: { open: async value => opened.push(value) }

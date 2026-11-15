@@ -33,7 +33,7 @@ export function toolbarNotice(info, version, issue, count) {
   const notice = helperNotice(info, version);
   if (count) return { text: String(count), color: "#9d281b", title: `ClamAV メール検査：確認が必要なメール${count}件`, setup: false };
   if (issue) return { text: "!", color: "#9d281b", title: "ClamAV メール検査：" + issue, setup: false };
-  return { text: notice?.badge || "", color: notice?.kind === "update" ? "#285b8f" : "#9d281b",
+  return { text: "", dot: notice ? notice.kind === "update" ? "update" : "attention" : null, color: notice?.kind === "update" ? "#285b8f" : "#9d281b",
     title: notice ? "ClamAV メール検査：" + notice.message : "ClamAV メール検査", setup: Boolean(notice) };
 }
 

@@ -15,14 +15,10 @@
     <button type="button" role="tab" id="tab-scan" aria-selected="true" aria-controls="panel-scan">検査</button>
     <button type="button" role="tab" id="tab-results" aria-selected="false" aria-controls="panel-results" tabindex="-1">検査結果</button>
     <button type="button" role="tab" id="tab-settings" aria-selected="false" aria-controls="panel-settings" tabindex="-1">設定</button>
-    <button type="button" role="tab" id="tab-setup" aria-selected="false" aria-controls="panel-setup" tabindex="-1">セットアップ</button>
+    <button type="button" role="tab" id="tab-setup" aria-selected="false" aria-controls="panel-setup" tabindex="-1"><span>セットアップ</span><span id="setup-dot" class="notification-dot" aria-hidden="true" hidden></span></button>
     <button type="button" role="tab" id="tab-uninstall" aria-selected="false" aria-controls="panel-uninstall" tabindex="-1">アンインストール</button>
     <button type="button" role="tab" id="tab-help" aria-selected="false" aria-controls="panel-help" tabindex="-1">ヘルプ</button>
   </div>
-  <aside id="helper-notice" hidden aria-label="補助プログラムの案内">
-    <span id="helper-notice-text" role="status"></span>
-    <button type="button" id="helper-notice-open">セットアップを開く</button>
-  </aside>
   </div>
   <p id="action-status" role="status" aria-live="polite"></p>
   <p id="issue" role="alert" hidden></p>

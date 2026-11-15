@@ -89,10 +89,11 @@ async function action(callback, success) {
 
 function renderHelperNotice() {
   const notice = helperNotice(latest?.installation, messenger.runtime.getManifest().version);
-  setText($("tab-setup"), notice ? `セットアップ（${notice.label}）` : "セットアップ");
-  $("helper-notice").hidden = !notice || $("tab-setup").getAttribute("aria-selected") === "true";
-  setText($("helper-notice-text"), notice?.message || "");
-  setText($("helper-notice-open"), notice?.button || "セットアップを開く");
+  const tab = $("tab-setup"), dot = $("setup-dot");
+  dot.hidden = !notice;
+  dot.dataset.kind = notice?.kind || "";
+  tab.title = notice?.message || "セットアップ";
+  tab.setAttribute("aria-label", notice ? `セットアップ：${notice.message}` : "セットアップ");
 }
 function openSetup() {
   userNavigated = true;
@@ -100,7 +101,6 @@ function openSetup() {
   $("installation-title").focus();
   $("installation-title").scrollIntoView({ block: "start" });
 }
-$("helper-notice-open").addEventListener("click", openSetup);
 
 function activateTab(name, focus = false) {
   for (const id of TABS) {
