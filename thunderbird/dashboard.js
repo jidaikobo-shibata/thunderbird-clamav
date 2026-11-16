@@ -1,3 +1,4 @@
+import { syncScanPolicy, readScanPolicy, policyDescription, advisoryDescription } from "./scan-policy.mjs";
 import { isReviewed, canReview, canUnreview, reviewStamp } from "./review.mjs";
 import { canQuarantine, quarantineNeedsPermission } from "./quarantine.mjs";
 import { syncQuarantineSettings, readQuarantineSettings, requireMovePermission, confirmQuarantine, quarantineSummary } from "./quarantine-ui.mjs";
@@ -84,7 +85,7 @@ function updateControls() {
     entry.open.disabled = locked || !record.sha256 || ["queued", "scanning", "deleted"].includes(record.status);
     entry.retry.disabled = locked || !canRetry(record);
     entry.remove.disabled = locked || !canDelete(record);
-    entry.review.disabled = locked || record.status !== "incomplete";
+    entry.review.disabled = locked || !["incomplete", "advisory"].includes(record.status);
   }
   $("previous-page").disabled = navigationLocked || page === 0;
   $("next-page").disabled = navigationLocked || page + 1 >= Number($("page-label").dataset.pages || 1);
@@ -183,7 +184,7 @@ function renderFolder() {
     const waiting = Math.max(0, job.total - job.completed - job.scanning);
     setText($("folder-status"), t("mail112", "$1 ／ 処理済み$2 / $3件（$4%） ／ 検査中$5件・未処理$6件 ／ $7", [FOLDER_STATES[job.status], job.completed, job.total, percent, job.scanning, waiting, time]));
   }
-  setText($("folder-counts"), t("mail113", "未検出$1件 ／ 検出$2件 ／ 未検査$3件 ／ 失敗$4件", [job.counts.clean, job.counts.detected, job.counts.incomplete, job.counts.error]));
+  setText($("folder-counts"), (job.counts.advisory ? t("scanAdvisoryCount", "注意情報$1件 ／ ", [job.counts.advisory]) : "") + t("mail113", "未検出$1件 ／ 検出$2件 ／ 未検査$3件 ／ 失敗$4件", [job.counts.clean, job.counts.detected, job.counts.incomplete, job.counts.error]));
   const milestone = `${job.id}:${job.status}:${Math.floor(job.completed / 10)}`;
   if (milestone !== folderAnnouncement) {
     folderAnnouncement = milestone;
@@ -342,7 +343,7 @@ function makeRow(record) {
   }
   const details = cells[3].appendChild(document.createElement("details"));
   details.appendChild(document.createElement("summary")).textContent = t("mail130", "検出名・検査情報");
-  for (const key of ["signatures", "engine"]) {
+  for (const key of ["signatures", "engine", "scanPolicy"]) {
     parts[key] = details.appendChild(document.createElement("span"));
     parts[key].className = key;
   }
@@ -361,7 +362,7 @@ function makeRow(record) {
   review.className = "review-action";
   review.addEventListener("click", () => {
     const current = latest.records.find(item => item.key === record.key);
-    if (current?.status === "incomplete") changeReview([current], !isReviewed(current));
+    if (["incomplete", "advisory"].includes(current?.status)) changeReview([current], !isReviewed(current));
   });
   const remove = cells[4].appendChild(document.createElement("button"));
   remove.textContent = t("mail136", "完全削除");
@@ -390,18 +391,19 @@ function renderRecords() {
     rows.set(record.key, entry);
     entry.row.dataset.status = record.status;
     entry.row.dataset.attention = String(needsAttention(record));
-    setText(entry.parts.state, isReviewed(record) ? t("reviewedState", "一部または全部が未検査（確認済み）") : record.status === "incomplete" && record.unscannedReason === "automaticExcluded" ? t("automaticExcludedFilter", "未検査：自動検査の対象から除外") : LABELS[record.status] || t("mail137", "不明"));
+    setText(entry.parts.state, isReviewed(record) ? record.status === "advisory" ? t("scanAdvisoryReviewed", "注意情報（確認済み）") : t("reviewedState", "一部または全部が未検査（確認済み）") : record.status === "incomplete" && record.unscannedReason === "automaticExcluded" ? t("automaticExcludedFilter", "未検査：自動検査の対象から除外") : LABELS[record.status] || t("mail137", "不明"));
     entry.parts.time.dateTime = record.updatedAt;
     setText(entry.parts.time, new Date(record.updatedAt).toLocaleString(uiLanguage()));
     setText(entry.parts.sender, record.locator.author || t("mail021", "差出人なし"));
     setText(entry.parts.subject, record.locator.subject || t("mail022", "件名なし"));
     const account = latest.accounts.find(account => account.id === record.locator.accountId)?.name || record.locator.accountId || "";
     setText(entry.parts.location, [account, folderLabel(record.locator.folder, folderChoices, record.locator.accountId)].filter(Boolean).join(t("listSeparator", " ／ ")));
-    setText(entry.parts.detail, [localizeDetail(record), quarantineSummary(record, folderChoices), isReviewed(record) && record.review.note ? t("reviewMemo", "判断メモ：$1", [record.review.note]) : ""].filter(Boolean).join(" "));
+    setText(entry.parts.detail, [localizeDetail(record), advisoryDescription(record), quarantineSummary(record, folderChoices), isReviewed(record) && record.review.note ? t("reviewMemo", "判断メモ：$1", [record.review.note]) : ""].filter(Boolean).join(" "));
     setText(entry.parts.signatures, (record.signatures || []).join(" / "));
     setText(entry.parts.engine, record.engine || "");
+    setText(entry.parts.scanPolicy, record.scanSettings ? policyDescription(record.scanSettings) : "");
     entry.remove.hidden = !canDelete(record);
-    entry.review.hidden = record.status !== "incomplete";
+    entry.review.hidden = !["incomplete", "advisory"].includes(record.status);
     const reviewLabel = isReviewed(record) ? t("unreviewRowAction", "未確認に") : t("reviewRowAction", "確認済み");
     setText(entry.review, reviewLabel);
     entry.review.setAttribute("aria-label", t("namedDetail", "$1：$2", [record.locator.subject || t("mail022", "件名なし"), reviewLabel]));
@@ -550,9 +552,10 @@ $("forget-selected").addEventListener("click", () => {
     return response.skipped ? t("forgetResult", "履歴$1件を消去しました。状態が変わった$2件は残しました。メール本体は削除していません。", [response.count, response.skipped]) : t("forgetSuccess", "履歴$1件を消去しました。メール本体は残っています。", [response.count]);
   });
 });
-function syncSettings(settings) {
+function syncSettings(settings, forceScan = false) {
   settings = normalizeAutomaticSettings(settings);
   $("notifications").checked = settings.notifications;
+  syncScanPolicy(settings.scanSettings, forceScan);
   syncQuarantineSettings(settings, latest.accounts, folderChoices);
   const current = new Map([...$("accounts").querySelectorAll("input")].map(input => [input.value, input]));
   const ids = new Set(latest.accounts.map(account => account.id));
@@ -646,7 +649,7 @@ function changeReview(targets, reviewed) {
   void action(async () => {
     const title = reviewed ? t("reviewAction", "確認済みにする") : t("unreviewAction", "未確認に戻す");
     setText($("review-title"), title); setText($("review-confirm"), title);
-    setText($("review-description"), reviewed ? t("reviewDescription", "未検査の結果と理由を残し、「確認が必要」の件数から除外します。安全性を検査で確認したという意味ではありません。再検査で本文や未検査の理由が変わった場合、本文を照合できない場合は未確認に戻ります。") : t("unreviewDescription", "確認済みの印と判断メモを取り消し、再び「確認が必要」に含めます。検査結果は変えません。"));
+    setText($("review-description"), reviewed ? t("reviewDescription", "未検査や注意情報の結果と理由を残し、「確認が必要」の件数から除外します。安全性を検査で確認したという意味ではありません。再検査で本文や検出理由が変わった場合、本文を照合できない場合は未確認に戻ります。") : t("unreviewDescription", "確認済みの印と判断メモを取り消し、再び「確認が必要」に含めます。検査結果は変えません。"));
     setText($("review-count"), t("reviewTargetsCount", "対象：$1通（画面外の選択を含む）", [targets.length]));
     $("review-targets").replaceChildren(...targets.map(record => {
       const item = document.createElement("li");
@@ -690,7 +693,10 @@ $("settings-form").addEventListener("change", () => {
   const accountIds = [...$("accounts").querySelectorAll("input:checked")].map(input => input.value);
   const wasEnabled = latest.settings.enabled;
   const quarantine = readQuarantineSettings(latest.settings.quarantine, folderChoices);
-  const settings = { enabled: accountIds.length > 0, notifications: $("notifications").checked, accountIds, quarantine };
+  let scanSettings;
+  try { scanSettings = readScanPolicy(); }
+  catch (error) { syncSettings(latest.settings, true); setText($("settings-status"), error.message); return; }
+  const settings = { enabled: accountIds.length > 0, notifications: $("notifications").checked, accountIds, quarantine, scanSettings };
   const permission = quarantineNeedsPermission(latest.settings.quarantine, quarantine) ? requireMovePermission() : Promise.resolve();
   settingsSaving = true;
   void action(async () => {
@@ -699,10 +705,10 @@ $("settings-form").addEventListener("change", () => {
       await permission;
       await request("settings", { settings });
       latest.settings = settings;
-      syncSettings(settings);
+      syncSettings(settings, true);
       setText($("settings-status"), !accountIds.length && wasEnabled ? t("mail167", "対象アカウントがなくなったため、自動検査を停止して保存しました。") : t("mail168", "保存しました。"));
     } catch (error) {
-      syncSettings(latest.settings);
+      syncSettings(latest.settings, true);
       setText($("settings-status"), t("mail169", "保存できませんでした。変更前の設定に戻しました。"));
       throw error;
     } finally { settingsSaving = false; }

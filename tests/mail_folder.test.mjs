@@ -253,3 +253,15 @@ test("multiple roots without subfolders include only explicit targets and reject
   assert.deepEqual(listed, ["root", "child"]);
   assert.equal(scan.job.total, 2);
 });
+
+
+test("advisory counts remain separate and are compatible with old folder summaries", async () => {
+  const { scan, api } = fixture();
+  api.messages.list = async () => ({ messages: [mail(1)] });
+  await scan.start(root, false); await scan.collecting;
+  assert.equal(scan.job.counts.advisory, undefined);
+  scan.take(); await scan.complete("advisory");
+  assert.equal(scan.job.counts.advisory, 1);
+  assert.equal(scan.job.counts.detected, 0);
+  assert.equal(scan.job.status, "completed");
+});

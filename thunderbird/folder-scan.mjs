@@ -194,6 +194,7 @@ export class FolderScan {
     return target;
   }
   async complete(status, checkpoint) {
+    if (status === "advisory" && this.job) this.job.counts.advisory ??= 0;
     if (!this.job?.scanning || !Object.hasOwn(this.job.counts, status)) throw new Error(t("mail194", "フォルダー検査の結果状態が不正です。"));
     if (checkpoint) this.remember(checkpoint.hint, checkpoint.digest);
     this.job.scanning = 0;

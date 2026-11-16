@@ -23,11 +23,13 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
       connectNative() {
         const port = { disconnected: false, onMessage: event(), onDisconnect: event(), disconnect() { this.disconnected = true; },
           postMessage(request) {
+            if (request.op === "begin") port.scanSettings = request.scanSettings;
             queueMicrotask(async () => {
               if (request.op === "end" && scanGate) await scanGate(rawReads.at(-1));
               if (nativeFailure) { port.onDisconnect.listeners[0](); return; }
               const result = request.op === "manageInfo" && manageInfo ? manageInfo : request.op === "health" && healthResult ? healthResult : request.op === "health" ? { status: "ready", protocol: 1, engine: "test" } :
                 request.op === "end" ? { status: "clean", detail: "未検出", sha256: request.sha256, signatures: [],
+                  ...(port.scanSettings ? { scanSettings: structuredClone(port.scanSettings) } : {}),
                   ...(typeof scanResult === "function" ? scanResult(rawReads.at(-1)) : scanResult) } :
                   { status: "accepted", seq: request.seq + 1 };
               port.onMessage.listeners[0]({ id: request.id, ...result });
@@ -1468,4 +1470,76 @@ test("oversized mail retains review only when its streamed content fingerprint i
   state = await rescan(); assert.equal(state.records[0].review.note, "expected large mail");
   changed = true;
   state = await rescan(); assert.equal(state.records[0].review, undefined);
+});
+
+
+test("scan settings are recorded and advisory notifications follow the per-category mode", async () => {
+  const { scanPolicy } = await import("../thunderbird/scan-policy.mjs");
+  for (const mode of ["display", "notify"]) {
+    const settings = { enabled: true, accountIds: ["one"], notifications: true, quarantine: { one: { auto: true, folderId: "isolation", path: "/Isolation" } }, scanSettings: scanPolicy({ phishing: mode }) };
+    const h = await harness({ mails: [mail(1)], saved: { settings }, healthResult: { status: "ready", protocol: 1, scanSettingsVersion: 1, engine: "test" },
+      scanResult: { status: "advisory", detail: "phishing", signatures: ["Heuristics.Phishing.Email.SpoofedDomain"], advisories: [{ kind: "phishing" }] } });
+    h.events.newMail.listeners[0](mail(1).folder, { messages: [mail(1)] });
+    const state = await settle(h, state => state.records[0]?.status === "advisory");
+    assert.deepEqual(state.records[0].scanSettings, settings.scanSettings);
+    assert.equal(state.records[0].advisories[0].kind, "phishing");
+    assert.equal(h.notifications.length, mode === "notify" ? 1 : 0);
+    assert.equal(state.records[0].quarantine, undefined);
+    assert.equal((await h.send("prepareDelete", { key: state.records[0].key })).ok, false); // permission is still optional
+  }
+});
+
+test("older helpers cannot silently ignore customized scan settings", async () => {
+  const h = await harness({ mails: [mail(1)], saved: { settings: { enabled: false, accountIds: [], notifications: true, scanSettings: { macros: "display" } } } });
+  await h.send("scanSelection");
+  const state = await settle(h, state => state.records[0]?.status === "error");
+  assert.match(state.records[0].detail, /補助プログラムの更新/);
+  assert.equal(h.nativePorts.length, 1);
+});
+
+test("mail size policy is enforced before transferring or allocating oversized mail", async () => {
+  const h = await harness({ mails: [mail(1)], saved: { settings: { enabled: false, accountIds: [], notifications: true, scanSettings: { mailMiB: 5 } } } });
+  h.api.messages.getRaw = async () => ({ size: 6 * 1024 * 1024, arrayBuffer() { throw Error("must not allocate"); } });
+  await h.send("scanSelection");
+  const state = await settle(h, state => state.records[0]?.status === "incomplete");
+  assert.match(state.records[0].detail, /5MiB/);
+  assert.equal(state.records[0].scanSettings.mailMiB, 5);
+  assert.equal(h.nativePorts.length, 0);
+  assert.equal((await h.send("settings", { settings: { enabled: false, accountIds: [], notifications: true, scanSettings: { mailMiB: 101 } } })).ok, false);
+});
+
+test("running scans retain their original policy and settings changes affect the next scan", async () => {
+  const { scanPolicy } = await import("../thunderbird/scan-policy.mjs");
+  const first = scanPolicy({ macros: "display" }), second = scanPolicy({ macros: "notify" });
+  let entered, release; const scanning = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; }); let once = true;
+  const mails = [mail(1), mail(2)];
+  const h = await harness({ mails, saved: { settings: { enabled: true, accountIds: ["one"], notifications: true, scanSettings: first } },
+    healthResult: { status: "ready", protocol: 1, scanSettingsVersion: 1, engine: "test" },
+    scanGate: async () => { if (once) { once = false; entered(); await gate; } },
+    scanResult: { status: "advisory", detail: "macro", advisories: [{ kind: "macros" }] } });
+  h.events.newMail.listeners[0](mails[0].folder, { messages: [mails[0]] });
+  await scanning;
+  assert.equal((await h.send("settings", { settings: { enabled: true, accountIds: ["one"], notifications: true, scanSettings: second } })).ok, true);
+  release();
+  let state = await settle(h, state => state.records[0]?.status === "advisory");
+  assert.equal(state.records[0].scanSettings.macros, "display");
+  assert.equal(h.notifications.length, 0);
+  h.events.newMail.listeners[0](mails[1].folder, { messages: [mails[1]] });
+  state = await settle(h, state => state.records.length === 2 && state.records.every(record => record.status === "advisory"));
+  assert.equal(state.records[1].scanSettings.macros, "notify");
+  assert.equal(h.notifications.length, 1);
+});
+
+test("display-only advisories do not suppress later folder failure notifications", async () => {
+  const { scanPolicy } = await import("../thunderbird/scan-policy.mjs");
+  const h = await harness({ mails: [mail(1), mail(2)],
+    saved: { settings: { enabled: false, accountIds: [], notifications: true, scanSettings: scanPolicy({ phishing: "display" }) } },
+    healthResult: { status: "ready", protocol: 1, scanSettingsVersion: 1, engine: "test" },
+    scanResult: id => id === 1 ? { status: "advisory", advisories: [{ kind: "phishing" }], detail: "warning" } : { status: "error", detail: "failure" } });
+  await startFolder(h);
+  const state = await settledFolder(h, "completed");
+  assert.equal(state.folderJob.counts.advisory, 1);
+  assert.equal(state.folderJob.counts.error, 1);
+  assert.equal(h.notifications.length, 2); // one failure and the ordinary completion summary
+  assert.equal(h.notifications.some(([key, value]) => !key.startsWith("folder-") && value.title.includes("検査失敗")), true);
 });

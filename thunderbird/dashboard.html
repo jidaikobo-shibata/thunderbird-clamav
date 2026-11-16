@@ -59,7 +59,7 @@
         <option value="all" data-i18n="mail268">すべて</option><option value="attention" data-i18n="mail269">確認が必要</option><option value="reviewed" data-i18n="reviewedLabel">確認済み</option>
         <option value="detected" data-i18n="mail087">脅威候補を検出</option><option value="incomplete" data-i18n="mail088">一部または全部が未検査</option>
         <option value="automatic-excluded" data-i18n="automaticExcludedFilter">未検査：自動検査の対象から除外</option>
-        <option value="error" data-i18n="mail089">検査失敗</option><option value="clean" data-i18n="mail086">未検出</option>
+        <option value="advisory" data-i18n="scanAdvisory">注意情報</option><option value="error" data-i18n="mail089">検査失敗</option><option value="clean" data-i18n="mail086">未検出</option>
         <option value="pending" data-i18n="mail270">検査待ち・検査中</option><option value="deleted" data-i18n="mail090">完全削除済み</option>
       </select></label>
       <label for="account-filter"><span data-i18n="mail257">アカウント</span><select id="account-filter"><option value="all" data-i18n="mail268">すべて</option></select></label>
@@ -105,7 +105,19 @@
         <div id="quarantine-settings"></div>
         <p class="hint" data-i18n="qNotDisinfect">隔離はフォルダーへの移動です。無害化や開封の禁止は行いません。自動で完全削除することはありません。</p>
       </fieldset>
-      <fieldset><legend data-i18n="notificationHeading">通知</legend><label><input id="notifications" type="checkbox"> <span data-i18n="mail296">検出・検査不能・失敗をデスクトップ通知する</span></label></fieldset>
+      <fieldset><legend data-i18n="scanSettingsHeading">ClamAVの検査設定</legend>
+        <p class="hint" data-i18n="scanSettingsHint">このアドオンの検査にだけ適用します。通常のウイルス検査は有効のまま、追加の注意情報の判定と通知を選びます。変更後に開始する検査から有効です。注意情報だけでは自動隔離しません。ウイルスも検出した場合は従来の通知・隔離設定を適用します。</p>
+        <label for="scan-phishing" data-i18n="scanLabelphishing">フィッシング</label><select id="scan-phishing"><option value="off" data-i18n="scanModeOff">検査しない</option><option value="display" data-i18n="scanModeDisplay">検査して結果に表示</option><option value="notify" data-i18n="scanModeNotify">検査して通知する</option></select>
+        <label for="scan-macros" data-i18n="scanLabelmacros">マクロを含む文書</label><select id="scan-macros"><option value="off" data-i18n="scanModeOff">検査しない</option><option value="display" data-i18n="scanModeDisplay">検査して結果に表示</option><option value="notify" data-i18n="scanModeNotify">検査して通知する</option></select>
+        <label for="scan-pua" data-i18n="scanLabelpua">不要な可能性のあるアプリ（PUA）</label><select id="scan-pua"><option value="off" data-i18n="scanModeOff">検査しない</option><option value="display" data-i18n="scanModeDisplay">検査して結果に表示</option><option value="notify" data-i18n="scanModeNotify">検査して通知する</option></select>
+        <label for="scan-mailMiB" data-i18n="scanLabelMail">メール全体の上限（5〜100MiB、添付の転送形式を含む）</label><input id="scan-mailMiB" type="number" min="5" max="100" step="1" required>
+        <details><summary data-i18n="scanAdvanced">詳細設定</summary>
+          <label for="scan-expandedMiB" data-i18n="scanLabelExpanded">展開後の検査量上限（25〜500MiB、メール上限以上）</label><input id="scan-expandedMiB" type="number" min="25" max="500" step="1" required>
+          <label for="scan-seconds" data-i18n="scanLabelSeconds">ClamAV内部の検査時間上限（10〜120秒）</label><input id="scan-seconds" type="number" min="10" max="120" step="1" required>
+          <p class="hint" data-i18n="scanLimitsHint">暗号化・上限超過の警告と添付形式の検査は有効のままです。内部時間制限の適用範囲はClamAVによります。補助処理全体にも別の待ち時間制限があります。設定変更後の初回は定義を読み直す場合があります。</p>
+        </details>
+      </fieldset>
+      <fieldset><legend data-i18n="notificationHeading">通知</legend><label><input id="notifications" type="checkbox"> <span data-i18n="mail296">デスクトップ通知を有効にする</span></label></fieldset>
       <p id="settings-status" role="status" aria-live="polite"></p>
     </form>
 
@@ -191,8 +203,10 @@
     <p><span data-i18n="mail336">拡張の設定・履歴・再開情報は失われる可能性があります。メール・アカウント・ClamAVは残ります。補助プログラムはこのOSユーザー共通のため、他のThunderbirdプロファイルも接続できなくなります。再導入用のファイルを先に保存しておけます。</span></p>
     <p><span data-i18n="mail337">Thunderbirdのアドオン一覧で直接拡張を削除しても、補助プログラムは残ります。両方を取り除く場合は、この拡張の「アンインストール」タブから進めてください。通常のバージョンアップでは旧版を削除せず、XPIを上書きインストールします。</span></p>
     <button type="button" data-open-tab="uninstall"><span data-i18n="mail338">アンインストールを開く</span></button>
+    <h3 data-i18n="scanSettingsHeading">ClamAVの検査設定</h3>
+    <p data-i18n="scanHelp">「設定」のClamAV検査設定で、フィッシング・マクロを含むOLE2文書・PUAの追加判定を選べます。検査しない／結果だけ表示／検出時に通知の3段階です。通知全体を無効にすると、追加判定の通知も出しません。注意情報はウイルスと区別し、それだけでは自動隔離しません。通常のウイルス検査や暗号化・上限超過の警告は有効のままです。メール全体5〜100MiB、展開後25〜500MiB（メール上限以上）、内部検査時間10〜120秒の範囲で変更でき、変更後に開始する検査から適用します。結果の「検出名・検査情報」には実施した検査条件を残します。新しい検査設定を使うには補助プログラムも更新してください。</p>
     <h3 data-i18n="reviewedLabel">確認済み</h3>
-    <p data-i18n="reviewHelp">「一部または全部が未検査」の結果は、選択して「確認済みにする」ことができます。判断メモは任意です。検査結果と未検査の理由は残し、要確認件数・通知から除外します。「確認済み」で絞り込めて、「未確認に戻す」で印とメモを取り消せます。再検査で本文と未検査理由が同じことを照合できた場合だけ確認済みを維持し、変更・照合不能・脅威検出・検査失敗では未確認に戻します。確認済みは安全性の保証ではありません。確認日時とメモは履歴と同じくローカルに保存します。</p>
+    <p data-i18n="reviewHelp">「一部または全部が未検査」や「注意情報」の結果は、選択して「確認済みにする」ことができます。判断メモは任意です。検査結果と未検査の理由は残し、要確認件数・通知から除外します。「確認済み」で絞り込めて、「未確認に戻す」で印とメモを取り消せます。再検査で本文と未検査理由が同じことを照合できた場合だけ確認済みを維持し、変更・照合不能・脅威検出・検査失敗では未確認に戻します。確認済みは安全性の保証ではありません。確認日時とメモは履歴と同じくローカルに保存します。</p>
     <h3 data-i18n="qHeading">検出したメールの隔離</h3>
     <p data-i18n="qHelpScope">自動隔離は、設定で有効にした後に届き、自動検査で脅威を検出したメールだけを対象にします。未検査・検査失敗・既存フォルダーの検査では自動移動しません。隔離先は同じアカウントの通常フォルダーに限り、受信トレイ・迷惑メール・ごみ箱などの特殊フォルダーは選べません。</p>
     <p data-i18n="qHelpOperations">検査結果で脅威を検出したメールを選び、「隔離」から確認して移動できます。設定中の隔離先は新着の自動検査から除外します。過去の隔離先では、移動済みの対象メールだけを識別して除外し、別の新着メールは検査します。移動後も検査結果から再検査・完全削除できます。元に戻す場合はThunderbirdで移動してください。移動や再検査で内容を確認できたときに、現在の場所に応じて隔離状態を更新します。移動を確認できない場合や処理が中断された場合は、元の場所と隔離先を確認してください。自動で再移動はしません。</p>
@@ -209,7 +223,7 @@
 <dialog id="review-dialog" aria-labelledby="review-title" aria-describedby="review-description">
   <form method="dialog">
     <h2 id="review-title" data-i18n="reviewAction">確認済みにする</h2>
-    <p id="review-description" data-i18n="reviewDescription">未検査の結果と理由を残し、「確認が必要」の件数から除外します。安全性を検査で確認したという意味ではありません。再検査で本文や未検査の理由が変わった場合、本文を照合できない場合は未確認に戻ります。</p>
+    <p id="review-description" data-i18n="reviewDescription">未検査や注意情報の結果と理由を残し、「確認が必要」の件数から除外します。安全性を検査で確認したという意味ではありません。再検査で本文や検出理由が変わった場合、本文を照合できない場合は未確認に戻ります。</p>
     <p id="review-count"></p><ul id="review-targets" class="dialog-targets"></ul>
     <label for="review-note" data-i18n="reviewNote">判断メモ（任意、1000文字以内）</label><textarea id="review-note" maxlength="1000" rows="3"></textarea>
     <div class="actions"><button value="cancel" id="review-cancel" data-i18n="mail348">キャンセル</button><button value="apply" id="review-confirm" data-i18n="reviewAction">確認済みにする</button></div>

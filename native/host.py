@@ -131,6 +131,12 @@ _EN_MESSAGES.update({'ClamAVが見つかりません。この拡張は /usr/bin/
 
 _MESSAGE_KEYS.update({'ClamAVが見つかりません。この拡張は /usr/bin/clamscan を使用します。': 'clamavMissing', 'ClamAVを起動・確認できません。導入状態と実行権限を確認してください。': 'clamavUnusable'})
 
+_EN_MESSAGES.update({"検査設定が不正です。": "Invalid scan settings.", "注意情報を検出しました。ウイルスの検出とは区別して確認してください。": "Advisory findings detected. Review them separately from malware detections."})
+_MESSAGE_KEYS.update({"検査設定が不正です。": "scanSettingsInvalid", "注意情報を検出しました。ウイルスの検出とは区別して確認してください。": "scanAdvisoryDetail"})
+
+_EN_MESSAGES["検査が制限時間内に完了しませんでした。"] = "The scan did not finish within the time limit."
+_MESSAGE_KEYS["検査が制限時間内に完了しませんでした。"] = "scanTimeout"
+
 def tr(message):
     text = message if _LANGUAGE == "ja" else _EN_MESSAGES.get(message, message)
     key = _MESSAGE_KEYS.get(message)
@@ -154,6 +160,36 @@ TIMEOUT = 120
 CLAMD = "/usr/sbin/clamd"
 START_TIMEOUT = 60
 sys.dont_write_bytecode = True
+
+
+SCAN_DEFAULTS = {"phishing": "off", "macros": "off", "pua": "off", "mailMiB": 25, "expandedMiB": 100, "seconds": 60}
+MAX_TRANSFER = 100 * 1024 * 1024
+
+def scan_options(value=None):
+    if value is None:
+        return dict(SCAN_DEFAULTS)
+    if not isinstance(value, dict) or set(value) - set(SCAN_DEFAULTS):
+        raise ProtocolError(tr("検査設定が不正です。"))
+    result = {**SCAN_DEFAULTS, **value}
+    for key in ("phishing", "macros", "pua"):
+        if result[key] not in ("off", "display", "notify"):
+            raise ProtocolError(tr("検査設定が不正です。"))
+    for key, low, high in (("mailMiB", 5, 100), ("expandedMiB", 25, 500), ("seconds", 10, 120)):
+        if type(result[key]) is not int or not low <= result[key] <= high:
+            raise ProtocolError(tr("検査設定が不正です。"))
+    if result["expandedMiB"] < result["mailMiB"]:
+        raise ProtocolError(tr("検査設定が不正です。"))
+    return result
+
+
+def advisory_kind(signature):
+    if signature.startswith(("Heuristics.Phishing.", "HTML.Phishing.", "Email.Phishing.", "Phishing.")):
+        return "phishing"
+    if signature == "Heuristics.OLE2.ContainsMacros":
+        return "macros"
+    if signature.startswith("PUA."):
+        return "pua"
+    return None
 
 
 class ProtocolError(Exception):
@@ -200,22 +236,29 @@ def classify(returncode, output):
         match = re.match(r"^.*: (.+) FOUND$", line)
         if match:
             signatures.append(match[1][:200])
-    signatures = list(dict.fromkeys(signatures))[:30]
+    signatures = list(dict.fromkeys(signatures))
     incomplete = [s for s in signatures if s.startswith((
         "Heuristics.Limits.Exceeded", "Heuristics.Encrypted."
     ))]
-    threats = [s for s in signatures if s not in incomplete]
+    advisories = [{"kind": key, "signatures": [sig for sig in signatures if advisory_kind(sig) == key][:30]}
+                  for key in ("phishing", "macros", "pua") if any(advisory_kind(sig) == key for sig in signatures)]
+    threats = [s for s in signatures if s not in incomplete and advisory_kind(s) is None]
+    # Determine the verdict before truncating the display list.
+    signatures = (threats + incomplete + [s for s in signatures if advisory_kind(s)])[:30]
     if returncode not in (0, 1):
         return {"status": "error", "signatures": signatures,
                 "detail": tr('ClamAVが検査を完了できませんでした。終了コード: ')
                           + str(returncode)}
     if threats:
-        return {"status": "detected", "signatures": signatures,
+        return {"status": "detected", "signatures": signatures, "advisories": advisories,
                 "detail": tr('脅威候補を検出しました。') + (
                     tr('検査できない部分もあります。') if incomplete else "")}
     if incomplete:
-        return {"status": "incomplete", "signatures": signatures,
+        return {"status": "incomplete", "signatures": signatures, "advisories": advisories,
                 "detail": tr('暗号化または検査上限により、検査できない部分があります。')}
+    if advisories:
+        return {"status": "advisory", "signatures": signatures, "advisories": advisories,
+                "detail": tr("注意情報を検出しました。ウイルスの検出とは区別して確認してください。")}
     if returncode == 1:
         return {"status": "error", "signatures": [],
                 "detail": tr('検出結果を解釈できませんでした。')}
@@ -274,6 +317,16 @@ class MailDaemon:
         self.engine = None
         self.diagnostics = None
         self.diagnostic_offset = 0
+        self.options = scan_options()
+
+    def configure(self, options):
+        options = scan_options(options)
+        def engine_key(value):
+            return tuple(value[key] != "off" for key in ("phishing", "macros", "pua")) + tuple(value[key] for key in ("mailMiB", "expandedMiB", "seconds"))
+        if engine_key(options) != engine_key(self.options):
+            self.close()
+            self.disabled = False
+        self.options = options
 
     def exchange(self, command, data=None, timeout=TIMEOUT):
         deadline = time.monotonic() + timeout
@@ -329,9 +382,14 @@ class MailDaemon:
                 "TemporaryDirectory " + str(directory), "DatabaseDirectory /var/lib/clamav",
                 "FailIfCvdOlderThan 3", "SelfCheck 60", "ConcurrentDatabaseReload no",
                 "ScanMail yes", "ScanArchive yes", "AlertEncrypted yes", "AlertExceedsMax yes",
-                "PhishingSignatures no", "PhishingScanURLs no", "DisableCache yes",
-                "MaxFileSize 25M", "MaxScanSize 100M", "StreamMaxLength 25M",
-                "MaxFiles 10000", "MaxRecursion 16", "MaxScanTime 60000",
+                "PhishingSignatures " + ("yes" if self.options["phishing"] != "off" else "no"),
+                "PhishingScanURLs " + ("yes" if self.options["phishing"] != "off" else "no"),
+                "AlertOLE2Macros " + ("yes" if self.options["macros"] != "off" else "no"),
+                "DetectPUA " + ("yes" if self.options["pua"] != "off" else "no"),
+                "HeuristicScanPrecedence no", "DisableCache yes",
+                "MaxFileSize %sM" % self.options["mailMiB"], "MaxScanSize %sM" % self.options["expandedMiB"],
+                "StreamMaxLength %sM" % self.options["mailMiB"],
+                "MaxFiles 10000", "MaxRecursion 16", "MaxScanTime %s" % (self.options["seconds"] * 1000),
                 "MaxThreads 1", "MaxQueue 2", "LogSyslog no", "LogClean no",
                 "LeaveTemporaryFiles no", "ExitOnOOM yes", "ReadTimeout 120", "",
             ]))
@@ -375,7 +433,16 @@ class MailDaemon:
         except (ValueError, IndexError):
             return {"status": "error", "signatures": [],
                     "detail": tr('clamdの使用中の定義が古いか、更新日時を確認できません。')}
-        output = self.exchange(b"INSTREAM", data)
+        if any(self.options[key] != "off" for key in ("phishing", "macros", "pua")):
+            # ALLMATCHSCAN is file-based: private, short-lived input, removed even on errors.
+            with tempfile.NamedTemporaryFile(prefix="mail-", dir=self.temp.name) as mail:
+                mail.write(data)
+                mail.flush()
+                path = mail.name
+                output = self.exchange(b"ALLMATCHSCAN " + os.fsencode(path), timeout=max(TIMEOUT, self.options["seconds"] + 30))
+                output = output.replace(path + ":", "stream:")
+        else:
+            output = self.exchange(b"INSTREAM", data, **({"timeout": self.options["seconds"] + 30} if self.options["seconds"] > 90 else {}))
         # INSTREAM reports one match; preserve limit/encryption alerts as incomplete.
         lines = output.split("\0")
         valid = all(line == "stream: OK" or
@@ -392,7 +459,7 @@ class MailDaemon:
             diagnostic = os.pread(self.diagnostics.fileno(), min(length, MAX_FRAME), offset).upper()
             self.diagnostic_offset = size
             if length > MAX_FRAME or b"WARNING" in diagnostic or b"ERROR" in diagnostic:
-                if value["status"] == "clean":
+                if value["status"] in ("clean", "advisory"):
                     value["status"] = "incomplete"
                     value["detail"] = tr('clamdが警告を返しました。検査範囲を確認できません。')
         return value
@@ -416,28 +483,36 @@ class MailDaemon:
             self.temp = None
 
 
-def scan_clamscan(data):
+def scan_clamscan(data, options=None):
+    options = scan_options(options)
     args = [CLAMSCAN, "--stdout", "--no-summary", "--scan-mail=yes",
             "--allmatch=yes", "--alert-encrypted=yes", "--alert-exceeds-max=yes",
             "--max-filesize=25M", "--max-scansize=100M", "--max-files=10000",
             "--max-recursion=16", "--max-scantime=60000", "--fail-if-cvd-older-than=3",
             "--phishing-sigs=no", "--phishing-scan-urls=no", "-"]
+    args = [arg for arg in args if not arg.startswith(("--max-filesize=", "--max-scansize=", "--max-scantime=", "--phishing-sigs=", "--phishing-scan-urls="))]
+    args[-1:-1] = ["--max-filesize=%sM" % options["mailMiB"], "--max-scansize=%sM" % options["expandedMiB"],
+        "--max-scantime=%s" % (options["seconds"] * 1000), "--heuristic-scan-precedence=no",
+        "--phishing-sigs=" + ("yes" if options["phishing"] != "off" else "no"),
+        "--phishing-scan-urls=" + ("yes" if options["phishing"] != "off" else "no"),
+        "--alert-macros=" + ("yes" if options["macros"] != "off" else "no"),
+        "--detect-pua=" + ("yes" if options["pua"] != "off" else "no")]
     try:
         # ClamAV may unpack containers internally. Give it a private temporary
         # directory, including on failures/timeouts, rather than keeping mail.
         with tempfile.TemporaryDirectory(prefix="clam-mail-check-") as temp:
             result = subprocess.run(args[:-1] + ["--tempdir=" + temp, "-"],
                                     input=data, stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, timeout=TIMEOUT,
+                                    stderr=subprocess.PIPE, timeout=max(TIMEOUT, options["seconds"] + 30),
                                     check=False)
     except subprocess.TimeoutExpired:
         return {"status": "error", "signatures": [],
-                "detail": tr('検査が120秒以内に完了しませんでした。')}
+                "detail": tr("検査が制限時間内に完了しませんでした。")}
     except OSError:
         return {"status": "error", "signatures": [],
                 "detail": tr('ClamAVを起動できません。インストール状態を確認してください。')}
     value = classify(result.returncode, result.stdout.decode("utf-8", "replace"))
-    if value["status"] == "clean" and (
+    if value["status"] in ("clean", "advisory") and (
         result.stderr.strip() or "Warning:" in result.stdout.decode("utf-8", "replace")
     ):
         value["status"] = "incomplete"
@@ -445,16 +520,19 @@ def scan_clamscan(data):
     return value
 
 
-def scan(data, scanner=None):
-    if not data or len(data) > MAX_MAIL:
+def scan(data, scanner=None, options=None):
+    policy = scan_options(options)
+    if not data or len(data) > policy["mailMiB"] * 1024 * 1024:
         return {"status": "incomplete", "signatures": [],
                 "detail": tr('メールが空か、検査上限の25MiBを超えています。')}
     fallback = False
+    if scanner is not None and (options is not None or isinstance(scanner, MailDaemon)):
+        scanner.configure(policy)
     try:
-        value = scanner.scan(data) if scanner else scan_clamscan(data)
+        value = scanner.scan(data) if scanner else (scan_clamscan(data) if options is None else scan_clamscan(data, policy))
     except DaemonUnavailable:
         fallback = True
-        value = scan_clamscan(data)
+        value = scan_clamscan(data) if options is None else scan_clamscan(data, policy)
     except (OSError, ProtocolError):
         if scanner is not None:
             scanner.close()
@@ -468,12 +546,14 @@ def scan(data, scanner=None):
     except (ValueError, RecursionError):
         encrypted = True
     if encrypted:
-        if value["status"] == "clean":
+        if value["status"] in ("clean", "advisory"):
             value["status"] = "incomplete"
             value["detail"] = tr('暗号化または外部参照の内容は検査していません。')
         elif value["status"] == "detected":
             value["detail"] += tr('暗号化されている部分は検査していません。')
     value["sha256"] = hashlib.sha256(data).hexdigest()
+    if options is not None:
+        value["scanSettings"] = policy
     return value
 
 
@@ -491,7 +571,7 @@ def health():
     except (OSError, subprocess.TimeoutExpired):
         return {"status": "error", "code": "clamav_unusable", "detail": tr('ClamAVを起動・確認できません。導入状態と実行権限を確認してください。')}
     return {"status": "ready", "protocol": PROTOCOL, "engine": version,
-            "maxBytes": MAX_MAIL, "chunkBytes": CHUNK_SIZE,
+            "maxBytes": MAX_TRANSFER, "chunkBytes": CHUNK_SIZE, "scanSettingsVersion": 1,
             "detail": (tr('連続検査では専用clamdを利用します。初回は定義を読み込みます。起動できない場合はclamscanを利用します。')
                        if os.access(CLAMD, os.X_OK) else tr('検査はclamscanで1通ずつ実行します。') )}
 
@@ -503,6 +583,7 @@ class Session:
         self.sequence = 0
         self.scanner = MailDaemon()
         self.administration = None
+        self.scan_settings = None
 
     def close(self):
         self.reset()
@@ -516,6 +597,7 @@ class Session:
         self.buffer = None
         self.expected = 0
         self.sequence = 0
+        self.scan_settings = None
 
     def handle(self, request):
         set_language(request.get("language", "ja"))
@@ -549,8 +631,10 @@ class Session:
         if operation == "begin":
             if self.buffer is not None:
                 raise ProtocolError(tr('検査データの受信中です。'))
+            self.scan_settings = scan_options(request["scanSettings"]) if "scanSettings" in request else None
+            limit = (self.scan_settings or SCAN_DEFAULTS)["mailMiB"] * 1024 * 1024
             size = request.get("size")
-            if type(size) is not int or not 0 < size <= MAX_MAIL:
+            if type(size) is not int or not 0 < size <= limit:
                 raise ProtocolError(tr('メールサイズが不正か、25MiBを超えています。'))
             self.expected = size
             self.sequence = 0
@@ -581,8 +665,10 @@ class Session:
             digest = hashlib.sha256(data).hexdigest()
             if request.get("sha256") != digest:
                 raise ProtocolError(tr('メールデータの照合に失敗しました。'))
+            options = self.scan_settings
             self.reset()
-            return scan(data, self.scanner)
+            self.scan_settings = None
+            return scan(data, self.scanner) if options is None else scan(data, self.scanner, options)
         raise ProtocolError(tr('未対応の操作です。'))
 
 

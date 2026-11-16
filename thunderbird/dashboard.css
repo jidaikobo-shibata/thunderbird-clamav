@@ -105,3 +105,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid GrayText
 #review-note { width: 100%; box-sizing: border-box; font: inherit; }
 
 #results tr[data-attention="true"] { background-color: color-mix(in srgb, #d49600 16%, Canvas); }
+
+#settings-form input[type="number"] { font: inherit; min-height: 44px; padding: 4px 8px; width: 8rem; box-sizing: border-box; }
+#scan-phishing, #scan-macros, #scan-pua { margin-bottom: 12px; }
+.scanPolicy { display: block; font-size: .85rem; margin-top: 8px; }

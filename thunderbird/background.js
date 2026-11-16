@@ -1,9 +1,10 @@
+import { scanPolicy, defaultScanPolicy, advisoryNotifies } from "./scan-policy.mjs";
 import { canReview, canUnreview, reviewReason, reviewStamp, reconcileReview } from "./review.mjs";
 import { validateQuarantine, moveToQuarantine, inQuarantine, canQuarantine, refreshQuarantineLocation } from "./quarantine.mjs";
 import { t } from "./i18n.mjs";
 import { toolbarNotice } from "./installation.mjs";
 import {
-  MAX_BYTES, DEFAULTS, LABELS, NativeClient, accountOf, locator, sameEnvelope,
+  MAX_BYTES, MAX_TRANSFER_BYTES, DEFAULTS, LABELS, NativeClient, accountOf, locator, sameEnvelope,
   validateSettings, messagePages, sha256, needsAttention, pausedAutomatic, normalizeAutomaticSettings
 } from "./core.mjs";
 import { canDelete, canForget, canRetry } from "./results.mjs";
@@ -84,7 +85,7 @@ const folderScan = new FolderScan(api, {
     try {
       await api.notifications.create("folder-" + job.id, { type: "basic", iconUrl: api.runtime.getURL("icon.svg"),
         title: t("mail002", "ClamAV：フォルダー検査 ") + FOLDER_STATES[job.status],
-        message: t("mail003", "処理済み$1件、検出$2件、未検査$3件、失敗$4件。結果画面を確認してください。", [job.completed, job.counts.detected, job.counts.incomplete, job.counts.error]) });
+        message: t("mail003", "処理済み$1件、検出$2件、未検査$3件、失敗$4件。結果画面を確認してください。", [job.completed, job.counts.detected, job.counts.incomplete, job.counts.error]) + (job.counts.advisory ? t("scanFolderAdvisory", " 注意情報$1件。", [job.counts.advisory]) : "") });
     } catch { issue = t("mail004", "フォルダー検査の通知を表示できません。結果画面を確認してください。"); }
   }
 });
@@ -351,6 +352,7 @@ async function notify(record) {
   if (!settings.notifications || !needsAttention(record)) return;
   // A transient failure is actionable only after its scheduled retry fails.
   if (record.status === "error" && record.nextRetry) return;
+  if (record.status === "advisory" && !advisoryNotifies(record)) return;
   // Subjects/senders are deliberately omitted from lock-screen notifications.
   try {
     await api.notifications.create(record.key, {
@@ -373,15 +375,15 @@ async function openDashboard() {
   }
 }
 
-async function rawBytes(messageId) {
+async function rawBytes(messageId, maxBytes = MAX_TRANSFER_BYTES) {
   // Never request decryption: this version must not prompt for keys or store
   // decrypted mail. Encrypted MIME is explicitly marked incomplete by the host.
   const raw = await api.messages.getRaw(messageId, { data_format: "File", decrypt: false });
   if (!raw || typeof raw.arrayBuffer !== "function") {
     throw new Error(t("mail032", "メールデータをFile形式で取得できませんでした。"));
   }
-  if (!raw.size || raw.size > MAX_BYTES) {
-    const error = new Error(t("mail033", "メールが空か、検査上限の25MiBを超えています。"));
+  if (!raw.size || raw.size > maxBytes) {
+    const error = new Error(maxBytes === MAX_BYTES ? t("mail033", "メールが空か、検査上限の25MiBを超えています。") : t("scanSizeExceeded", "メールが空か、検査上限の$1MiBを超えています。", [maxBytes / 1024 / 1024]));
     error.incomplete = true;
     throw error;
   }
@@ -463,7 +465,7 @@ function enqueue(first, source) {
 async function drain() {
   if (running || maintenanceActive() || helperRemoved || batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation)) return;
   running = true;
-  let client, engine;
+  let client, engine, configurable = false;
   try {
     while (true) {
       // Folder work is fed one at a time, after fresh mail and manual work.
@@ -491,6 +493,9 @@ async function drain() {
       }
       if (!record) break;
       const fromFolder = record.source === "folder";
+      const policy = scanPolicy(settings.scanSettings);
+      record.scanSettings = policy;
+      record.advisories = [];
       const previousReview = record.review || record.reviewBeforeScan;
       if (previousReview) record.reviewBeforeScan = previousReview;
       delete record.review;
@@ -508,7 +513,7 @@ async function drain() {
         if (message.headersOnly) {
           throw new Error(t("mail043", "ヘッダーのみ取得されたメールです。本文をダウンロードして再検査してください。"));
         }
-        const bytes = await rawBytes(message.id);
+        const bytes = await rawBytes(message.id, policy.mailMiB * 1024 * 1024);
         record.sha256 = await sha256(bytes);
         currentDigest = record.sha256;
         refreshQuarantineLocation(record, message);
@@ -520,15 +525,18 @@ async function drain() {
             throw new Error(health.detail || t("mail044", "補助プログラムのバージョンが対応していません。"));
           }
           engine = health.engine;
+          configurable = health.scanSettingsVersion === 1;
         }
         record.engine = engine;
-        const result = await client.scan(bytes, record.sha256);
+        if (!configurable && !defaultScanPolicy(policy)) throw new Error(t("scanHelperUpdate", "この検査設定には補助プログラムの更新が必要です。セットアップから更新してください。"));
+        const result = await client.scan(bytes, record.sha256, configurable ? policy : undefined);
         record.status = result.status;
         record.engine = result.engine || engine;
         delete record.detailMessages;
         record.detail = result.detail;
         if (result.detailMessages) record.detailMessages = result.detailMessages;
         record.signatures = result.signatures || [];
+        record.advisories = result.advisories || [];
         if (result.status !== "error") lastScan = { checkedAt: new Date().toISOString(),
           engine: record.engine, status: result.status };
         record.nextRetry = null;
@@ -557,7 +565,7 @@ async function drain() {
       finishRetry(record);
       if (fromFolder) {
         const flag = record.status === "detected" ? "notifiedDetection" :
-          needsAttention(record) ? "notifiedProblem" : null;
+          record.status === "advisory" ? (advisoryNotifies(record) ? "notifiedAdvisory" : null) : needsAttention(record) ? "notifiedProblem" : null;
         if (flag && !folderScan.job[flag]) {
           folderScan.job[flag] = true;
           void notify(record);
@@ -614,7 +622,7 @@ const ready = (async () => {
   helperRemoved = data.helperRemoved === true;
   installation = data.installation || null;
   lastScan = data.lastScan || records.filter(record => record.engine &&
-    ["clean", "detected", "incomplete", "deleted"].includes(record.status))
+    ["clean", "detected", "incomplete", "deleted", "advisory"].includes(record.status))
     .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))[0] || null;
   if (lastScan && !lastScan.checkedAt) lastScan = { engine: lastScan.engine,
     checkedAt: lastScan.updatedAt, status: lastScan.status };

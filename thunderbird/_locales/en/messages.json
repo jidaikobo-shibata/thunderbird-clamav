@@ -1450,7 +1450,7 @@
     "description": "自動検査するアカウント"
   },
   "mail296": {
-    "message": "Show desktop notifications for detections, incomplete scans, and failures",
+    "message": "Enable desktop notifications",
     "description": "検出・検査不能・失敗をデスクトップ通知する"
   },
   "mail297": {
@@ -2667,7 +2667,7 @@
     "message": "Mark as unreviewed"
   },
   "reviewDescription": {
-    "message": "Keep the incomplete scan result and its reason, and exclude it from the needs-attention count. This does not mean the scanner verified its safety. A rescan clears the review if the contents or incomplete-scan reason change, or the contents cannot be verified."
+    "message": "Keep the incomplete or advisory result and its reason, and exclude it from the needs-attention count. This does not mean the scanner verified its safety. A rescan clears the review if the contents or finding reason change, or the contents cannot be verified."
   },
   "unreviewDescription": {
     "message": "Remove the review mark and decision note, and include the result in needs attention again. The scan result is unchanged."
@@ -2725,12 +2725,130 @@
     }
   },
   "reviewHelp": {
-    "message": "Select partially or entirely unscanned results and choose Mark as reviewed, with an optional decision note. The scan verdict and incomplete reason remain, while the result is excluded from attention counts and notifications. Filter by Reviewed to find them; Mark as unreviewed removes the mark and note. A rescan retains the mark only after verifying identical contents and incomplete reasons. Changes, unverifiable contents, threats and scan failures clear it. Reviewed does not guarantee safety. Review dates and notes are stored locally with scan history."
+    "message": "Select incomplete or advisory results and choose Mark as reviewed, with an optional decision note. The scan verdict and incomplete reason remain, while the result is excluded from attention counts and notifications. Filter by Reviewed to find them; Mark as unreviewed removes the mark and note. A rescan retains the mark only after verifying identical contents and incomplete reasons. Changes, unverifiable contents, threats and scan failures clear it. Reviewed does not guarantee safety. Review dates and notes are stored locally with scan history."
   },
   "reviewRowAction": {
     "message": "Mark reviewed"
   },
   "unreviewRowAction": {
     "message": "Unreview"
+  },
+  "scanSettingsInvalid": {
+    "message": "Invalid scan settings."
+  },
+  "scanAdvisoryDetail": {
+    "message": "Advisory findings detected. Review them separately from malware detections."
+  },
+  "scanTimeout": {
+    "message": "The scan did not finish within the time limit."
+  },
+  "scanModeOff": {
+    "message": "Do not scan"
+  },
+  "scanModeDisplay": {
+    "message": "Scan and show results"
+  },
+  "scanModeNotify": {
+    "message": "Scan and notify"
+  },
+  "scanPolicySummary": {
+    "message": "Mail $ARG1$ MiB; expanded $ARG2$ MiB; internal scan $ARG3$ s / Phishing: $ARG4$ / Macros: $ARG5$ / PUA: $ARG6$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      },
+      "arg4": {
+        "content": "$4"
+      },
+      "arg5": {
+        "content": "$5"
+      },
+      "arg6": {
+        "content": "$6"
+      }
+    }
+  },
+  "scanPolicyMismatch": {
+    "message": "The requested scan settings could not be confirmed. Update the helper and rescan."
+  },
+  "scanHelperUpdate": {
+    "message": "These scan settings require a helper update. Update it in Setup."
+  },
+  "scanSizeExceeded": {
+    "message": "The message is empty or exceeds the $ARG1$ MiB scan limit.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "scanAdvisory": {
+    "message": "Advisory findings"
+  },
+  "scanAdvisoryReviewed": {
+    "message": "Advisory findings (reviewed)"
+  },
+  "scanAdvisoryCount": {
+    "message": "Advisory $ARG1$ / ",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "scanSettingsHeading": {
+    "message": "ClamAV scan settings"
+  },
+  "scanSettingsHint": {
+    "message": "These settings apply only to this add-on. Regular malware scanning remains enabled; choose how to detect and notify additional advisory findings. Changes apply to scans started afterwards. Advisory findings alone do not trigger automatic quarantine. If malware is also detected, the existing notification and quarantine settings apply."
+  },
+  "scanLabelphishing": {
+    "message": "Phishing"
+  },
+  "scanLabelmacros": {
+    "message": "Documents containing macros"
+  },
+  "scanLabelpua": {
+    "message": "Potentially unwanted applications (PUA)"
+  },
+  "scanLabelMail": {
+    "message": "Maximum whole-message size (5–100 MiB, including encoded attachments)"
+  },
+  "scanAdvanced": {
+    "message": "Advanced settings"
+  },
+  "scanLabelExpanded": {
+    "message": "Maximum expanded scan size (25–500 MiB, at least the mail limit)"
+  },
+  "scanLabelSeconds": {
+    "message": "ClamAV internal scan time limit (10–120 seconds)"
+  },
+  "scanLimitsHint": {
+    "message": "Encryption and limit alerts, and attachment-format scanning remain enabled. ClamAV determines where its internal time limit applies. The helper also has a separate overall timeout. The first scan after a settings change may reload definitions."
+  },
+  "scanFindings": {
+    "message": "Advisory findings: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "scanFolderAdvisory": {
+    "message": " Advisory findings: $ARG1$.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "scanHelp": {
+    "message": "In Settings, choose additional phishing, OLE2 macro and PUA detection: off, results only, or notify on detection. Disabling notifications globally also disables these notifications. Advisory findings are separate from malware and do not automatically trigger quarantine. Regular malware scanning, encryption alerts and limit alerts stay enabled. Limits are 5–100 MiB for whole messages, 25–500 MiB expanded (at least the message limit), and 10–120 seconds for internal scanning. Changes apply to subsequent scans. Applied settings are stored under Detection names and scan information. Update the helper to use custom scan settings."
   }
 }

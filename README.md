@@ -71,11 +71,11 @@ node --check thunderbird/dashboard.js
 python3 scripts/build_mail_check.py
 ```
 
-`dist/clam-mail-check-0.17.3.xpi` と、確認用の補助プログラム・登録JSONを
+`dist/clam-mail-check-0.18.0.xpi` と、確認用の補助プログラム・登録JSONを
 `dist/native/` に生成します。GUI不要の導入用ファイル
-`dist/clam-mail-check-installer-0.17.3.pyz` をXPIに同梱し、単体でも生成します。
+`dist/clam-mail-check-installer-0.18.0.pyz` をXPIに同梱し、単体でも生成します。
 旧GUI配布物も必要な場合だけ `--legacy-gui` を指定します。この場合はCコンパイラーが必要です。
-`dist/clam-mail-check-setup-0.17.3-linux-<architecture>.tar.gz` に生成します。
+`dist/clam-mail-check-setup-0.18.0-linux-<architecture>.tar.gz` に生成します。
 旧GUI配布物にはXPI・補助プログラム・GUIを同梱します。通常配布のXPIにもCLI導入用ファイルが入り、ソースのチェックアウトは不要です。
 生成しただけではインストールされません。旧GUIの起動用実行ファイルはビルドした
 アーキテクチャ向けです。今回の確認対象はUbuntu 26.04 / x86_64です。
@@ -156,14 +156,14 @@ Python 3と更新済みClamAVはOS側に必要で、Snap/Flatpakとの連携は�
 導入用ファイルはネットワークからコードを取得せず、同梱内容だけを設置します。
 
 1. XPIを旧版削除なしで上書きインストールし、「セットアップ」タブを開きます。
-2. 「導入用ファイルを保存」で`clam-mail-check-installer-0.17.3.pyz`を保存します。
+2. 「導入用ファイルを保存」で`clam-mail-check-installer-0.18.0.pyz`を保存します。
 3. 保存先のフォルダーをTerminalで開き、アドオンに表示されたコマンドを実行します。
    保存時の名前が変わった場合はコマンドのファイル名も合わせてください。
 4. Terminalに表示される変更先と影響を確認して承認します。root/sudoは不要で、実行を拒否します。
 5. アドオンに戻って「導入を確認」を押します。設置が有効で管理機能に対応した場合は版と状態が表示されます。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.17.3.pyz install
+python3 -I ./clam-mail-check-installer-0.18.0.pyz install
 ```
 
 導入済みなら同じコマンドで更新・修復します。既存の旧GUI方式の設置記録（format 1）も引き継ぎます。
@@ -188,7 +188,7 @@ python3 -I ./clam-mail-check-installer-0.17.3.pyz install
 5. 再びXPIをインストールし、上記の`install`コマンドと「導入を確認」で初回導入を試せます。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.17.3.pyz uninstall
+python3 -I ./clam-mail-check-installer-0.18.0.pyz uninstall
 ```
 
 対応済みならアドオン内の「アンインストール」で補助プログラムを削除し、続いてThunderbirdの確認で拡張自身を削除します。
@@ -203,7 +203,7 @@ python3 -I ./clam-mail-check-installer-0.17.3.pyz uninstall
 状態だけの確認（読み取りのみ）と、隔離した設置先での自動テストは次のとおりです。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.17.3.pyz status
+python3 -I ./clam-mail-check-installer-0.18.0.pyz status
 python3 -B -m unittest discover -s tests -p 'test_cli_setup.py'
 ```
 
@@ -279,7 +279,7 @@ python3 scripts/register_mail_host.py --install
 ユーザーのホーム配下に、次の2ファイルを新規作成します。
 
 ```text
-$HOME/.local/lib/clam-mail-check/0.17.3/host.py
+$HOME/.local/lib/clam-mail-check/0.18.0/host.py
 $HOME/.mozilla/native-messaging-hosts/local.clam_mail_check.json
 ```
 
@@ -516,13 +516,14 @@ python3 -B scripts/smoke_mail_check.py --require-clamd
 | 未検出 | 指定範囲で脅威を検出しませんでした。安全の保証ではありません |
 | 脅威候補を検出 | 検出名を表示します。誤検知の可能性もあるため人が判断します |
 | 一部または全部が未検査 | 暗号化、サイズ・展開上限、ClamAVの警告など |
+| 注意情報 | フィッシング・マクロ・PUAの追加判定。ウイルス検出と区別します |
 | 検査失敗 | 未導入、通信失敗、取得失敗、定義が古い、タイムアウトなど |
 
 - 検査は受信後です。本文表示や添付ファイルを開く操作を止めません。
-- 1通25MiB、展開後合計100MiB、展開ファイル数10000、再帰16段が上限。
-- エンジン検査は60秒、定義読み込み等を含むプロセス全体は120秒が上限。
+- 初期値は1通25MiB・展開後100MiB。設定で1通5〜100MiB・展開後25〜500MiB（メール上限以上）へ変更可能。展開ファイル数10000・再帰16段は固定。
+- 内部検査時間の初期値は60秒（10〜120秒に変更可能）。ClamAV内部制限の適用範囲は形式による。通信/代替プロセスの待ち時間上限は最大120秒と設定秒数+30秒の大きい方で、定義初回読込は別途最大60秒。
 - 定義が3日超古い場合、`clamscan`の機能で検査を失敗として扱います。
-- URLの評判によるフィッシング判定は、既存のメール検査運用に合わせて無効。
+- フィッシング・マクロの存在警告・PUAは初期値では無効。設定で追加判定と通知を有効化できる。
   HTMLや添付に対する通常のマルウェア検査は実行します。
 - OpenPGP・S/MIMEメールは復号しません。暗号化部分は検査不能として表示。
 - IMAPの本文取得に追加の通信が生じる場合があります。ヘッダーのみのメールは
@@ -695,3 +696,22 @@ CLIでの補助プログラム導入でも、ClamAV未導入時は具体的な�
 
 ## 要確認行の背景色（0.17.3）
 脅威検出・未検査・検査失敗のうち、確認が必要な行を淡い黄系の背景で表示します。確認済みの未検査は通常背景に戻り、既存の選択枠と状態名は維持します。ライト/ダーク両方の画面色に合わせて背景を混合します。
+
+
+## アドオン固有の検査設定（0.18.0）
+設定にフィッシング・OLE2のVBAマクロ存在警告・PUAの3段階（検査なし/結果に表示/検出時に通知）を追加しました。メール全体5〜100MiB、展開後25〜500MiB（メール全体以上）、内部検査10〜120秒を整数で指定できます。初期値は旧版と同じoff/off/off・25MiB/100MiB/60秒です。通常のウイルス検査・添付形式の解析・暗号化/上限超過警告は有効固定で、ファイル数10000/再帰16段/定義3日制限も維持します。新しいライブラリやOSのClamAV設定変更はありません。
+
+各メールの検査開始時に設定を固定し、アドオンと補助プログラムの両方で許容キー・型・範囲を検証します。新しい補助プログラムはhealthでscanSettingsVersion=1を返し、設定をbegin要求で受け取り、結果へ適用設定を返します。古い補助プログラムでは旧既定値だけが動作し、カスタム指定は更新案内を伴う検査失敗にして黙って無視しません。適用設定は履歴に保存し「検出名・検査情報」内で日英表示します。過去の結果は書き換えません。検査中の設定変更は次のメールから適用します。再開したフォルダー検査の処理済み分も維持され、残りに新設定を適用します。
+
+注意情報はadvisoryとしてウイルス検出と分離し、要確認件数/フィルター/再検査/確認済み/確認解除/完全削除に対応します。通知全体が有効な場合だけ、その結果に記録したカテゴリのnotify設定に従って検出時通知します。結果表示のみでも要確認には含めます。注意情報だけでは自動隔離せず、手動隔離もウイルス検出を対象とする従来の条件を維持します。ウイルスが同時に見つかれば検出を優先し、未検査部分もある場合はその判定と注意情報を併記します。フォルダー集計は注意情報を別件数とし、注意情報の通知が失敗通知枠を消費しないよう分離します。
+
+専用clamdのエンジン設定が変わる場合は終了/再起動して定義を読み直し、通知の有無だけならエンジンを再利用します。追加判定を有効にした検査は、注意情報の先行検出でウイルスを見落とさないようALLMATCHSCANを使います。この経路では所有者だけがアクセスできる専用一時ディレクトリのファイルで入力し、成功・例外時とも削除します。本文・添付を履歴には保存しません。clamscan代替経路も同じ制限とallmatchを指定します。無制限指定、任意の実行オプション、パス指定は受け付けません。
+
+[ClamAV 1.5.4の公式設定例](https://github.com/Cisco-Talos/clamav/blob/clamav-1.5.4/etc/clamd.conf.sample)と[公式検査ガイド](https://docs.clamav.net/manual/Usage/Scanning.html)を参照。新機能利用時は、拡張を上書きした後、セットアップで補助プログラムも更新してください。
+
+カスタム設定の実エンジン/通信統合テストは、合成メールだけを使って次で再実行できます。
+
+```bash
+python3 -B scripts/smoke_mail_check.py \
+  --custom-settings --require-clamd
+```

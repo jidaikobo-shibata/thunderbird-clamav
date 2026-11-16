@@ -18,7 +18,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from native.host import CHUNK_SIZE, read_frame  # noqa: E402
+from native.host import CHUNK_SIZE, read_frame, scan_options  # noqa: E402
 
 
 def encode(value):
@@ -26,9 +26,9 @@ def encode(value):
     return struct.pack("=I", len(data)) + data
 
 
-def check(data, process):
+def check(data, process, options=None):
     requests = [{"id": "health", "op": "health"},
-                {"id": "begin", "op": "begin", "size": len(data)}]
+                {"id": "begin", "op": "begin", "size": len(data), **({"scanSettings": options} if options else {})}]
     for seq, offset in enumerate(range(0, len(data), CHUNK_SIZE)):
         requests.append({"id": "chunk-" + str(seq), "op": "chunk", "seq": seq,
                          "data": base64.b64encode(data[offset:offset + CHUNK_SIZE]).decode()})
@@ -38,6 +38,9 @@ def check(data, process):
     replies = [read_frame(process.stdout) for _ in requests]
     assert replies[0]["status"] == "ready", replies[0]
     assert replies[-1]["sha256"] == requests[-1]["sha256"], replies[-1]
+    if options:
+        assert replies[0].get("scanSettingsVersion") == 1, replies[0]
+        assert replies[-1].get("scanSettings") == options, replies[-1]
     return replies[-1]
 
 
@@ -66,13 +69,14 @@ def main():
         ("zip-attachment", message(archive.getvalue(), "test.zip"), "detected"),
         ("encrypted-mail", b'Content-Type: multipart/encrypted; boundary="x"\r\n\r\n--x--\r\n', "incomplete")
     ]
+    options = scan_options({"phishing": "display", "macros": "display", "pua": "display", "mailMiB": 50, "expandedMiB": 200, "seconds": 90}) if "--custom-settings" in sys.argv else None
     process = subprocess.Popen([sys.executable, str(ROOT / "native/host.py")],
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                stderr=subprocess.DEVNULL)
     try:
         for name, data, expected in cases:
             started = time.monotonic()
-            result = check(data, process)
+            result = check(data, process, options)
             print(name, result["status"], result.get("signatures", []),
                   f"{time.monotonic() - started:.3f}s", result.get("engine", "clamscan"), flush=True)
             assert result["status"] == expected, result

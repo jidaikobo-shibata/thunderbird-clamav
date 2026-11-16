@@ -1,6 +1,8 @@
+import { scanPolicy } from "./scan-policy.mjs";
 import { isReviewed } from "./review.mjs";
 import { t, uiLanguage, localizeDetail } from "./i18n.mjs";
 export const MAX_BYTES = 25 * 1024 * 1024;
+export const MAX_TRANSFER_BYTES = 100 * 1024 * 1024;
 export const CHUNK_BYTES = 64 * 1024;
 export const HOST = "local.clam_mail_check";
 export const DEFAULTS = Object.freeze({
@@ -12,16 +14,17 @@ export function normalizeAutomaticSettings(value = {}) {
   const ids = Array.isArray(settings.accountIds) ? [...new Set(settings.accountIds.filter(id => typeof id === "string"))] : [];
   const accountIds = settings.enabled === true ? ids : [];
   return { enabled: accountIds.length > 0, notifications: settings.notifications, accountIds,
-    ...(value.quarantine ? { quarantine: structuredClone(value.quarantine) } : {}) };
+    ...(value.quarantine ? { quarantine: structuredClone(value.quarantine) } : {}),
+    ...(value.scanSettings ? { scanSettings: scanPolicy(value.scanSettings) } : {}) };
 }
 export const LABELS = Object.freeze({
   queued: t("mail084", "検査待ち"), scanning: t("mail085", "検査中"), clean: t("mail086", "未検出"),
   detected: t("mail087", "脅威候補を検出"), incomplete: t("mail088", "一部または全部が未検査"), error: t("mail089", "検査失敗"),
-  deleted: t("mail090", "完全削除済み")
+  advisory: t("scanAdvisory", "注意情報"), deleted: t("mail090", "完全削除済み")
 });
 export const pausedAutomatic = (record, settings) => record.source === "automatic" && record.status === "queued" &&
   (!settings.enabled || !settings.accountIds.includes(record.locator.accountId));
-export const needsAttention = record => ["detected", "incomplete", "error"].includes(record.status) && !isReviewed(record);
+export const needsAttention = record => ["detected", "incomplete", "error", "advisory"].includes(record.status) && !isReviewed(record);
 
 export function accountOf(message) {
   return message.folder?.accountId || "";
@@ -54,6 +57,7 @@ export function validateSettings(value, knownIds) {
   if (value.enabled && !value.accountIds.length) {
     throw new Error(t("mail092", "自動検査するアカウントを選択してください。"));
   }
+  if (value.scanSettings !== undefined) scanPolicy(value.scanSettings);
   return normalizeAutomaticSettings(value);
 }
 
@@ -127,8 +131,8 @@ export class NativeClient {
     this.port.disconnect();
   }
 
-  async scan(bytes, digest) {
-    let result = await this.request("begin", { size: bytes.length });
+  async scan(bytes, digest, options) {
+    let result = await this.request("begin", { size: bytes.length, ...(options ? { scanSettings: options } : {}) });
     if (result.status !== "accepted") throw new Error(result.detail || t("mail098", "検査を開始できません。"));
     let seq = 0;
     for (let offset = 0; offset < bytes.length; offset += CHUNK_BYTES) {
@@ -141,12 +145,13 @@ export class NativeClient {
       }
     }
     result = await this.request("end", { sha256: digest }, 225000);
-    if (!["clean", "detected", "incomplete", "error"].includes(result.status)) {
+    if (!["clean", "detected", "incomplete", "error", "advisory"].includes(result.status)) {
       throw new Error(t("mail100", "補助プログラムの結果を解釈できません。"));
     }
     if (result.status !== "error" && result.sha256 !== digest) {
       throw new Error(t("mail101", "検査対象の照合に失敗しました。"));
     }
+    if (options && JSON.stringify(result.scanSettings) !== JSON.stringify(options)) throw new Error(t("scanPolicyMismatch", "指定した検査条件の適用を確認できません。補助プログラムを更新して再検査してください。"));
     return result;
   }
 }

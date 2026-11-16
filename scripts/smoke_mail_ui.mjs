@@ -14,12 +14,12 @@ const catalogs = Object.fromEntries(await Promise.all(["ja", "en"].map(async lan
 const profile = await mkdtemp(path.join(tmpdir(), "clam-mail-ui-"));
 const server = createServer(async (request, response) => {
   const name = new URL(request.url, "http://localhost").pathname.slice(1);
-  if (!["dashboard.html", "dashboard.css", "dashboard.js", "review.mjs", "quarantine.mjs", "quarantine-ui.mjs", "core.mjs", "results.mjs", "folder-scan.mjs", "folder-labels.mjs", "installation.mjs", "i18n.mjs", "installer.pyz", "icon.svg"].includes(name)) {
+  if (!["dashboard.html", "dashboard.css", "dashboard.js", "review.mjs", "scan-policy.mjs", "quarantine.mjs", "quarantine-ui.mjs", "core.mjs", "results.mjs", "folder-scan.mjs", "folder-labels.mjs", "installation.mjs", "i18n.mjs", "installer.pyz", "icon.svg"].includes(name)) {
     response.writeHead(404).end(); return;
   }
   const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript", ".svg": "image/svg+xml", ".pyz": "application/octet-stream" };
   response.setHeader("Content-Type", types[path.extname(name)]);
-  response.end(await readFile(name === "installer.pyz" ? path.join(root, "dist", "clam-mail-check-installer-0.17.3.pyz") : path.join(root, "thunderbird", name)));
+  response.end(await readFile(name === "installer.pyz" ? path.join(root, "dist", "clam-mail-check-installer-0.18.0.pyz") : path.join(root, "thunderbird", name)));
 });
 await new Promise((resolve, reject) => {
   server.once("error", reject);
@@ -96,7 +96,7 @@ try {
       locator: { accountId, author: key === "r0" ? '<img src=x onerror="window.bad=true">' : "送信者",
         subject: key === "r0" ? "テスト添付メール" : "メール " + key, folder: { path: "/Inbox" } } });
     window.testState = { ok: true, issue: "", batch: null, folderJob: null, folderRequest: null,
-      installation: { state: sessionStorage.getItem("fixture-installation") || "managed", version: "0.17.3", healthy: true, detail: "導入済み" },
+      installation: { state: sessionStorage.getItem("fixture-installation") || "managed", version: "0.18.0", healthy: true, detail: "導入済み" },
       settings: { enabled: false, accountIds: [], notifications: true },
       accounts: [{ id: "test", name: "テストアカウント", type: "imap" }, { id: "other", name: "別アカウント", type: "imap" }],
       records: [makeRecord("r0", "detected"), makeRecord("r1", "detected", "other"),
@@ -112,7 +112,7 @@ try {
       return { key, author: record.locator.author, subject: record.locator.subject,
         folder: "/Inbox", accountId: record.locator.accountId, status: record.status, signatures: record.signatures }; };
     let batchKeys = [], forgetKeys = [];
-    window.messenger = { i18n: { getUILanguage: () => language, getMessage }, runtime: { getManifest: () => ({ version: "0.17.3" }), getURL: name => "/" + name, sendMessage: async request => {
+    window.messenger = { i18n: { getUILanguage: () => language, getMessage }, runtime: { getManifest: () => ({ version: "0.18.0" }), getURL: name => "/" + name, sendMessage: async request => {
       testCalls.push(request);
       if (request.type === "state") return structuredClone(testState);
       if (request.type === "helperInfo") {
@@ -121,11 +121,11 @@ try {
         return { ok: true, installation: testState.installation, health: testState.lastHealth };
       }
       if (request.type === "helperPlan") { testState.maintenance = true; testState.maintenanceOperation = request.operation; return { ok: true,
-        plan: { token: "maintenance-token", operation: request.operation, version: "0.17.3", paths: ["/synthetic/home/.local/lib/clam-mail-check"] } }; }
+        plan: { token: "maintenance-token", operation: request.operation, version: "0.18.0", paths: ["/synthetic/home/.local/lib/clam-mail-check"] } }; }
       if (request.type === "helperCancel") testState.maintenance = false;
       if (request.type === "helperApply") { testState.maintenance = false;
         testState.helperRemoved = testState.maintenanceOperation === "uninstall";
-        testState.installation = { state: testState.helperRemoved ? "removed" : "managed", version: "0.17.3", healthy: true,
+        testState.installation = { state: testState.helperRemoved ? "removed" : "managed", version: "0.18.0", healthy: true,
           detail: testState.helperRemoved ? "補助プログラムを削除しました。" : "補助プログラムを更新しました。", retained: [] };
         return { ok: true, installation: testState.installation }; }
       if (request.type === "helperMarkRemoved") { testState.helperRemoved = true; testState.installation = { state: "removed" }; }
@@ -233,7 +233,7 @@ try {
     const deadline = setTimeout(() => { clearInterval(timer); reject(new Error('UI condition timed out')); }, 5000);
   })`);
   const change = async (id, value, event = "change") => evaluate(`document.getElementById(${JSON.stringify(id)}).value = ${JSON.stringify(value)};
-    document.getElementById(${JSON.stringify(id)}).dispatchEvent(new Event(${JSON.stringify(event)}));`);
+    document.getElementById(${JSON.stringify(id)}).dispatchEvent(new Event(${JSON.stringify(event)}, { bubbles: true }));`);
   await call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
   await call("Page.navigate", { url: `http://127.0.0.1:${server.address().port}/dashboard.html` });
   await until("document.querySelectorAll('#results tr').length === 50");
@@ -475,7 +475,7 @@ try {
   await call("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   assert.equal(await evaluate("document.documentElement.scrollWidth <= window.innerWidth"), true);
   await evaluate("document.getElementById('tab-setup').click()");
-  assert.match(await evaluate("document.getElementById('installer-command').textContent"), /python3 -I.*0.17.3.*install/);
+  assert.match(await evaluate("document.getElementById('installer-command').textContent"), /python3 -I.*0.18.0.*install/);
   assert.equal(await evaluate("document.getElementById('installer-download').tagName"), "BUTTON");
   const downloads = path.join(profile, "downloads");
   await mkdir(downloads, { recursive: true });
@@ -492,11 +492,11 @@ try {
 
   let downloaded;
   for (let attempt = 0; attempt < 100; attempt++) {
-    downloaded = await readFile(path.join(downloads, "clam-mail-check-installer-0.17.3.pyz")).catch(() => null);
+    downloaded = await readFile(path.join(downloads, "clam-mail-check-installer-0.18.0.pyz")).catch(() => null);
     if (downloaded) break;
     await new Promise(resolve => setTimeout(resolve, 25));
   }
-  assert.deepEqual(downloaded, await readFile(path.join(root, "dist/clam-mail-check-installer-0.17.3.pyz")));
+  assert.deepEqual(downloaded, await readFile(path.join(root, "dist/clam-mail-check-installer-0.18.0.pyz")));
   await evaluate("document.getElementById('installation-title').scrollIntoView()");
   const installationImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
   await writeFile(path.join(root, "dist/ui-installation.png"), Buffer.from(installationImage.data, "base64"));
@@ -614,7 +614,7 @@ try {
   await evaluate("window.scrollTo(0, 0)");
   const englishAccounts = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
   await writeFile(path.join(root, "dist/ui-en-accounts.png"), Buffer.from(englishAccounts.data, "base64"));
-  assert.equal(await evaluate("document.querySelectorAll('#panel-settings fieldset').length"), 3);
+  assert.equal(await evaluate("document.querySelectorAll('#panel-settings fieldset').length"), 4);
   assert.equal(await evaluate("document.getElementById('panel-settings').contains(document.getElementById('forget-selected'))"), false);
   await evaluate("testState.records.push({ ...makeRecord('excluded-ui', 'queued'), source: 'automatic', attempts: 0, sha256: null }); document.querySelector('#accounts input').click()");
   await until("testState.records.some(record => record.key === 'excluded-ui' && record.unscannedReason === 'automaticExcluded') && !document.getElementById('notifications').disabled");
@@ -808,6 +808,47 @@ try {
     await evaluate("document.querySelector('#results input').click(); window.scrollTo(0,0)");
     const image = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
     await writeFile(path.join(root, 'dist/ui-attention-' + scheme + '.png'), Buffer.from(image.data, "base64"));
+  }
+
+  await call("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "light" }] });
+  for (const language of ["ja", "en-US"]) {
+    await evaluate(`sessionStorage.setItem('fixture-language', '${language}')`);
+    await call("Page.reload");
+    await until("document.querySelectorAll('#results tr').length === 50");
+    await evaluate("document.getElementById('tab-settings').click()");
+    assert.equal(await evaluate("document.getElementById('scan-mailMiB').value"), "25");
+    for (const [id, value, key] of [["scan-phishing","display","phishing"],["scan-macros","notify","macros"],["scan-pua","display","pua"],["scan-mailMiB","50","mailMiB"],["scan-expandedMiB","200","expandedMiB"],["scan-seconds","90","seconds"]]) {
+      await change(id, value);
+      try {
+      await until("testState.settings.scanSettings?." + key + " === " + JSON.stringify(Number.isFinite(Number(value)) ? Number(value) : value) + " && !document.getElementById('" + id + "').disabled");
+      } catch (error) { throw new Error(id + ": " + await evaluate("JSON.stringify({settings:testState.settings, status:document.getElementById('settings-status').textContent, action:document.getElementById('action-status').textContent, inputs:[...document.querySelectorAll('#settings-form input[type=number]')].map(input=>[input.id,input.value,input.disabled])})")); }
+    }
+    await change("scan-mailMiB", "101");
+    assert.equal(await evaluate("document.getElementById('scan-mailMiB').value"), "50");
+    assert.equal(await evaluate("testState.settings.scanSettings.mailMiB"), 50);
+    await change("scan-expandedMiB", "25");
+    assert.equal(await evaluate("document.getElementById('scan-expandedMiB').value"), "200");
+    await evaluate("failSettings = true"); await change("scan-seconds", "100");
+    await until("document.getElementById('scan-seconds').value === '90' && !document.getElementById('scan-seconds').disabled");
+    await evaluate("failSettings = false; document.getElementById('scan-mailMiB').focus(); document.getElementById('scan-mailMiB').value = '75'");
+    await evaluate("new Promise(resolve => setTimeout(resolve, 1200))");
+    assert.equal(await evaluate("document.getElementById('scan-mailMiB').value"), "75");
+    assert.equal(await evaluate("testState.settings.scanSettings.mailMiB"), 50);
+    await evaluate("document.getElementById('scan-mailMiB').blur()");
+    await change("scan-mailMiB", "50");
+    await until("!document.getElementById('scan-mailMiB').disabled");
+    await evaluate("document.getElementById('scan-expandedMiB').closest('details').open = true; window.scrollTo(0,0)");
+    const image = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
+    await writeFile(path.join(root, 'dist/ui-scan-settings-' + language + '.png'), Buffer.from(image.data, "base64"));
+    await evaluate("testState.records[0].status = 'advisory'; testState.records[0].advisories = [{kind:'phishing',signatures:['Heuristics.Phishing.Email.SpoofedDomain']}]; testState.records[0].scanSettings = structuredClone(testState.settings.scanSettings); document.getElementById('tab-results').click()");
+    await change("filter", "advisory");
+    await until("document.querySelector('#results tr')?.dataset.status === 'advisory'");
+    assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 1);
+    assert.equal(await evaluate("document.querySelector('#results tr').dataset.attention"), "true");
+    assert.match(await evaluate("document.querySelector('#results .scanPolicy').textContent"), /50.*200.*90/);
+    await evaluate("document.getElementById('select-page').click()");
+    assert.equal(await evaluate("document.getElementById('quarantine-selected').disabled"), true);
+    assert.equal(await evaluate("document.querySelector('#results .review-action').hidden"), false);
   }
   console.log("UI smoke: passed (Japanese/English, six tabs, help/setup/uninstall navigation, folder picker, autosave/rollback, connection history, filters, bulk actions, folder start/cancel/subfolders, progress counters, run filter, stop/interruption/resume/delete, desktop/mobile)");
 } finally {
