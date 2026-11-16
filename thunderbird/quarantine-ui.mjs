@@ -61,5 +61,7 @@ export function quarantineSummary(record, folders) {
   if (!info) return "";
   if (info.status === "error") return t("qFailed", "隔離できませんでした：$1", [info.detail || ""]);
   if (info.status === "moving") return t("qMoving", "隔離処理中（中断された場合は移動先を確認してください）");
+  if (info.status === "outside" || info.status === "moved" &&
+      (info.destination?.accountId !== record.locator.accountId || info.destination?.path !== record.locator.folder?.path)) return t("qOutside", "隔離先の外へ移動済みです。");
   return t("qMoved", "隔離先へ移動済み：$1", [folderLabel(info.destination, folders, record.locator.accountId)]);
 }

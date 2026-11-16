@@ -7,19 +7,43 @@ export function quarantineFolder(folder) {
     (folder.specialUse || []).length === 0;
 }
 export function canQuarantine(record) { return record?.status === "detected" && Boolean(record.sha256); }
-export function inQuarantine(message, settings, records = []) {
+export async function inQuarantine(message, settings, records = [], { session, digestOf } = {}) {
   const destination = settings.quarantine?.[message.folder?.accountId];
-  const matches = folder => folder && folder.accountId === message.folder?.accountId && folder.path === message.folder?.path;
-  return Boolean(destination && destination.path === message.folder?.path) || records.some(record => matches(record.quarantine?.destination));
+  if (destination && destination.path === message.folder?.path) return true;
+  // A past destination must never exclude an entire folder. Suppress only a
+  // known detected message, identified by its current session ID or contents.
+  const candidates = records.filter(record => record.status === "detected" && record.sha256 &&
+    ["moving", "moved", "error"].includes(record.quarantine?.status) &&
+    record.quarantine.destination?.accountId === message.folder?.accountId &&
+    record.quarantine.destination?.path === message.folder?.path && sameEnvelope(message, record.locator));
+  if (session && candidates.some(record => record.session === session && record.messageId === message.id)) return true;
+  if (!candidates.length || !digestOf) return false;
+  try {
+    const digest = await digestOf(message);
+    return candidates.some(record => record.sha256 === digest);
+  } catch { return false; } // Let normal scanning report/retry unreadable mail.
 }
-export async function validateQuarantine(api, value, knownIds) {
+export function quarantineNeedsPermission(previous = {}, next = {}) {
+  return Object.entries(next).some(([accountId, config]) => config.auto &&
+    !(previous[accountId]?.auto && previous[accountId].folderId === config.folderId && previous[accountId].path === config.path));
+}
+export function refreshQuarantineLocation(record, message) {
+  record.messageId = message.id;
+  record.locator = locator(message);
+  const info = record.quarantine;
+  if (!info || !["moved", "outside"].includes(info.status)) return;
+  const inside = info.destination?.accountId === message.folder?.accountId && info.destination?.path === message.folder?.path;
+  info.status = inside ? "moved" : "outside";
+}
+export async function validateQuarantine(api, value, knownIds, previous = {}) {
   if (value === undefined) return undefined;
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length > 100) throw new Error(t("qInvalid", "隔離先の設定が不正です。"));
   const result = {};
   for (const [accountId, config] of Object.entries(value)) {
     if (!knownIds.includes(accountId) || !config || typeof config.folderId !== "string" || typeof config.path !== "string" || typeof config.auto !== "boolean") throw new Error(t("qInvalid", "隔離先の設定が不正です。"));
-    // A disabled, stale target may be retained for correction, never silently replaced.
-    if (config.auto) {
+    // Validate new opt-ins/targets; unchanged settings must not block stopping
+    // scanning, disabling quarantine or changing unrelated preferences.
+    if (quarantineNeedsPermission(previous, { [accountId]: config })) {
       await destinationFolder(api, accountId, config);
       if (!await api.permissions.contains({ permissions: ["messagesMove"] })) throw new Error(t("qPermission", "隔離にはメール移動の権限が必要です。"));
     }

@@ -38,8 +38,8 @@ test("quarantine verifies moved contents and updates the message ID and locator"
   assert.equal(record.locator.folder.id, destination.id);
   assert.equal(record.quarantine.status, "moved");
   assert.equal(calls[0].options.isUserAction, false);
-  assert.equal(inQuarantine({ folder: destination }, { quarantine: { one: config } }), true);
-  assert.equal(inQuarantine({ folder: destination }, {}, [record]), true);
+  assert.equal(await inQuarantine({ folder: destination }, { quarantine: { one: config } }), true);
+  assert.equal(await inQuarantine(await api.messages.get(2), {}, [record], { session: "new" }), true);
 });
 
 test("quarantine fails safely for copying, ambiguous results, changed content and server errors", async () => {
@@ -84,4 +84,51 @@ test("failed persistence prevents the move and preserves prior quarantine inform
   await assert.rejects(moveToQuarantine(api, record, config, hooks));
   assert.equal(calls.length, 0);
   assert.equal(record.quarantine, undefined);
+});
+
+
+test("a former destination excludes only the verified moved message, never unrelated new mail", async () => {
+  const { api, record, hooks } = await fixture();
+  await moveToQuarantine(api, record, config, hooks);
+  const moved = await api.messages.get(2);
+  assert.equal(await inQuarantine({ ...moved, id: 9, headerMessageId: "new@invalid" }, {}, [record], { session: "new", digestOf: async () => { throw Error("must not read unrelated mail"); } }), false);
+  // Session IDs cannot be reused after restart; matching headers require a digest.
+  assert.equal(await inQuarantine({ ...moved, id: 9 }, {}, [record], { session: "later", digestOf: async () => "different" }), false);
+  assert.equal(await inQuarantine({ ...moved, id: 9 }, {}, [record], { session: "later", digestOf: async () => record.sha256 }), true);
+  assert.equal(await inQuarantine(moved, {}, [record], { session: "later", digestOf: async () => { throw Error("offline"); } }), false);
+  record.status = "deleted";
+  assert.equal(await inQuarantine(moved, {}, [record], { session: "new", digestOf: async () => record.sha256 }), false);
+});
+
+test("unchanged invalid destinations do not block disabling or unrelated settings, but opt-ins still validate", async () => {
+  const { api } = await fixture({ allowed: false });
+  const { quarantineNeedsPermission } = await import("../thunderbird/quarantine.mjs");
+  const stale = { one: { folderId: "gone", path: "/Gone", auto: true }, two: { folderId: "gone-two", path: "/GoneTwo", auto: true } };
+  const unchanged = await validateQuarantine(api, stale, ["one", "two"], stale);
+  assert.deepEqual(unchanged, stale);
+  const disabled = { ...stale, one: { ...stale.one, auto: false } };
+  assert.deepEqual(await validateQuarantine(api, disabled, ["one", "two"], stale), disabled);
+  assert.equal(quarantineNeedsPermission(stale, unchanged), false);
+  assert.equal(quarantineNeedsPermission(stale, disabled), false);
+  assert.equal(quarantineNeedsPermission(disabled, stale), true);
+  await assert.rejects(validateQuarantine(api, stale, ["one", "two"], disabled));
+  assert.equal(quarantineNeedsPermission(stale, { one: config }), true);
+  await assert.rejects(validateQuarantine(api, { one: config }, ["one"], stale));
+});
+
+test("verified location changes and legacy display stop claiming mail is still quarantined", async () => {
+  const { refreshQuarantineLocation } = await import("../thunderbird/quarantine.mjs");
+  const { quarantineSummary } = await import("../thunderbird/quarantine-ui.mjs");
+  const { api, record, hooks } = await fixture();
+  await moveToQuarantine(api, record, config, hooks);
+  const restored = { ...await api.messages.get(2), id: 7, folder: source };
+  // Historical state from 0.16.0 is rendered safely before a re-scan.
+  record.locator = locator(restored);
+  assert.match(quarantineSummary(record, []), /隔離先の外/);
+  refreshQuarantineLocation(record, restored);
+  assert.equal(record.quarantine.status, "outside");
+  assert.equal(record.messageId, 7);
+  assert.match(quarantineSummary(record, []), /隔離先の外/);
+  refreshQuarantineLocation(record, { ...restored, id: 8, folder: destination });
+  assert.equal(record.quarantine.status, "moved");
 });

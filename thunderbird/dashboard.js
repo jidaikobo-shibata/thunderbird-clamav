@@ -1,4 +1,4 @@
-import { canQuarantine } from "./quarantine.mjs";
+import { canQuarantine, quarantineNeedsPermission } from "./quarantine.mjs";
 import { syncQuarantineSettings, readQuarantineSettings, requireMovePermission, confirmQuarantine, quarantineSummary } from "./quarantine-ui.mjs";
 import { folderLabel } from "./folder-labels.mjs";
 import { t, uiLanguage, localizeDocument, localizeDetail } from "./i18n.mjs";
@@ -647,7 +647,7 @@ $("settings-form").addEventListener("change", () => {
   const wasEnabled = latest.settings.enabled;
   const quarantine = readQuarantineSettings(latest.settings.quarantine, folderChoices);
   const settings = { enabled: accountIds.length > 0, notifications: $("notifications").checked, accountIds, quarantine };
-  const permission = Object.values(quarantine).some(config => config.auto) ? requireMovePermission() : Promise.resolve();
+  const permission = quarantineNeedsPermission(latest.settings.quarantine, quarantine) ? requireMovePermission() : Promise.resolve();
   settingsSaving = true;
   void action(async () => {
     setText($("settings-status"), t("mail166", "保存しています。"));

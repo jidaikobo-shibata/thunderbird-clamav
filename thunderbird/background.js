@@ -1,4 +1,4 @@
-import { validateQuarantine, moveToQuarantine, inQuarantine, canQuarantine } from "./quarantine.mjs";
+import { validateQuarantine, moveToQuarantine, inQuarantine, canQuarantine, refreshQuarantineLocation } from "./quarantine.mjs";
 import { t } from "./i18n.mjs";
 import { toolbarNotice } from "./installation.mjs";
 import {
@@ -176,6 +176,7 @@ async function verified(record, expectedFingerprint = null) {
   if (expectedFingerprint && fingerprint !== expectedFingerprint) {
     throw new Error(t("mail014", "確認後にメール内容が変わりました。もう一度確認してください。"));
   }
+  refreshQuarantineLocation(record, message);
   return { message, fingerprint };
 }
 
@@ -424,7 +425,7 @@ function enqueue(first, source) {
     for await (const message of messagePages(api.messages, first)) {
       if (source === "manual" && helperRemoved) throw new Error(t("mail037", "補助プログラムの導入を確認してから検査してください。"));
       if (message.external || !message.folder) continue;
-      if (source === "automatic" && inQuarantine(message, settings, records)) continue;
+      if (source === "automatic" && await inQuarantine(message, settings, records, { session, digestOf: async message => sha256(await rawBytes(message.id)) })) continue;
       if (source === "automatic" && (!settings.enabled ||
           !settings.accountIds.includes(accountOf(message)))) continue;
       const existing = records.find(record => record.session === session && record.messageId === message.id);
@@ -503,6 +504,7 @@ async function drain() {
         }
         const bytes = await rawBytes(message.id);
         record.sha256 = await sha256(bytes);
+        refreshQuarantineLocation(record, message);
         if (!client || client.closed) {
           client = new NativeClient(api.runtime);
           const health = await client.request("health");
@@ -654,6 +656,37 @@ const ready = (async () => {
 api.messages.onNewMailReceived.addListener((folder, list) => {
   void ready.then(() => enqueue(list, "automatic")).catch(report);
 }, true);
+// External moves (including Undo) update the display only after content
+// verification. Our own quarantine/deletion operations retain their own locks.
+api.messages.onMoved?.addListener((originals, moved) => {
+  const work = async () => {
+    await ready;
+    const oldMessages = [], newMessages = [];
+    for await (const message of messagePages(api.messages, originals)) oldMessages.push(message);
+    for await (const message of messagePages(api.messages, moved)) newMessages.push(message);
+    let changed = false;
+    for (const old of oldMessages) {
+      const eligible = records.filter(record => record.quarantine && ["moved", "outside"].includes(record.quarantine.status) &&
+        (record.session === session && Number.isInteger(record.messageId) ? record.messageId === old.id :
+          sameEnvelope(old, record.locator) && old.folder?.path === record.locator.folder?.path));
+      if (eligible.length !== 1) continue;
+      const record = eligible[0];
+      if (deleting.has(record.key) || ["queued", "scanning", "deleted"].includes(record.status)) continue;
+      const hash = record.sha256, before = JSON.stringify([record.locator, record.messageId, record.session, record.quarantine.status]);
+      const candidates = newMessages.filter(message => sameEnvelope(message, { ...record.locator, accountId: accountOf(message) }));
+      if (candidates.length > 20) continue;
+      const matches = [];
+      for (const candidate of candidates) if (await sha256(await rawBytes(candidate.id)) === hash) matches.push(candidate);
+      if (matches.length !== 1 || record.sha256 !== hash || deleting.has(record.key) || ["queued", "scanning", "deleted"].includes(record.status) ||
+          JSON.stringify([record.locator, record.messageId, record.session, record.quarantine.status]) !== before) continue;
+      refreshQuarantineLocation(record, matches[0]);
+      record.session = session;
+      changed = true;
+    }
+    if (changed) await save();
+  };
+  mutations = mutations.catch(() => {}).then(work).catch(report);
+});
 api.mailTabs.onSelectedMessagesChanged.addListener(tab => { lastMailTab = tab.id; });
 api.menus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "scan-folder") {
@@ -758,7 +791,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         const ids = (await api.accounts.list()).map(account => account.id);
         const previous = settings;
         const candidate = validateSettings(request.settings, ids);
-        const quarantine = await validateQuarantine(api, request.settings.quarantine, ids);
+        const quarantine = await validateQuarantine(api, request.settings.quarantine, ids, previous.quarantine);
         for (const [accountId, config] of Object.entries(quarantine || {})) {
           const old = previous.quarantine?.[accountId];
           if (config.auto) config.activation = old?.auto && old.folderId === config.folderId && old.path === config.path && old.activation ? old.activation : crypto.randomUUID();
@@ -958,6 +991,8 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         if (await sha256(await rawBytes(message.id)) !== record.sha256) {
           throw new Error(t("mail079", "メール内容が検査時から変わっています。再検査してください。"));
         }
+        refreshQuarantineLocation(record, message);
+        await save();
         await api.messageDisplay.open({ messageId: message.id, location: "tab" });
         return { ok: true };
       }

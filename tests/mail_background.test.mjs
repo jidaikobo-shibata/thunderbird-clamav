@@ -12,7 +12,7 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
   manageInfo = null, healthResult = null, folderRefs = [{ id: "inbox", accountId: "one", path: "/Inbox", name: "受信トレイ" }] } = {}) {
   let stored = structuredClone(saved);
   const notifications = [], opened = [], rawReads = [], timers = [], deleted = [], nativePorts = [];
-  const events = { newMail: event(), selected: event(), message: event() };
+  const events = { newMail: event(), selected: event(), message: event(), moved: event() };
   const byId = new Map(mails.map(mail => [mail.id, mail]));
   const api = {
     permissions: { contains: async () => deleteAllowed },
@@ -43,7 +43,7 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
         deleted.push({ ids, options });
         for (const id of ids) byId.delete(id);
       },
-      onNewMailReceived: events.newMail,
+      onNewMailReceived: events.newMail, onMoved: events.moved,
       get: async id => { if (!byId.has(id)) throw new Error("missing"); return byId.get(id); },
       getRaw: async (id, options) => {
         assert.equal(options.decrypt, false);
@@ -1265,4 +1265,74 @@ test("enabling quarantine does not move mail already waiting for a scan", async 
   h.events.newMail.listeners[0](mails[1].folder, { messages: [mails[1]] });
   await settle(h, state => state.records.some(record => record.quarantine?.status === "moved"));
   assert.deepEqual(moved, [2]);
+});
+
+
+test("former quarantine folders scan unrelated new mail after removing the destination", async () => {
+  const original = mail(1); original.folder = { id: "old-isolation", accountId: "one", path: "/OldIsolation" };
+  const record = { key: "old", status: "detected", source: "manual", attempts: 1,
+    locator: { ...locator(original), headerMessageId: "older@invalid" }, sha256: "old-digest",
+    quarantine: { status: "moved", destination: original.folder } };
+  const h = await harness({ mails: [original], saved: { records: [record], settings: { enabled: true, accountIds: ["one"], notifications: true, quarantine: {} } } });
+  h.events.newMail.listeners[0](original.folder, { messages: [original] });
+  const state = await settle(h, state => state.records.some(record => record.key !== "old" && record.status === "clean"));
+  assert.equal(state.records.length, 2);
+  assert.deepEqual(h.rawReads, [1]);
+});
+
+test("missing automatic quarantine destinations cannot block stopping scans or disabling each account", async () => {
+  const quarantine = { one: { folderId: "missing", path: "/Missing", auto: true, activation: "old" },
+    two: { folderId: "missing-two", path: "/MissingTwo", auto: true, activation: "old-two" } };
+  const h = await harness({ saved: { settings: { enabled: true, accountIds: ["one", "two"], notifications: true, quarantine } } });
+  let settings = structuredClone((await h.send("state")).settings);
+  assert.equal((await h.send("settings", { settings: { ...settings, enabled: false, accountIds: [] } })).ok, true);
+  settings = structuredClone((await h.send("state")).settings);
+  assert.equal(settings.enabled, false);
+  assert.equal((await h.send("settings", { settings: { ...settings, notifications: false } })).ok, true);
+  settings = structuredClone((await h.send("state")).settings);
+  settings.quarantine.one.auto = false;
+  assert.equal((await h.send("settings", { settings })).ok, true);
+  settings = structuredClone((await h.send("state")).settings);
+  settings.quarantine.two.auto = false;
+  assert.equal((await h.send("settings", { settings })).ok, true);
+  settings = structuredClone((await h.send("state")).settings);
+  assert.equal(settings.quarantine.one.auto || settings.quarantine.two.auto, false);
+});
+
+test("rescan after restoring quarantined mail updates its location and quarantine state", async () => {
+  const original = mail(1); original.folder.id = "inbox";
+  const destination = { id: "isolation", accountId: "one", path: "/Isolation" };
+  const record = { key: "restored", status: "detected", source: "manual", attempts: 1,
+    locator: locator({ ...original, folder: destination }), sha256: await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello")),
+    quarantine: { status: "moved", destination } };
+  const h = await harness({ mails: [original], saved: { records: [record] } });
+  assert.equal((await h.send("retry", { key: record.key })).ok, true);
+  const state = await settle(h, state => state.records[0]?.status === "clean");
+  assert.equal(state.records[0].locator.folder.id, "inbox");
+  assert.equal(state.records[0].quarantine.status, "outside");
+});
+
+
+test("external move and Undo reconcile quarantined history, including after restart", async () => {
+  const original = mail(1); original.folder.id = "inbox";
+  const destination = { id: "isolation", accountId: "one", path: "/Isolation" };
+  const record = { key: "undo", status: "detected", source: "manual", attempts: 1,
+    locator: locator({ ...original, folder: destination }), sha256: await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello")),
+    quarantine: { status: "moved", destination } };
+  const h = await harness({ mails: [original], saved: { records: [record] } });
+  assert.equal(h.events.moved.listeners.length, 1);
+  h.events.moved.listeners[0]({ messages: [{ ...original, id: 99, folder: destination }] }, { messages: [original] });
+  let state = await settle(h, state => state.records[0]?.quarantine.status === "outside");
+  assert.equal(state.records[0].messageId, 1);
+  assert.equal(state.records[0].locator.folder.id, "inbox");
+  const old = { ...original };
+  original.folder = destination;
+  h.events.moved.listeners[0]({ messages: [old] }, { messages: [original] });
+  state = await settle(h, state => state.records[0]?.quarantine.status === "moved");
+  assert.equal(state.records[0].locator.folder.id, "isolation");
+  original.raw = "Subject: changed\r\n\r\nreplacement";
+  original.folder = { id: "inbox", accountId: "one", path: "/Inbox" };
+  h.events.moved.listeners[0]({ messages: [{ ...original, folder: destination }] }, { messages: [original] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await h.send("state")).records[0].quarantine.status, "moved");
 });
