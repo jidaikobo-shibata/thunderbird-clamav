@@ -2729,5 +2729,8 @@
   },
   "reviewRowAction": {
     "message": "確認済み"
+  },
+  "unreviewRowAction": {
+    "message": "未確認に"
   }
 }

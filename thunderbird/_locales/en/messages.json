@@ -2729,5 +2729,8 @@
   },
   "reviewRowAction": {
     "message": "Mark reviewed"
+  },
+  "unreviewRowAction": {
+    "message": "Unreview"
   }
 }

@@ -401,7 +401,7 @@ function renderRecords() {
     setText(entry.parts.engine, record.engine || "");
     entry.remove.hidden = !canDelete(record);
     entry.review.hidden = record.status !== "incomplete";
-    const reviewLabel = isReviewed(record) ? t("unreviewAction", "未確認に戻す") : t("reviewRowAction", "確認済み");
+    const reviewLabel = isReviewed(record) ? t("unreviewRowAction", "未確認に") : t("reviewRowAction", "確認済み");
     setText(entry.review, reviewLabel);
     entry.review.setAttribute("aria-label", t("namedDetail", "$1：$2", [record.locator.subject || t("mail022", "件名なし"), reviewLabel]));
     for (const [button, label] of [[entry.checkbox, t("mail138", "一括操作の対象に選択")], [entry.remove, t("mail139", "ごみ箱を経由せず完全削除")], [entry.open, t("mail131", "開く")], [entry.retry, t("mail134", "再検査")]]) {
