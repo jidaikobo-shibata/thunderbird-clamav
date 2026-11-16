@@ -72,6 +72,7 @@
       <strong id="selected-count" role="status" aria-live="polite" aria-atomic="true"><span data-i18n="mail276">選択0件</span></strong>
       <button type="button" id="retry-selected" disabled><span data-i18n="mail277">選択したメールを再検査</span></button>
       <button type="button" id="delete-selected" class="danger" disabled><span data-i18n="mail278">選択したメールを完全削除</span></button>
+      <button type="button" id="quarantine-selected" disabled data-i18n="qSelected">検出したメールを隔離</button>
       <button type="button" id="forget-selected" disabled data-i18n="forgetTitle">履歴だけ消去</button>
       <button type="button" id="deselect" disabled><span data-i18n="mail279">選択を解除</span></button>
     </div>
@@ -97,6 +98,11 @@
     <h2><span data-i18n="mail255">設定</span></h2>
     <form id="settings-form">
       <fieldset><legend data-i18n="autoAccountsHeading">新着メールを自動検査するアカウント</legend><div id="accounts"></div></fieldset>
+      <fieldset><legend data-i18n="qHeading">検出したメールの隔離</legend>
+        <p data-i18n="qSettingsHint">同じアカウント内の専用フォルダーを選んでください。フォルダーはThunderbirdで作成できます。自動隔離は、設定後に届く新着メールで脅威を検出した場合だけに適用します。</p>
+        <div id="quarantine-settings"></div>
+        <p class="hint" data-i18n="qNotDisinfect">隔離はフォルダーへの移動です。無害化や開封の禁止は行いません。自動で完全削除することはありません。</p>
+      </fieldset>
       <fieldset><legend data-i18n="notificationHeading">通知</legend><label><input id="notifications" type="checkbox"> <span data-i18n="mail296">検出・検査不能・失敗をデスクトップ通知する</span></label></fieldset>
       <p id="settings-status" role="status" aria-live="polite"></p>
     </form>
@@ -183,6 +189,9 @@
     <p><span data-i18n="mail336">拡張の設定・履歴・再開情報は失われる可能性があります。メール・アカウント・ClamAVは残ります。補助プログラムはこのOSユーザー共通のため、他のThunderbirdプロファイルも接続できなくなります。再導入用のファイルを先に保存しておけます。</span></p>
     <p><span data-i18n="mail337">Thunderbirdのアドオン一覧で直接拡張を削除しても、補助プログラムは残ります。両方を取り除く場合は、この拡張の「アンインストール」タブから進めてください。通常のバージョンアップでは旧版を削除せず、XPIを上書きインストールします。</span></p>
     <button type="button" data-open-tab="uninstall"><span data-i18n="mail338">アンインストールを開く</span></button>
+    <h3 data-i18n="qHeading">検出したメールの隔離</h3>
+    <p data-i18n="qHelpScope">自動隔離は、設定で有効にした後に届き、自動検査で脅威を検出したメールだけを対象にします。未検査・検査失敗・既存フォルダーの検査では自動移動しません。隔離先は同じアカウントの通常フォルダーに限り、受信トレイ・迷惑メール・ごみ箱などの特殊フォルダーは選べません。</p>
+    <p data-i18n="qHelpOperations">検査結果で脅威を検出したメールを選び、「隔離」から確認して移動できます。隔離先のフォルダーは新着の自動検査から除外し、移動による検査の繰り返しを防ぎます。移動後も検査結果から再検査・完全削除できます。元に戻す場合はThunderbirdで移動してください。移動を確認できない場合や処理が中断された場合は、元の場所と隔離先を確認してください。自動で再移動はしません。</p>
     <h3><span data-i18n="mail339">検査範囲</span></h3>
     <p><span data-i18n="mail340">受信後にメール全体を検査します。検査完了前の閲覧や添付操作は止めません。メール本文・添付は外部サービスに送信しません。暗号化メールは復号せず、未検査として扱います。</span></p>
     <p><span data-i18n="mail341">上限は1通25MiB、展開後の合計100MiB、検査時間は最大120秒です。専用clamdの初回起動には、別に最大60秒かかります。ClamAVの定義が3日超古い場合は検査失敗として扱います。URLの評判によるフィッシング判定は無効です。</span></p>
@@ -193,6 +202,12 @@
     <p><span data-i18n="mail346">個別メールやフォルダーの右クリックからも検査できます。フォルダーを右クリックした場合は、選んだ対象の確認画面が開きます。</span></p>
   </section>
 
+<dialog id="quarantine-dialog" aria-labelledby="quarantine-title">
+  <h2 id="quarantine-title" data-i18n="qConfirmTitle">検出したメールを隔離</h2>
+  <p data-i18n="qConfirmHint">下のメールを、それぞれのアカウントで指定した隔離先へ移動します。移動後も再検査・完全削除できます。無害化や開封の禁止は行いません。</p>
+  <p id="quarantine-count"></p><ul id="quarantine-targets" class="dialog-targets"></ul>
+  <form method="dialog" class="actions"><button value="cancel" id="quarantine-cancel" data-i18n="mail177">中止</button><button value="move" data-i18n="qMove">隔離先へ移動する</button></form>
+</dialog>
 </main>
 <dialog id="helper-dialog" aria-labelledby="helper-dialog-title" aria-describedby="helper-dialog-detail">
   <form method="dialog"><h2 id="helper-dialog-title"></h2><p id="helper-dialog-detail"></p>

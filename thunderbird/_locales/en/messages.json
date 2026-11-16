@@ -2499,5 +2499,150 @@
   },
   "setupInstallNext": {
     "message": "Save the installer and run it in Terminal using the steps below. Then choose “Check installation”."
+  },
+  "qInvalid": {
+    "message": "Invalid quarantine settings."
+  },
+  "qPermission": {
+    "message": "Permission to move messages is required for quarantine."
+  },
+  "qTargetMissing": {
+    "message": "The quarantine destination could not be verified. In Settings, select a dedicated folder in the same account again."
+  },
+  "qTargetReadOnly": {
+    "message": "Messages cannot be added to the quarantine destination. Select another folder."
+  },
+  "qDetectedOnly": {
+    "message": "Only messages with a detected threat can be quarantined."
+  },
+  "qSourceReadOnly": {
+    "message": "The message cannot be moved out of its current folder. It has not been quarantined."
+  },
+  "qIdentityMissing": {
+    "message": "The message has no identifier to verify quarantine safely. Move it using Thunderbird."
+  },
+  "qMoveUnconfirmed": {
+    "message": "Quarantine could not be confirmed. Check the source and destination in Thunderbird. No automatic move retry will be made."
+  },
+  "qBusy": {
+    "message": "This message is being processed."
+  },
+  "qWait": {
+    "message": "Wait for scanning and deletion to finish before quarantining messages."
+  },
+  "qInterrupted": {
+    "message": "Thunderbird closed during quarantine. Check the source and destination. No automatic move retry will be made."
+  },
+  "qChanged": {
+    "message": "The message or destination has changed. Confirm the operation again."
+  },
+  "qHeading": {
+    "message": "Quarantine detected messages"
+  },
+  "qSettingsHint": {
+    "message": "Choose a dedicated folder in the same account. Create the folder in Thunderbird if needed. Automatic quarantine applies only to threats detected in new mail received after enabling it."
+  },
+  "qNotDisinfect": {
+    "message": "Quarantine moves messages to a folder. It does not disinfect them or prevent opening them. Messages are never permanently deleted automatically."
+  },
+  "qAuto": {
+    "message": "Automatically quarantine threats detected in new mail"
+  },
+  "qAccountTarget": {
+    "message": "Quarantine folder for $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "qNoTarget": {
+    "message": "No quarantine folder"
+  },
+  "qUnavailableTarget": {
+    "message": "Unverified destination: $ARG1$ (select again)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "qConfirmTitle": {
+    "message": "Quarantine detected messages"
+  },
+  "qConfirmHint": {
+    "message": "Move the messages below to the quarantine folder selected for each account. You can rescan or permanently delete them afterwards. Moving does not disinfect them or prevent opening them."
+  },
+  "qMove": {
+    "message": "Move to quarantine"
+  },
+  "qDestination": {
+    "message": "Destination: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "qCount": {
+    "message": "Messages to move: $ARG1$ (including selections on other pages)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "qFailed": {
+    "message": "Quarantine failed: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "qMoving": {
+    "message": "Quarantine in progress (check the destination if interrupted)"
+  },
+  "qMoved": {
+    "message": "Moved to quarantine: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "qSelected": {
+    "message": "Quarantine detected messages"
+  },
+  "qSelectedCount": {
+    "message": "Quarantine ($ARG1$ messages)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "qCancelled": {
+    "message": "Quarantine cancelled."
+  },
+  "qCompleted": {
+    "message": "Quarantine: $ARG1$ moved, $ARG2$ failed. Check the results.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "qBatch": {
+    "message": "Quarantining messages"
+  },
+  "qHelpScope": {
+    "message": "Automatic quarantine applies only to threats detected by automatic scans of new messages received after enabling it. Incomplete scans, failed scans and folder scans do not trigger a move. Choose a normal folder in the same account; special folders such as Inbox, Junk and Trash cannot be destinations."
+  },
+  "qHelpOperations": {
+    "message": "Select detected threats in Results and choose Quarantine to review and move them. Quarantine folders are excluded from new-mail scanning to prevent repeated scans caused by moving messages. You can still rescan or permanently delete quarantined messages from Results. To restore a message, move it in Thunderbird. If a move is unconfirmed or interrupted, check both folders. Moves are not retried automatically."
   }
 }

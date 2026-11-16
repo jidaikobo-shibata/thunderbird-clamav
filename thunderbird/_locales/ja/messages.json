@@ -2499,5 +2499,150 @@
   },
   "setupInstallNext": {
     "message": "次の手順で導入用ファイルを保存し、Terminalで実行した後、「導入を確認」を押してください。"
+  },
+  "qSelected": {
+    "message": "検出したメールを隔離"
+  },
+  "qHeading": {
+    "message": "検出したメールの隔離"
+  },
+  "qSettingsHint": {
+    "message": "同じアカウント内の専用フォルダーを選んでください。フォルダーはThunderbirdで作成できます。自動隔離は、設定後に届く新着メールで脅威を検出した場合だけに適用します。"
+  },
+  "qNotDisinfect": {
+    "message": "隔離はフォルダーへの移動です。無害化や開封の禁止は行いません。自動で完全削除することはありません。"
+  },
+  "qConfirmTitle": {
+    "message": "検出したメールを隔離"
+  },
+  "qConfirmHint": {
+    "message": "下のメールを、それぞれのアカウントで指定した隔離先へ移動します。移動後も再検査・完全削除できます。無害化や開封の禁止は行いません。"
+  },
+  "qMove": {
+    "message": "隔離先へ移動する"
+  },
+  "qInvalid": {
+    "message": "隔離先の設定が不正です。"
+  },
+  "qPermission": {
+    "message": "隔離にはメール移動の権限が必要です。"
+  },
+  "qTargetMissing": {
+    "message": "隔離先を確認できません。設定で同じアカウント内の専用フォルダーを選び直してください。"
+  },
+  "qTargetReadOnly": {
+    "message": "隔離先にメールを追加できません。別のフォルダーを選んでください。"
+  },
+  "qDetectedOnly": {
+    "message": "隔離できるのは脅威を検出したメールだけです。"
+  },
+  "qSourceReadOnly": {
+    "message": "元のフォルダーからメールを移動できません。隔離は行っていません。"
+  },
+  "qIdentityMissing": {
+    "message": "メールの識別情報がないため、安全に隔離を確認できません。Thunderbirdで移動してください。"
+  },
+  "qChanged": {
+    "message": "対象または隔離先が変わりました。もう一度確認してください。"
+  },
+  "qMoveUnconfirmed": {
+    "message": "隔離の完了を確認できません。元のフォルダーと隔離先をThunderbirdで確認してください。自動で再移動はしません。"
+  },
+  "qBusy": {
+    "message": "このメールは処理中です。"
+  },
+  "qInterrupted": {
+    "message": "隔離中に終了しました。元のフォルダーと隔離先を確認してください。自動で再移動はしません。"
+  },
+  "qWait": {
+    "message": "検査・削除の処理が終わってから隔離してください。"
+  },
+  "qAuto": {
+    "message": "新着メールで脅威を検出したら自動で隔離する"
+  },
+  "qAccountTarget": {
+    "message": "$ARG1$の隔離先",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "qNoTarget": {
+    "message": "隔離先を指定しない"
+  },
+  "qUnavailableTarget": {
+    "message": "確認できない隔離先：$ARG1$（選び直してください）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "qDestination": {
+    "message": "隔離先：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "qCount": {
+    "message": "移動するメール：$ARG1$通（画面外の選択を含む）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "qFailed": {
+    "message": "隔離できませんでした：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "qMoving": {
+    "message": "隔離処理中（中断された場合は移動先を確認してください）"
+  },
+  "qMoved": {
+    "message": "隔離先へ移動済み：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "qSelectedCount": {
+    "message": "隔離（$ARG1$通）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "qBatch": {
+    "message": "メールの隔離"
+  },
+  "qCancelled": {
+    "message": "隔離を中止しました。"
+  },
+  "qCompleted": {
+    "message": "隔離：$ARG1$通移動、$ARG2$通失敗。結果を確認してください。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "qHelpScope": {
+    "message": "自動隔離は、設定で有効にした後に届き、自動検査で脅威を検出したメールだけを対象にします。未検査・検査失敗・既存フォルダーの検査では自動移動しません。隔離先は同じアカウントの通常フォルダーに限り、受信トレイ・迷惑メール・ごみ箱などの特殊フォルダーは選べません。"
+  },
+  "qHelpOperations": {
+    "message": "検査結果で脅威を検出したメールを選び、「隔離」から確認して移動できます。隔離先のフォルダーは新着の自動検査から除外し、移動による検査の繰り返しを防ぎます。移動後も検査結果から再検査・完全削除できます。元に戻す場合はThunderbirdで移動してください。移動を確認できない場合や処理が中断された場合は、元の場所と隔離先を確認してください。自動で再移動はしません。"
   }
 }

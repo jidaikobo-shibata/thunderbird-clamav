@@ -1,3 +1,4 @@
+import { validateQuarantine, moveToQuarantine, inQuarantine, canQuarantine } from "./quarantine.mjs";
 import { t } from "./i18n.mjs";
 import { toolbarNotice } from "./installation.mjs";
 import {
@@ -98,7 +99,7 @@ async function listFolderChoices() {
     const displayNames = current.isRoot || current.path === "/" ? parents : [...parents, current.name || current.path];
     if (realFolder(current) && typeof current.id === "string") {
       choices.push({ id: current.id, accountId: current.accountId, path: current.path,
-        name: current.name || current.path, displayNames });
+        name: current.name || current.path, specialUse: current.specialUse || [], displayNames });
     }
     for (const child of folder.subFolders || []) walk(child, accountId, displayNames);
   };
@@ -201,6 +202,20 @@ function restoreExcluded(changes) {
     for (const key of Object.keys(record)) if (!Object.hasOwn(before, key)) delete record[key];
     Object.assign(record, before);
   }
+}
+
+async function quarantineRecord(record, config, automatic = false) {
+  if (deleting.has(record.key)) throw new Error(t("qBusy", "このメールは処理中です。"));
+  deleting.add(record.key);
+  try {
+    await moveToQuarantine(api, record, config, { verified, rawBytes, save, session, automatic });
+    return true;
+  } catch (error) {
+    record.quarantine = { ...record.quarantine, status: "error", detail: error.message,
+      updatedAt: new Date().toISOString() };
+    await save();
+    return false;
+  } finally { deleting.delete(record.key); }
 }
 
 function requestedKeys(keys) {
@@ -409,6 +424,7 @@ function enqueue(first, source) {
     for await (const message of messagePages(api.messages, first)) {
       if (source === "manual" && helperRemoved) throw new Error(t("mail037", "補助プログラムの導入を確認してから検査してください。"));
       if (message.external || !message.folder) continue;
+      if (source === "automatic" && inQuarantine(message, settings, records)) continue;
       if (source === "automatic" && (!settings.enabled ||
           !settings.accountIds.includes(accountOf(message)))) continue;
       const existing = records.find(record => record.session === session && record.messageId === message.id);
@@ -424,6 +440,10 @@ function enqueue(first, source) {
       const record = existing || { key: crypto.randomUUID(), createdAt: new Date().toISOString() };
       Object.assign(record, {
         messageId: message.id, session, locator: locator(message), source,
+        quarantineIntent: source === "automatic" && settings.quarantine?.[accountOf(message)]?.auto ? {
+          folderId: settings.quarantine[accountOf(message)].folderId, path: settings.quarantine[accountOf(message)].path,
+          activation: settings.quarantine[accountOf(message)].activation
+        } : null,
         unscannedReason: null, status: "queued", detail: t("mail038", "検査を待っています。"), signatures: [],
         sha256: null, engine: null, attempts: 0, nextRetry: null, folderJobId: null, updatedAt: new Date().toISOString()
       });
@@ -439,7 +459,7 @@ function enqueue(first, source) {
 }
 
 async function drain() {
-  if (running || maintenanceActive() || helperRemoved) return;
+  if (running || maintenanceActive() || helperRemoved || batchProgress?.active && batchProgress.operation === "quarantine") return;
   running = true;
   let client, engine;
   try {
@@ -507,6 +527,12 @@ async function drain() {
         record.status = error.incomplete ? "incomplete" : "error";
         delete record.detailMessages;
         record.detail = error.message || t("mail045", "検査に失敗しました。");
+      }
+      const quarantineConfig = settings.quarantine?.[record.locator.accountId];
+      if (record.status === "detected" && record.source === "automatic" && quarantineConfig?.auto && record.quarantineIntent &&
+          record.quarantineIntent.folderId === quarantineConfig.folderId && record.quarantineIntent.path === quarantineConfig.path &&
+          record.quarantineIntent.activation === quarantineConfig.activation) {
+        await quarantineRecord(record, settings.quarantine[record.locator.accountId], true);
       }
       record.updatedAt = new Date().toISOString();
       // Two automatic attempts total; no endless retry loop on bad mail/host.
@@ -589,6 +615,10 @@ const ready = (async () => {
   }
   let retryInterrupted = false;
   for (const record of records) {
+    if (record.quarantine?.status === "moving") {
+      record.quarantine.status = "error";
+      record.quarantine.detail = t("qInterrupted", "隔離中に終了しました。元のフォルダーと隔離先を確認してください。自動で再移動はしません。");
+    }
     if (record.bulkRetryId) {
       retryInterrupted = true;
       if (record.status === "queued" && record.bulkRetryBefore) restoreRetryRecord(record);
@@ -659,6 +689,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
     if ((maintenanceActive() || helperRemoved) && !["state", "helperInfo", "helperApply", "helperCancel", "helperMarkRemoved", "health"].includes(request.type)) {
       throw new Error(t("mail054", "補助プログラムの管理中か削除後です。導入を確認してから操作してください。"));
     }
+    if (batchProgress?.active && batchProgress.operation === "quarantine" && !["state", "cancelBatch", "helperInfo", "health"].includes(request.type)) throw new Error(t("qBusy", "このメールは処理中です。"));
     switch (request.type) {
       case "state":
         return { ok: true, settings, records, issue, lastHealth, lastScan, resultsRequest, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
@@ -726,7 +757,13 @@ api.runtime.onMessage.addListener(async (request, sender) => {
       case "settings": {
         const ids = (await api.accounts.list()).map(account => account.id);
         const previous = settings;
-        settings = validateSettings(request.settings, ids);
+        const candidate = validateSettings(request.settings, ids);
+        const quarantine = await validateQuarantine(api, request.settings.quarantine, ids);
+        for (const [accountId, config] of Object.entries(quarantine || {})) {
+          const old = previous.quarantine?.[accountId];
+          if (config.auto) config.activation = old?.auto && old.folderId === config.folderId && old.path === config.path && old.activation ? old.activation : crypto.randomUUID();
+        }
+        settings = { ...candidate, ...(quarantine ? { quarantine } : {}) };
         const excluded = excludePausedAutomatic();
         try { await save(); }
         catch (error) { settings = previous; restoreExcluded(excluded); await updateBadge().catch(() => {}); throw error; }
@@ -820,6 +857,29 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         }
         void drain().catch(report);
         return { ok: true, count: targets.length };
+      }
+      case "quarantineMany": {
+        requestedKeys(request.keys);
+        if (batchProgress?.active || running || folderScan.active || deleting.size) throw new Error(t("qWait", "検査・削除の処理が終わってから隔離してください。"));
+        if (!await api.permissions.contains({ permissions: ["messagesMove"] })) throw new Error(t("qPermission", "隔離にはメール移動の権限が必要です。"));
+        const targets = request.keys.map(key => records.find(record => record.key === key));
+        if (targets.some(record => !canQuarantine(record))) throw new Error(t("qDetectedOnly", "隔離できるのは脅威を検出したメールだけです。"));
+        const configs = structuredClone(settings.quarantine || {});
+        if (!request.hashes || targets.some(record => request.hashes[record.key] !== record.sha256 ||
+            JSON.stringify(request.destinations?.[record.locator.accountId]) !== JSON.stringify(configs[record.locator.accountId]))) throw new Error(t("qChanged", "対象または隔離先が変わりました。もう一度確認してください。"));
+        if (running || folderScan.active || deleting.size) throw new Error(t("qWait", "検査・削除の処理が終わってから隔離してください。"));
+        const progress = startBatch("quarantine", targets.length);
+        try {
+          for (const record of targets) {
+            if (progress.stopRequested) break;
+            if (await quarantineRecord(record, configs[record.locator.accountId])) progress.moved = (progress.moved || 0) + 1;
+            else progress.failed++;
+            progress.completed++;
+            await save();
+            await yieldBatch();
+          }
+        } finally { progress.active = false; progress.cancelled = progress.total - progress.completed; void drain().catch(report); }
+        return { ok: true, moved: progress.moved || 0, failed: progress.failed };
       }
       case "cancelBatch": {
         const progress = batchProgress;

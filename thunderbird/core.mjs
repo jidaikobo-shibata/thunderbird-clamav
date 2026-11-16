@@ -10,7 +10,8 @@ export function normalizeAutomaticSettings(value = {}) {
   const settings = { ...DEFAULTS, ...value };
   const ids = Array.isArray(settings.accountIds) ? [...new Set(settings.accountIds.filter(id => typeof id === "string"))] : [];
   const accountIds = settings.enabled === true ? ids : [];
-  return { enabled: accountIds.length > 0, notifications: settings.notifications, accountIds };
+  return { enabled: accountIds.length > 0, notifications: settings.notifications, accountIds,
+    ...(value.quarantine ? { quarantine: structuredClone(value.quarantine) } : {}) };
 }
 export const LABELS = Object.freeze({
   queued: t("mail084", "検査待ち"), scanning: t("mail085", "検査中"), clean: t("mail086", "未検出"),

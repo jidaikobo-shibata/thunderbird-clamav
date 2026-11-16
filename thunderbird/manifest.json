@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "ClamAV Mail Check",
-  "version": "0.15.2",
+  "version": "0.16.0",
   "description": "__MSG_extensionDescription__",
   "browser_specific_settings": {
     "gecko": {
@@ -13,7 +13,7 @@
     "accountsRead", "messagesRead", "nativeMessaging", "storage",
     "notifications", "menus"
   ],
-  "optional_permissions": ["messagesDelete", "downloads"],
+  "optional_permissions": ["messagesDelete", "messagesMove", "downloads"],
   "background": {
     "page": "background.html",
     "persistent": true

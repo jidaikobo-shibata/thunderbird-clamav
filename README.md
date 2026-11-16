@@ -71,11 +71,11 @@ node --check thunderbird/dashboard.js
 python3 scripts/build_mail_check.py
 ```
 
-`dist/clam-mail-check-0.15.2.xpi` と、確認用の補助プログラム・登録JSONを
+`dist/clam-mail-check-0.16.0.xpi` と、確認用の補助プログラム・登録JSONを
 `dist/native/` に生成します。GUI不要の導入用ファイル
-`dist/clam-mail-check-installer-0.15.2.pyz` をXPIに同梱し、単体でも生成します。
+`dist/clam-mail-check-installer-0.16.0.pyz` をXPIに同梱し、単体でも生成します。
 旧GUI配布物も必要な場合だけ `--legacy-gui` を指定します。この場合はCコンパイラーが必要です。
-`dist/clam-mail-check-setup-0.15.2-linux-<architecture>.tar.gz` に生成します。
+`dist/clam-mail-check-setup-0.16.0-linux-<architecture>.tar.gz` に生成します。
 旧GUI配布物にはXPI・補助プログラム・GUIを同梱します。通常配布のXPIにもCLI導入用ファイルが入り、ソースのチェックアウトは不要です。
 生成しただけではインストールされません。旧GUIの起動用実行ファイルはビルドした
 アーキテクチャ向けです。今回の確認対象はUbuntu 26.04 / x86_64です。
@@ -156,14 +156,14 @@ Python 3と更新済みClamAVはOS側に必要で、Snap/Flatpakとの連携は�
 導入用ファイルはネットワークからコードを取得せず、同梱内容だけを設置します。
 
 1. XPIを旧版削除なしで上書きインストールし、「セットアップ」タブを開きます。
-2. 「導入用ファイルを保存」で`clam-mail-check-installer-0.15.2.pyz`を保存します。
+2. 「導入用ファイルを保存」で`clam-mail-check-installer-0.16.0.pyz`を保存します。
 3. 保存先のフォルダーをTerminalで開き、アドオンに表示されたコマンドを実行します。
    保存時の名前が変わった場合はコマンドのファイル名も合わせてください。
 4. Terminalに表示される変更先と影響を確認して承認します。root/sudoは不要で、実行を拒否します。
 5. アドオンに戻って「導入を確認」を押します。設置が有効で管理機能に対応した場合は版と状態が表示されます。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.15.2.pyz install
+python3 -I ./clam-mail-check-installer-0.16.0.pyz install
 ```
 
 導入済みなら同じコマンドで更新・修復します。既存の旧GUI方式の設置記録（format 1）も引き継ぎます。
@@ -188,7 +188,7 @@ python3 -I ./clam-mail-check-installer-0.15.2.pyz install
 5. 再びXPIをインストールし、上記の`install`コマンドと「導入を確認」で初回導入を試せます。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.15.2.pyz uninstall
+python3 -I ./clam-mail-check-installer-0.16.0.pyz uninstall
 ```
 
 対応済みならアドオン内の「アンインストール」で補助プログラムを削除し、続いてThunderbirdの確認で拡張自身を削除します。
@@ -203,7 +203,7 @@ python3 -I ./clam-mail-check-installer-0.15.2.pyz uninstall
 状態だけの確認（読み取りのみ）と、隔離した設置先での自動テストは次のとおりです。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.15.2.pyz status
+python3 -I ./clam-mail-check-installer-0.16.0.pyz status
 python3 -B -m unittest discover -s tests -p 'test_cli_setup.py'
 ```
 
@@ -279,7 +279,7 @@ python3 scripts/register_mail_host.py --install
 ユーザーのホーム配下に、次の2ファイルを新規作成します。
 
 ```text
-$HOME/.local/lib/clam-mail-check/0.15.2/host.py
+$HOME/.local/lib/clam-mail-check/0.16.0/host.py
 $HOME/.mozilla/native-messaging-hosts/local.clam_mail_check.json
 ```
 
@@ -657,3 +657,13 @@ CLIでの補助プログラム導入でも、ClamAV未導入時は具体的な�
 
 ## 再試行中の失敗通知を保留（0.15.2）
 60秒後の自動再試行を予定している検査失敗は、デスクトップ通知を保留します。再試行で成功した場合は失敗通知を出さず、再試行でも失敗した場合に通知します。履歴には初回失敗も従来通り表示し、再試行結果で更新します。脅威検出・未検査と、自動再試行を予定しないフォルダー検査などの失敗は従来通り通知します。
+
+
+## 検出したメールの隔離（0.16.0）
+設定でアカウントごとの隔離先と、自動隔離の有効・無効を指定します。初期状態は無効です。同じアカウントの通常フォルダーだけを利用し、フォルダー自体はThunderbirdで作成してください。受信トレイ・ごみ箱・迷惑メールなどの特殊フォルダーと、仮想/統合フォルダーは対象外です。移動の書込権限も保存時/実行時に確認します。
+
+自動隔離は有効化後に受信した新着メールの自動検査で脅威が検出された場合に限定します。受信時の設定世代を記録し、有効化前の検査待ちや設定変更前の待機は移動しません。未検査・検査失敗・手動再検査・既存フォルダー検査は自動移動しません。既存の検出メールは、検査結果で選択して「隔離」し、全対象とアカウント別の移動先を確認できます。混在選択では検出したメールだけが対象です。一括処理は進捗・中止に対応します。
+
+追加権限 `messagesMove` は任意権限で、初めて自動隔離を有効にする場合と手動隔離の操作時に求めます。権限を拒否すると自動隔離の変更は保存せず、手動移動もしません。本文・添付の保存は増やしません。[Thunderbird公式の移動API](https://webextension-api.thunderbird.net/en/esr-mv2/messages.html#move-messageids-destination-options)を使用し、手動操作はUndoに対応する指定を渡します。自動完全削除は実装しません。
+
+移動直前に検査時の本文ダイジェストと識別情報を照合します。移動後も移動先の本文と識別情報、元の位置に残っていないことを確認し、新しいメールIDと履歴の場所を更新します。結果には隔離済み/処理中/失敗理由を表示し、検出の判定は隔離失敗で上書きしません。APIがコピーに留まった場合や候補が複数の場合も完了扱いにしません。処理前に状態を保存し、再起動時は未確認として案内して自動再移動を防ぎます。隔離先への新着イベントは自動検査から除外し、ループを防ぎます。再検査・完全削除は移動後も利用可能です。元へ戻す場合はThunderbirdで移動します。隔離はフォルダー移動であり、無害化や開封の制限ではありません。

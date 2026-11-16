@@ -1128,3 +1128,141 @@ test("temporary automatic mail read failure recovers without a failure notificat
   assert.equal(state.records[0].nextRetry, null);
   assert.equal(h.notifications.length, 0);
 });
+
+test("automatic quarantine moves detected new mail but not manual scans, and ignores destination events", async () => {
+  const original = mail(1); original.folder.id = "inbox";
+  const destination = { id: "isolation", accountId: "one", path: "/Isolation", name: "Isolation" };
+  const config = { folderId: destination.id, path: destination.path, auto: true };
+  const h = await harness({ mails: [original], folderRefs: [original.folder, destination], scanResult: { status: "detected", signatures: ["Synthetic"] },
+    saved: { settings: { enabled: true, accountIds: ["one"], notifications: true, quarantine: { one: config } } } });
+  h.api.permissions.contains = async () => true;
+  h.api.folders.getFolderCapabilities = async () => ({ canAddMessages: true, canDeleteMessages: true });
+  const moves = [];
+  h.api.messages.move = async (ids, target) => { moves.push({ ids, target }); original.folder = destination; };
+  h.events.newMail.listeners[0](original.folder, { messages: [original] });
+  let state = await settle(h, state => state.records[0]?.quarantine?.status === "moved");
+  assert.equal(moves.length, 1);
+  assert.equal(state.records[0].status, "detected");
+  assert.equal(state.records[0].locator.folder.id, destination.id);
+  assert.equal(state.records[0].nextRetry, null);
+  h.events.newMail.listeners[0](destination, { messages: [{ ...original, id: 33 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await h.send("state")).records.length, 1);
+  await h.send("retry", { key: state.records[0].key });
+  await settle(h, state => state.records[0]?.status === "detected");
+  assert.equal(moves.length, 1);
+  state = await h.send("state");
+  assert.equal((await h.send("prepareDelete", { key: state.records[0].key })).ok, true);
+});
+
+test("quarantine failure preserves the threat verdict and leaves a visible error", async () => {
+  const original = mail(1);
+  const h = await harness({ mails: [original], scanResult: { status: "detected" },
+    saved: { settings: { enabled: true, accountIds: ["one"], notifications: true,
+      quarantine: { one: { folderId: "missing", path: "/Isolation", auto: true } } } } });
+  h.api.permissions.contains = async () => true;
+  h.events.newMail.listeners[0](original.folder, { messages: [original] });
+  const state = await settle(h, state => state.records[0]?.quarantine?.status === "error");
+  assert.equal(state.records[0].status, "detected");
+  assert.match(state.records[0].quarantine.detail, /隔離先/);
+  assert.equal(state.records[0].nextRetry, null);
+});
+
+test("manual quarantine pins the verdict and destination, then preserves opening and permanent deletion", async () => {
+  const original = mail(1); original.folder.id = "inbox";
+  const destination = { id: "isolation", accountId: "one", path: "/Isolation", name: "Isolation" };
+  const config = { folderId: destination.id, path: destination.path, auto: false };
+  const h = await harness({ mails: [original], folderRefs: [original.folder, destination], scanResult: { status: "detected" },
+    saved: { settings: { enabled: false, accountIds: [], notifications: true, quarantine: { one: config } } } });
+  h.api.permissions.contains = async () => true;
+  h.api.folders.getFolderCapabilities = async () => ({ canAddMessages: true, canDeleteMessages: true });
+  const moves = [];
+  h.api.messages.move = async (ids, target, options) => { moves.push({ ids, target, options }); original.folder = destination; };
+  await h.send("scanSelection");
+  let state = await settle(h, state => state.records[0]?.status === "detected");
+  assert.equal(moves.length, 0);
+  const record = state.records[0], request = { keys: [record.key], hashes: { [record.key]: record.sha256 }, destinations: { one: config } };
+  assert.equal((await h.send("quarantineMany", { ...request, hashes: { [record.key]: "changed" } })).ok, false);
+  assert.equal(moves.length, 0);
+  const response = await h.send("quarantineMany", request);
+  assert.equal(response.moved, 1);
+  assert.equal(response.failed, 0);
+  assert.equal(moves[0].options.isUserAction, true);
+  assert.equal((await h.send("open", { key: record.key })).ok, true);
+  const prepared = await h.send("prepareDelete", { key: record.key });
+  assert.equal(prepared.ok, true);
+  assert.equal((await h.send("deletePermanently", { key: record.key, token: prepared.token })).ok, true);
+  assert.equal(h.deleted.length, 1);
+});
+
+test("restarting during quarantine does not move again or erase the detected verdict", async () => {
+  const original = mail(1);
+  const record = { key: "interrupted", source: "automatic", status: "detected", attempts: 1,
+    locator: locator(original), sha256: await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello")),
+    quarantine: { status: "moving", destination: { id: "isolation", accountId: "one", path: "/Isolation" } } };
+  const h = await harness({ mails: [original], saved: { records: [record] } });
+  const state = await h.send("state");
+  assert.equal(state.records[0].status, "detected");
+  assert.equal(state.records[0].quarantine.status, "error");
+  assert.match(state.records[0].quarantine.detail, /隔離中に終了/);
+  assert.equal(h.rawReads.length, 0);
+});
+
+test("manual quarantine can stop between messages without touching remaining mail", async () => {
+  const mails = [mail(1), mail(2), mail(3)];
+  for (const message of mails) message.folder.id = "inbox";
+  const destination = { id: "isolation", accountId: "one", path: "/Isolation", name: "Isolation" };
+  const config = { folderId: destination.id, path: destination.path, auto: false };
+  const h = await harness({ mails, folderRefs: [mails[0].folder, destination], scanResult: { status: "detected" },
+    saved: { settings: { enabled: false, accountIds: [], notifications: true, quarantine: { one: config } } } });
+  h.api.permissions.contains = async () => true;
+  h.api.folders.getFolderCapabilities = async () => ({ canAddMessages: true, canDeleteMessages: true });
+  let release, started;
+  const gate = new Promise(resolve => { release = resolve; }), moving = new Promise(resolve => { started = resolve; });
+  const moved = [];
+  h.api.messages.move = async ([id]) => { moved.push(id); started(); await gate; mails.find(mail => mail.id === id).folder = destination; };
+  await h.send("scanSelection");
+  let state = await settle(h, state => state.records.length === 3 && state.records.every(record => record.status === "detected"));
+  const request = { keys: state.records.map(record => record.key), hashes: Object.fromEntries(state.records.map(record => [record.key, record.sha256])), destinations: { one: config } };
+  const pending = h.send("quarantineMany", request);
+  await moving;
+  state = await h.send("state");
+  assert.equal(state.batch.active, true);
+  assert.equal((await h.send("retry", { key: request.keys[1] })).ok, false);
+  assert.equal((await h.send("cancelBatch", { id: state.batch.id })).ok, true);
+  release();
+  const result = await pending;
+  assert.equal(result.moved, 1);
+  assert.equal(moved.length, 1);
+  state = await h.send("state");
+  assert.equal(state.batch.cancelled, 2);
+  assert.equal(state.batch.active, false);
+  assert.equal(state.records.filter(record => record.quarantine).length, 1);
+});
+
+test("enabling quarantine does not move mail already waiting for a scan", async () => {
+  const mails = [mail(1), mail(2)];
+  for (const message of mails) message.folder.id = "inbox";
+  const destination = { id: "isolation", accountId: "one", path: "/Isolation", name: "Isolation" };
+  const config = { folderId: destination.id, path: destination.path, auto: false };
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; }), scanning = new Promise(resolve => { entered = resolve; });
+  let gated = false;
+  const h = await harness({ mails, folderRefs: [mails[0].folder, destination], scanResult: { status: "detected" },
+    scanGate: async () => { if (!gated) { gated = true; entered(); await gate; } },
+    saved: { settings: { enabled: true, accountIds: ["one"], notifications: true, quarantine: { one: config } } } });
+  h.api.permissions.contains = async () => true;
+  h.api.folders.getFolderCapabilities = async () => ({ canAddMessages: true, canDeleteMessages: true });
+  const moved = [];
+  h.api.messages.move = async ([id]) => { moved.push(id); mails.find(mail => mail.id === id).folder = destination; };
+  h.events.newMail.listeners[0](mails[0].folder, { messages: [mails[0]] });
+  await scanning;
+  assert.equal((await h.send("settings", { settings: { enabled: true, accountIds: ["one"], notifications: true,
+    quarantine: { one: { ...config, auto: true } } } })).ok, true);
+  release();
+  await settle(h, state => state.records[0]?.status === "detected");
+  assert.equal(moved.length, 0);
+  h.events.newMail.listeners[0](mails[1].folder, { messages: [mails[1]] });
+  await settle(h, state => state.records.some(record => record.quarantine?.status === "moved"));
+  assert.deepEqual(moved, [2]);
+});

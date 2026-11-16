@@ -98,3 +98,6 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid GrayText
 .setup-task .primary-action { background: Highlight; color: HighlightText; border: 2px solid Highlight; font-weight: bold; margin-block: 4px 16px; }
 .setup-task details { margin-block: 16px 0; }
 .setup-task details summary { font-weight: bold; }
+
+#quarantine-settings > div { margin-block: 16px; }
+#quarantine-settings select { margin-block: 4px 8px; }

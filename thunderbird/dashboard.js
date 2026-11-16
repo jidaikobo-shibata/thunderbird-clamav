@@ -1,3 +1,5 @@
+import { canQuarantine } from "./quarantine.mjs";
+import { syncQuarantineSettings, readQuarantineSettings, requireMovePermission, confirmQuarantine, quarantineSummary } from "./quarantine-ui.mjs";
 import { folderLabel } from "./folder-labels.mjs";
 import { t, uiLanguage, localizeDocument, localizeDetail } from "./i18n.mjs";
 import { installationUI, helperNotice } from "./installation.mjs";
@@ -40,6 +42,9 @@ function updateControls() {
   $("retry-selected").disabled = locked || !retryCount;
   $("delete-selected").disabled = locked || !deleteCount;
   $("forget-selected").disabled = locked || !historyCount;
+  const quarantineCount = chosen.filter(canQuarantine).length;
+  setText($("quarantine-selected"), t("qSelectedCount", "隔離（$1通）", [quarantineCount]));
+  $("quarantine-selected").disabled = locked || !quarantineCount || foldersLoading || !folderChoices.length;
   $("deselect").disabled = locked || !chosen.length;
   const candidates = visible.filter(selectable), selectedOnPage = candidates.filter(record => selected.has(record.key)).length;
   $("select-page").disabled = locked || !candidates.length;
@@ -63,7 +68,8 @@ function updateControls() {
   $("folder-delete").disabled = locked || !job || Boolean(folderActive);
   $("folder-results").disabled = locked || !job;
   $("folder-only").disabled = locked || !job;
-  for (const input of $("settings-form").querySelectorAll("input, button")) input.disabled = locked || latest?.helperRemoved;
+  for (const input of $("settings-form").querySelectorAll("input, button, select")) input.disabled = locked || latest?.helperRemoved;
+  for (const row of $("quarantine-settings").children) row.querySelector("input").disabled = locked || latest?.helperRemoved || !row.querySelector("select").value;
   for (const record of visible) {
     const entry = rows.get(record.key);
     entry.checkbox.disabled = locked || !selectable(record);
@@ -377,7 +383,7 @@ function renderRecords() {
     setText(entry.parts.subject, record.locator.subject || t("mail022", "件名なし"));
     const account = latest.accounts.find(account => account.id === record.locator.accountId)?.name || record.locator.accountId || "";
     setText(entry.parts.location, [account, folderLabel(record.locator.folder, folderChoices, record.locator.accountId)].filter(Boolean).join(t("listSeparator", " ／ ")));
-    setText(entry.parts.detail, localizeDetail(record));
+    setText(entry.parts.detail, [localizeDetail(record), quarantineSummary(record, folderChoices)].filter(Boolean).join(" "));
     setText(entry.parts.signatures, (record.signatures || []).join(" / "));
     setText(entry.parts.engine, record.engine || "");
     entry.remove.hidden = !canDelete(record);
@@ -401,7 +407,7 @@ function renderRecords() {
   $("batch-stop").hidden = !progress?.active;
   $("batch-stop").disabled = !progress?.active || progress.stopRequested;
   if (progress) {
-    const operation = progress.operation === "retry" ? t("bulkRetryName", "一括再検査") : progress.phase === "prepare" ? t("bulkPrepareName", "削除対象の照合") : t("bulkDeleteName", "メールの一括完全削除");
+    const operation = progress.operation === "quarantine" ? t("qBatch", "メールの隔離") : progress.operation === "retry" ? t("bulkRetryName", "一括再検査") : progress.phase === "prepare" ? t("bulkPrepareName", "削除対象の照合") : t("bulkDeleteName", "メールの一括完全削除");
     const state = progress.error ? t("mail180", "失敗") : progress.active ? progress.stopRequested ? t("bulkStopping", "中止しています") : t("bulkRunning", "処理中") : progress.stopRequested ? t("bulkStopped", "中止") : t("bulkDone", "終了");
     setText($("batch-progress"), t("bulkProgress", "$1：$2 ／ $3 / $4件 ／ 失敗$5件・未着手$6件", [operation, state, progress.completed, progress.total, progress.failed || 0, progress.active ? progress.total - progress.completed : progress.cancelled || 0]));
   }
@@ -529,6 +535,7 @@ $("forget-selected").addEventListener("click", () => {
 function syncSettings(settings) {
   settings = normalizeAutomaticSettings(settings);
   $("notifications").checked = settings.notifications;
+  syncQuarantineSettings(settings, latest.accounts, folderChoices);
   const current = new Map([...$("accounts").querySelectorAll("input")].map(input => [input.value, input]));
   const ids = new Set(latest.accounts.map(account => account.id));
   for (const [id, input] of current) if (!ids.has(id)) input.parentElement.remove();
@@ -599,6 +606,7 @@ async function loadFolders() {
   try {
     const response = await request("folderChoices");
     folderChoices = response.folders;
+    if (!settingsSaving) syncSettings(latest.settings);
     const availableIds = new Set(folderChoices.filter(folder => folder.accountId === $("scan-account").value).map(folder => folder.id));
     for (const id of selectedFolders) if (!availableIds.has(id)) selectedFolders.delete(id);
     const previous = $("scan-account").value;
@@ -614,15 +622,37 @@ async function loadFolders() {
 }
 $("scan-account").addEventListener("change", () => { selectedFolders.clear(); $("folder-search").value = ""; renderFolderChoices(); });
 $("reload-folders").addEventListener("click", () => { void loadFolders(); });
+$("quarantine-selected").addEventListener("click", () => {
+  const targets = selection().filter(canQuarantine);
+  if (!targets.length || blocked()) return;
+  if (targets.some(record => !latest.settings.quarantine?.[record.locator.accountId])) {
+    userNavigated = true; activateTab("settings");
+    setText($("action-status"), t("qTargetMissing", "隔離先を確認できません。設定で同じアカウント内の専用フォルダーを選び直してください。"));
+    $("quarantine-settings").querySelector("select")?.focus();
+    return;
+  }
+  const permission = requireMovePermission();
+  const destinations = structuredClone(latest.settings.quarantine || {});
+  const hashes = Object.fromEntries(targets.map(record => [record.key, record.sha256]));
+  void action(async () => {
+    await permission;
+    if (!await confirmQuarantine(targets, { quarantine: destinations }, latest.accounts, folderChoices)) return t("qCancelled", "隔離を中止しました。");
+    const result = await request("quarantineMany", { keys: targets.map(record => record.key), destinations, hashes });
+    return t("qCompleted", "隔離：$1通移動、$2通失敗。結果を確認してください。", [result.moved, result.failed]);
+  });
+});
 $("settings-form").addEventListener("submit", event => event.preventDefault());
 $("settings-form").addEventListener("change", () => {
   const accountIds = [...$("accounts").querySelectorAll("input:checked")].map(input => input.value);
   const wasEnabled = latest.settings.enabled;
-  const settings = { enabled: accountIds.length > 0, notifications: $("notifications").checked, accountIds };
+  const quarantine = readQuarantineSettings(latest.settings.quarantine, folderChoices);
+  const settings = { enabled: accountIds.length > 0, notifications: $("notifications").checked, accountIds, quarantine };
+  const permission = Object.values(quarantine).some(config => config.auto) ? requireMovePermission() : Promise.resolve();
   settingsSaving = true;
   void action(async () => {
     setText($("settings-status"), t("mail166", "保存しています。"));
     try {
+      await permission;
       await request("settings", { settings });
       latest.settings = settings;
       syncSettings(settings);
