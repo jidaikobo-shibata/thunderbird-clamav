@@ -650,7 +650,7 @@
     "description": "検出名・検査情報"
   },
   "mail131": {
-    "message": "Open message",
+    "message": "Open",
     "description": "メールを開く"
   },
   "mail132": {
@@ -2726,5 +2726,8 @@
   },
   "reviewHelp": {
     "message": "Select partially or entirely unscanned results and choose Mark as reviewed, with an optional decision note. The scan verdict and incomplete reason remain, while the result is excluded from attention counts and notifications. Filter by Reviewed to find them; Mark as unreviewed removes the mark and note. A rescan retains the mark only after verifying identical contents and incomplete reasons. Changes, unverifiable contents, threats and scan failures clear it. Reviewed does not guarantee safety. Review dates and notes are stored locally with scan history."
+  },
+  "reviewRowAction": {
+    "message": "Mark reviewed"
   }
 }

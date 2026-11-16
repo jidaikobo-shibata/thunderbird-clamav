@@ -84,6 +84,7 @@ function updateControls() {
     entry.open.disabled = locked || !record.sha256 || ["queued", "scanning", "deleted"].includes(record.status);
     entry.retry.disabled = locked || !canRetry(record);
     entry.remove.disabled = locked || !canDelete(record);
+    entry.review.disabled = locked || record.status !== "incomplete";
   }
   $("previous-page").disabled = navigationLocked || page === 0;
   $("next-page").disabled = navigationLocked || page + 1 >= Number($("page-label").dataset.pages || 1);
@@ -346,7 +347,7 @@ function makeRow(record) {
     parts[key].className = key;
   }
   const open = cells[4].appendChild(document.createElement("button"));
-  open.textContent = t("mail131", "メールを開く");
+  open.textContent = t("mail131", "開く");
   open.addEventListener("click", () => {
     if (blocked()) return;
     const current = latest.records.find(item => item.key === record.key);
@@ -356,11 +357,17 @@ function makeRow(record) {
   const retry = cells[4].appendChild(document.createElement("button"));
   retry.textContent = t("mail134", "再検査");
   retry.addEventListener("click", () => { void action(() => request("retry", { key: record.key }), t("mail135", "再検査を受け付けました。")); });
+  const review = cells[4].appendChild(document.createElement("button"));
+  review.className = "review-action";
+  review.addEventListener("click", () => {
+    const current = latest.records.find(item => item.key === record.key);
+    if (current?.status === "incomplete") changeReview([current], !isReviewed(current));
+  });
   const remove = cells[4].appendChild(document.createElement("button"));
   remove.textContent = t("mail136", "完全削除");
   remove.className = "danger";
   remove.addEventListener("click", () => { void action(() => deleteOne(record.key)); });
-  return { row, parts, checkbox, open, retry, remove };
+  return { row, parts, checkbox, open, retry, review, remove };
 }
 
 function renderRecords() {
@@ -393,7 +400,11 @@ function renderRecords() {
     setText(entry.parts.signatures, (record.signatures || []).join(" / "));
     setText(entry.parts.engine, record.engine || "");
     entry.remove.hidden = !canDelete(record);
-    for (const [button, label] of [[entry.checkbox, t("mail138", "一括操作の対象に選択")], [entry.remove, t("mail139", "ごみ箱を経由せず完全削除")], [entry.open, t("mail131", "メールを開く")], [entry.retry, t("mail134", "再検査")]]) {
+    entry.review.hidden = record.status !== "incomplete";
+    const reviewLabel = isReviewed(record) ? t("unreviewAction", "未確認に戻す") : t("reviewRowAction", "確認済み");
+    setText(entry.review, reviewLabel);
+    entry.review.setAttribute("aria-label", t("namedDetail", "$1：$2", [record.locator.subject || t("mail022", "件名なし"), reviewLabel]));
+    for (const [button, label] of [[entry.checkbox, t("mail138", "一括操作の対象に選択")], [entry.remove, t("mail139", "ごみ箱を経由せず完全削除")], [entry.open, t("mail131", "開く")], [entry.retry, t("mail134", "再検査")]]) {
       button.setAttribute("aria-label", t("namedDetail", "$1：$2", [record.locator.subject || t("mail022", "件名なし"), label]));
     }
     const at = $("results").children[index];
@@ -628,31 +639,31 @@ async function loadFolders() {
 }
 $("scan-account").addEventListener("change", () => { selectedFolders.clear(); $("folder-search").value = ""; renderFolderChoices(); });
 $("reload-folders").addEventListener("click", () => { void loadFolders(); });
-for (const [id, reviewed] of [["review-selected", true], ["unreview-selected", false]]) {
-  $(id).addEventListener("click", () => {
-    const targets = selection().filter(reviewed ? canReview : canUnreview);
-    if (!targets.length || blocked()) return;
-    const stamps = Object.fromEntries(targets.map(record => [record.key, reviewStamp(record)]));
-    void action(async () => {
-      const title = reviewed ? t("reviewAction", "確認済みにする") : t("unreviewAction", "未確認に戻す");
-      setText($("review-title"), title); setText($("review-confirm"), title);
-      setText($("review-description"), reviewed ? t("reviewDescription", "未検査の結果と理由を残し、「確認が必要」の件数から除外します。安全性を検査で確認したという意味ではありません。再検査で本文や未検査の理由が変わった場合、本文を照合できない場合は未確認に戻ります。") : t("unreviewDescription", "確認済みの印と判断メモを取り消し、再び「確認が必要」に含めます。検査結果は変えません。"));
-      setText($("review-count"), t("reviewTargetsCount", "対象：$1通（画面外の選択を含む）", [targets.length]));
-      $("review-targets").replaceChildren(...targets.map(record => {
-        const item = document.createElement("li");
-        item.textContent = [record.locator.author, record.locator.subject, localizeDetail(record)].filter(Boolean).join(" ／ "); return item;
-      }));
-      $("review-note").value = ""; $("review-note").disabled = !reviewed;
-      $("review-dialog").returnValue = "cancel";
-      const confirmed = await new Promise(resolve => {
-        $("review-dialog").onclose = () => resolve($("review-dialog").returnValue === "apply");
-        $("review-dialog").showModal(); $("review-cancel").focus();
-      });
-      if (!confirmed) return t("reviewCancelled", "確認状態の変更を中止しました。");
-      const result = await request("reviewMany", { keys: targets.map(record => record.key), reviewed, note: $("review-note").value, stamps });
-      return t("reviewCompleted", "$1通の確認状態を変更しました。", [result.count]);
+function changeReview(targets, reviewed) {
+  if (!targets.length || blocked()) return;
+  const stamps = Object.fromEntries(targets.map(record => [record.key, reviewStamp(record)]));
+  void action(async () => {
+    const title = reviewed ? t("reviewAction", "確認済みにする") : t("unreviewAction", "未確認に戻す");
+    setText($("review-title"), title); setText($("review-confirm"), title);
+    setText($("review-description"), reviewed ? t("reviewDescription", "未検査の結果と理由を残し、「確認が必要」の件数から除外します。安全性を検査で確認したという意味ではありません。再検査で本文や未検査の理由が変わった場合、本文を照合できない場合は未確認に戻ります。") : t("unreviewDescription", "確認済みの印と判断メモを取り消し、再び「確認が必要」に含めます。検査結果は変えません。"));
+    setText($("review-count"), t("reviewTargetsCount", "対象：$1通（画面外の選択を含む）", [targets.length]));
+    $("review-targets").replaceChildren(...targets.map(record => {
+      const item = document.createElement("li");
+      item.textContent = [record.locator.author, record.locator.subject, localizeDetail(record)].filter(Boolean).join(" ／ "); return item;
+    }));
+    $("review-note").value = ""; $("review-note").disabled = !reviewed;
+    $("review-dialog").returnValue = "cancel";
+    const confirmed = await new Promise(resolve => {
+      $("review-dialog").onclose = () => resolve($("review-dialog").returnValue === "apply");
+      $("review-dialog").showModal(); $("review-cancel").focus();
     });
+    if (!confirmed) return t("reviewCancelled", "確認状態の変更を中止しました。");
+    const result = await request("reviewMany", { keys: targets.map(record => record.key), reviewed, note: $("review-note").value, stamps });
+    return t("reviewCompleted", "$1通の確認状態を変更しました。", [result.count]);
   });
+}
+for (const [id, reviewed] of [["review-selected", true], ["unreview-selected", false]]) {
+  $(id).addEventListener("click", () => changeReview(selection().filter(reviewed ? canReview : canUnreview), reviewed));
 }
 $("quarantine-selected").addEventListener("click", () => {
   const targets = selection().filter(canQuarantine);
