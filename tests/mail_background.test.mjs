@@ -119,7 +119,7 @@ test("host failure is recorded, retry bounded, lock-screen notification omits se
   let state = await settle(h, value => value.records[0]?.status === "error");
   assert.equal(state.records[0].attempts, 1);
   assert.ok(state.records[0].nextRetry);
-  assert.equal(h.notifications.length, 1);
+  assert.equal(h.notifications.length, 0);
   assert.equal(JSON.stringify(h.notifications).includes("sender@example.invalid"), false);
   const now = Date.now;
   Date.now = () => now() + 120000;
@@ -127,6 +127,8 @@ test("host failure is recorded, retry bounded, lock-screen notification omits se
   finally { Date.now = now; }
   state = await settle(h, value => value.records[0]?.attempts === 2 && value.records[0].status === "error");
   assert.equal(state.records[0].nextRetry, null);
+  assert.equal(h.notifications.length, 1);
+  assert.equal(JSON.stringify(h.notifications).includes("sender@example.invalid"), false);
 });
 
 test("restart never opens a reused numeric ID and resolves by digest", async () => {
@@ -1103,4 +1105,26 @@ test("startup distinguishes missing ClamAV from an unavailable helper and can re
   assert.equal(state.lastHealth.status, "ready");
   assert.equal(state.installation.state, "managed");
   assert.equal(state.installation.clamavCode, "ready");
+});
+
+
+test("temporary automatic mail read failure recovers without a failure notification", async () => {
+  const h = await harness({ mails: [mail(1)], saved: { settings: { enabled: true, accountIds: ["one"], notifications: true } } });
+  const original = h.api.messages.getRaw;
+  let first = true;
+  h.api.messages.getRaw = async (...args) => {
+    if (first) { first = false; throw new Error("Message moved during retrieval"); }
+    return original(...args);
+  };
+  h.events.newMail.listeners[0]({ accountId: "one" }, { messages: [mail(1)] });
+  await settle(h, value => value.records[0]?.status === "error");
+  assert.equal(h.notifications.length, 0);
+  const now = Date.now;
+  Date.now = () => now() + 120000;
+  try { await h.timers[0](); await new Promise(resolve => setImmediate(resolve)); }
+  finally { Date.now = now; }
+  const state = await settle(h, value => value.records[0]?.status === "clean");
+  assert.equal(state.records[0].attempts, 2);
+  assert.equal(state.records[0].nextRetry, null);
+  assert.equal(h.notifications.length, 0);
 });

@@ -332,6 +332,8 @@ async function updateBadge() {
 
 async function notify(record) {
   if (!settings.notifications || !needsAttention(record)) return;
+  // A transient failure is actionable only after its scheduled retry fails.
+  if (record.status === "error" && record.nextRetry) return;
   // Subjects/senders are deliberately omitted from lock-screen notifications.
   try {
     await api.notifications.create(record.key, {
