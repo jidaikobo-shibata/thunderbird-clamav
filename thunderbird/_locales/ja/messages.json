@@ -2647,5 +2647,84 @@
   },
   "qOutside": {
     "message": "隔離先の外へ移動済みです。"
+  },
+  "reviewedLabel": {
+    "message": "確認済み"
+  },
+  "reviewAction": {
+    "message": "確認済みにする"
+  },
+  "unreviewAction": {
+    "message": "未確認に戻す"
+  },
+  "reviewDescription": {
+    "message": "未検査の結果と理由を残し、「確認が必要」の件数から除外します。安全性を検査で確認したという意味ではありません。再検査で本文や未検査の理由が変わった場合、本文を照合できない場合は未確認に戻ります。"
+  },
+  "reviewNote": {
+    "message": "判断メモ（任意、1000文字以内）"
+  },
+  "reviewInvalid": {
+    "message": "確認状態の指定が不正です。"
+  },
+  "reviewWait": {
+    "message": "検査・削除の処理が終わってから確認状態を変更してください。"
+  },
+  "reviewChanged": {
+    "message": "検査結果が変わりました。選び直してください。"
+  },
+  "reviewCountAction": {
+    "message": "確認済みにする（$ARG1$通）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "unreviewCountAction": {
+    "message": "未確認に戻す（$ARG1$通）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "reviewedState": {
+    "message": "一部または全部が未検査（確認済み）"
+  },
+  "reviewMemo": {
+    "message": "判断メモ：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "reviewBatch": {
+    "message": "確認状態の変更"
+  },
+  "unreviewDescription": {
+    "message": "確認済みの印と判断メモを取り消し、再び「確認が必要」に含めます。検査結果は変えません。"
+  },
+  "reviewTargetsCount": {
+    "message": "対象：$ARG1$通（画面外の選択を含む）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "reviewCancelled": {
+    "message": "確認状態の変更を中止しました。"
+  },
+  "reviewCompleted": {
+    "message": "$ARG1$通の確認状態を変更しました。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "reviewHelp": {
+    "message": "「一部または全部が未検査」の結果は、選択して「確認済みにする」ことができます。判断メモは任意です。検査結果と未検査の理由は残し、要確認件数・通知から除外します。「確認済み」で絞り込めて、「未確認に戻す」で印とメモを取り消せます。再検査で本文と未検査理由が同じことを照合できた場合だけ確認済みを維持し、変更・照合不能・脅威検出・検査失敗では未確認に戻します。確認済みは安全性の保証ではありません。確認日時とメモは履歴と同じくローカルに保存します。"
   }
 }

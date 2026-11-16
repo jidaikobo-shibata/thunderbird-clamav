@@ -1336,3 +1336,136 @@ test("external move and Undo reconcile quarantined history, including after rest
   await new Promise(resolve => setImmediate(resolve));
   assert.equal((await h.send("state")).records[0].quarantine.status, "moved");
 });
+
+test("incomplete results can be reviewed with a note, survive same-result rescans and be unreviewed", async () => {
+  const { reviewStamp } = await import("../thunderbird/review.mjs");
+  const target = mail(1), result = { status: "incomplete", detail: "encrypted", signatures: ["Heuristics.Encrypted.Zip"] };
+  const h = await harness({ mails: [target], scanResult: result });
+  await h.send("scanSelection");
+  let state = await settle(h, value => value.records[0]?.status === "incomplete"), r = state.records[0];
+  assert.equal(h.notifications.length, 1);
+  const request = { keys: [r.key], reviewed: true, note: "Known sender", stamps: { [r.key]: reviewStamp(r) } };
+  assert.equal((await h.send("reviewMany", request)).count, 1);
+  state = await h.send("state");
+  assert.equal(state.records[0].status, "incomplete");
+  assert.equal(state.records[0].review.note, "Known sender");
+  assert.equal((await h.send("reviewMany", request)).ok, false); // stale confirmation
+  await h.send("retry", { key: r.key });
+  state = await settle(h, value => value.records[0]?.status === "incomplete");
+  assert.equal(state.records[0].review.note, "Known sender");
+  assert.equal(h.notifications.length, 1);
+  r = state.records[0];
+  assert.equal((await h.send("reviewMany", { keys: [r.key], reviewed: false, note: "", stamps: { [r.key]: reviewStamp(r) } })).count, 1);
+  assert.equal((await h.send("state")).records[0].review, undefined);
+});
+
+test("changed contents, changed incomplete reasons, threats and failures clear previous review", async () => {
+  const { reviewStamp } = await import("../thunderbird/review.mjs");
+  for (const change of ["body", "reason", "detected", "error"]) {
+    const target = mail(1); let next = { status: "incomplete", detail: "encrypted" };
+    const h = await harness({ mails: [target], scanResult: () => next });
+    await h.send("scanSelection");
+    let state = await settle(h, value => value.records[0]?.status === "incomplete"), r = state.records[0];
+    await h.send("reviewMany", { keys: [r.key], reviewed: true, note: "", stamps: { [r.key]: reviewStamp(r) } });
+    if (change === "body") target.raw = "Subject: changed\r\n\r\nnew body";
+    if (change === "reason") next = { status: "incomplete", detail: "limit exceeded" };
+    if (["detected", "error"].includes(change)) next = { status: change, detail: "changed" };
+    await h.send("retry", { key: r.key });
+    state = await settle(h, value => !["queued", "scanning"].includes(value.records[0]?.status));
+    assert.equal(state.records[0].review, undefined, change);
+  }
+});
+
+test("unverifiable incomplete mail can be acknowledged, but a rescan clears the acknowledgement", async () => {
+  const { reviewStamp } = await import("../thunderbird/review.mjs");
+  const h = await harness({ mails: [mail(1)], oversized: true });
+  await h.send("scanSelection");
+  let state = await settle(h, value => value.records[0]?.status === "incomplete"), r = state.records[0];
+  assert.equal((await h.send("reviewMany", { keys: [r.key], reviewed: true, note: "", stamps: { [r.key]: reviewStamp(r) } })).ok, true);
+  state = await h.send("state"); assert.equal(state.records[0].review.fingerprint, null);
+  await h.send("retry", { key: r.key });
+  state = await settle(h, value => value.records[0]?.status === "incomplete");
+  assert.equal(state.records[0].review, undefined);
+});
+
+test("review cannot hide detections, exceed note limits or survive a failed save", async () => {
+  const { reviewStamp } = await import("../thunderbird/review.mjs");
+  const h = await harness({ mails: [mail(1)], scanResult: { status: "incomplete", detail: "encrypted" } });
+  await h.send("scanSelection");
+  let state = await settle(h, value => value.records[0]?.status === "incomplete"), r = state.records[0];
+  const request = { keys: [r.key], reviewed: true, note: "", stamps: { [r.key]: reviewStamp(r) } };
+  assert.equal((await h.send("reviewMany", { ...request, note: "x".repeat(1001) })).ok, false);
+  const save = h.api.storage.local.set;
+  h.api.storage.local.set = async () => { throw Error("storage full"); };
+  assert.equal((await h.send("reviewMany", request)).ok, false);
+  assert.equal((await h.send("state")).records[0].review, undefined);
+  h.api.storage.local.set = save;
+  // A terminal threat is never eligible for manual acknowledgement.
+  const threat = await harness({ mails: [mail(2)], scanResult: { status: "detected" } });
+  await threat.send("scanSelection");
+  state = await settle(threat, value => value.records[0]?.status === "detected"); r = state.records[0];
+  assert.equal((await threat.send("reviewMany", { keys: [r.key], reviewed: true, note: "", stamps: { [r.key]: reviewStamp(r) } })).ok, false);
+});
+
+test("review changes can stop between records without hiding unprocessed results", async () => {
+  const { reviewStamp } = await import("../thunderbird/review.mjs");
+  const records = [1, 2, 3].map(id => ({ key: "review-" + id, status: "incomplete", detail: "encrypted", sha256: "body-" + id,
+    locator: locator(mail(id)), updatedAt: new Date().toISOString() }));
+  const h = await harness({ saved: { records } });
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; }), saving = new Promise(resolve => { entered = resolve; });
+  const save = h.api.storage.local.set; let first = true;
+  h.api.storage.local.set = async value => { if (first) { first = false; entered(); await gate; } return save(value); };
+  const pending = h.send("reviewMany", { keys: records.map(record => record.key), reviewed: true, note: "known",
+    stamps: Object.fromEntries(records.map(record => [record.key, reviewStamp(record)])) });
+  await saving;
+  const state = await h.send("state");
+  await h.send("cancelBatch", { id: state.batch.id }); release();
+  assert.equal((await pending).count, 1);
+  const result = await h.send("state");
+  assert.equal(result.records.filter(record => record.review).length, 1);
+  assert.equal(result.batch.cancelled, 2);
+});
+
+test("review survives restart and an interrupted rescan only after identical contents are checked", async () => {
+  const { reviewReason } = await import("../thunderbird/review.mjs");
+  const target = mail(1), digest = await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello"));
+  const record = { key: "restart-review", status: "incomplete", detail: "encrypted", sha256: digest, locator: locator(target),
+    source: "manual", attempts: 1, updatedAt: new Date().toISOString() };
+  const review = { at: new Date().toISOString(), note: "known source", reason: reviewReason(record), resultHash: digest, fingerprint: "sha256:" + digest };
+  const first = await harness({ mails: [target], saved: { records: [{ ...record, review }] } });
+  assert.equal((await first.send("state")).records[0].review.note, "known source");
+  const resuming = await harness({ mails: [target], scanResult: { status: "incomplete", detail: "encrypted" },
+    saved: { records: [{ ...record, status: "scanning", reviewBeforeScan: review }] } });
+  const state = await settle(resuming, state => state.records[0]?.status === "incomplete");
+  assert.equal(state.records[0].review.note, "known source");
+  assert.equal(state.records[0].reviewBeforeScan, undefined);
+  assert.equal(resuming.notifications.length, 0);
+});
+
+test("oversized mail retains review only when its streamed content fingerprint is unchanged", async () => {
+  const { reviewStamp } = await import("../thunderbird/review.mjs");
+  const h = await harness({ mails: [mail(1)] });
+  const size = 25 * 1024 * 1024 + 1, zeros = new Uint8Array(512 * 1024); let changed = false;
+  h.api.messages.getRaw = async () => ({ size, arrayBuffer() { throw Error("must not allocate oversized mail"); }, slice(start, end) {
+    const bytes = zeros.slice(0, Math.min(size, end) - start);
+    if (changed && start === 0) bytes[0] = 1;
+    return new Blob([bytes]);
+  } });
+  await h.send("scanSelection");
+  let state = await settle(h, state => state.records[0]?.status === "incomplete"), r = state.records[0];
+  assert.equal((await h.send("reviewMany", { keys: [r.key], reviewed: true, note: "expected large mail", stamps: { [r.key]: reviewStamp(r) } })).ok, true);
+  assert.match((await h.send("state")).records[0].review.fingerprint, /^chunked-sha256-v1:/);
+  async function rescan() {
+    await h.send("retry", { key: r.key });
+    for (let i = 0; i < 5000; i++) {
+      const state = await h.send("state");
+      if (state.records[0]?.status === "incomplete" && !state.records[0].reviewBeforeScan) return state;
+      await new Promise(resolve => setTimeout(resolve, 1));
+    }
+    throw Error("oversized review reconciliation did not settle");
+  }
+  state = await rescan(); assert.equal(state.records[0].review.note, "expected large mail");
+  changed = true;
+  state = await rescan(); assert.equal(state.records[0].review, undefined);
+});

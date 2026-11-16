@@ -71,11 +71,11 @@ node --check thunderbird/dashboard.js
 python3 scripts/build_mail_check.py
 ```
 
-`dist/clam-mail-check-0.16.1.xpi` と、確認用の補助プログラム・登録JSONを
+`dist/clam-mail-check-0.17.0.xpi` と、確認用の補助プログラム・登録JSONを
 `dist/native/` に生成します。GUI不要の導入用ファイル
-`dist/clam-mail-check-installer-0.16.1.pyz` をXPIに同梱し、単体でも生成します。
+`dist/clam-mail-check-installer-0.17.0.pyz` をXPIに同梱し、単体でも生成します。
 旧GUI配布物も必要な場合だけ `--legacy-gui` を指定します。この場合はCコンパイラーが必要です。
-`dist/clam-mail-check-setup-0.16.1-linux-<architecture>.tar.gz` に生成します。
+`dist/clam-mail-check-setup-0.17.0-linux-<architecture>.tar.gz` に生成します。
 旧GUI配布物にはXPI・補助プログラム・GUIを同梱します。通常配布のXPIにもCLI導入用ファイルが入り、ソースのチェックアウトは不要です。
 生成しただけではインストールされません。旧GUIの起動用実行ファイルはビルドした
 アーキテクチャ向けです。今回の確認対象はUbuntu 26.04 / x86_64です。
@@ -156,14 +156,14 @@ Python 3と更新済みClamAVはOS側に必要で、Snap/Flatpakとの連携は�
 導入用ファイルはネットワークからコードを取得せず、同梱内容だけを設置します。
 
 1. XPIを旧版削除なしで上書きインストールし、「セットアップ」タブを開きます。
-2. 「導入用ファイルを保存」で`clam-mail-check-installer-0.16.1.pyz`を保存します。
+2. 「導入用ファイルを保存」で`clam-mail-check-installer-0.17.0.pyz`を保存します。
 3. 保存先のフォルダーをTerminalで開き、アドオンに表示されたコマンドを実行します。
    保存時の名前が変わった場合はコマンドのファイル名も合わせてください。
 4. Terminalに表示される変更先と影響を確認して承認します。root/sudoは不要で、実行を拒否します。
 5. アドオンに戻って「導入を確認」を押します。設置が有効で管理機能に対応した場合は版と状態が表示されます。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.16.1.pyz install
+python3 -I ./clam-mail-check-installer-0.17.0.pyz install
 ```
 
 導入済みなら同じコマンドで更新・修復します。既存の旧GUI方式の設置記録（format 1）も引き継ぎます。
@@ -188,7 +188,7 @@ python3 -I ./clam-mail-check-installer-0.16.1.pyz install
 5. 再びXPIをインストールし、上記の`install`コマンドと「導入を確認」で初回導入を試せます。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.16.1.pyz uninstall
+python3 -I ./clam-mail-check-installer-0.17.0.pyz uninstall
 ```
 
 対応済みならアドオン内の「アンインストール」で補助プログラムを削除し、続いてThunderbirdの確認で拡張自身を削除します。
@@ -203,7 +203,7 @@ python3 -I ./clam-mail-check-installer-0.16.1.pyz uninstall
 状態だけの確認（読み取りのみ）と、隔離した設置先での自動テストは次のとおりです。
 
 ```bash
-python3 -I ./clam-mail-check-installer-0.16.1.pyz status
+python3 -I ./clam-mail-check-installer-0.17.0.pyz status
 python3 -B -m unittest discover -s tests -p 'test_cli_setup.py'
 ```
 
@@ -279,7 +279,7 @@ python3 scripts/register_mail_host.py --install
 ユーザーのホーム配下に、次の2ファイルを新規作成します。
 
 ```text
-$HOME/.local/lib/clam-mail-check/0.16.1/host.py
+$HOME/.local/lib/clam-mail-check/0.17.0/host.py
 $HOME/.mozilla/native-messaging-hosts/local.clam_mail_check.json
 ```
 
@@ -675,3 +675,11 @@ CLIでの補助プログラム導入でも、ClamAV未導入時は具体的な�
 保存時の隔離先・移動権限確認を、新規の自動隔離有効化と移動先変更に限定しました。既存の隔離先の削除・権限取消しがあっても、自動検査の停止・隔離の無効化・通知設定の変更は保存できます。実際に隔離する際の検証は従来通り毎回実施します。
 
 本文を確認した再検査・開封・対象照合時に場所と隔離状態を更新します。Thunderbirdの外部移動/Undoイベントでも、記録と対象を一意に対応付けて本文を照合できた場合に更新します。再起動をまたぐ場合は識別情報と元の場所、本文で確認し、曖昧な対象は更新しません。現在地が隔離先の外なら「隔離先の外へ移動済み」と表示し、旧版で状態だけが残った履歴も現在地が異なる場合は隔離済み表示を抑制します。
+
+
+## 未検査結果の確認済み管理（0.17.0）
+「一部または全部が未検査」の履歴を選択して、確認済み・未確認を切り替えられます。確認画面で全対象と理由を表示し、任意の判断メモ（1000文字以内）を記録します。ページ横断の選択に対応し、混在選択では各操作の適用可能なものだけを対象にします。一括変更は進捗・中止に対応し、未着手は変更しません。メールの内容や場所、検査結果そのものは変更しません。
+
+確認済みの未検査結果は、要確認件数・要確認フィルター・通知の対象から外し、確認済みフィルターとメモ検索で確認できます。未検査フィルターには引き続き表示します。確認済みは安全性を検査で確認したという意味ではありません。脅威検出と検査失敗はこの操作で確認済みにできません。保持上限時の自動入替えは従来通り未検出・完全削除済みのみで、確認済みの未検査も保持します。
+
+再検査では本文のダイジェストと未検査理由（翻訳キー・可変値・未検査理由コード・検出名）を照合します。同一であることを確認できた場合だけ確認済みを維持し、変更・照合不能・脅威検出・失敗・未検出への変化では解除します。ハッシュのないサイズ超過等は、確認操作時に既存の分割読取処理で本文指紋の取得を試み、再検査時にも照合します。取得できなくても利用者の確認は記録できますが、再検査後は未確認へ戻ります。検査中は確認状態を保留し、再起動・一括再検査中止の既存復旧処理と連携します。古い本文ハッシュを読み取り失敗後の照合に流用しません。確認日時・メモはローカル履歴に保存し、未確認へ戻すと削除します。

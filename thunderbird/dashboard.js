@@ -1,3 +1,4 @@
+import { isReviewed, canReview, canUnreview, reviewStamp } from "./review.mjs";
 import { canQuarantine, quarantineNeedsPermission } from "./quarantine.mjs";
 import { syncQuarantineSettings, readQuarantineSettings, requireMovePermission, confirmQuarantine, quarantineSummary } from "./quarantine-ui.mjs";
 import { folderLabel } from "./folder-labels.mjs";
@@ -42,6 +43,11 @@ function updateControls() {
   $("retry-selected").disabled = locked || !retryCount;
   $("delete-selected").disabled = locked || !deleteCount;
   $("forget-selected").disabled = locked || !historyCount;
+  const reviewCount = chosen.filter(canReview).length, unreviewCount = chosen.filter(canUnreview).length;
+  setText($("review-selected"), t("reviewCountAction", "確認済みにする（$1通）", [reviewCount]));
+  setText($("unreview-selected"), t("unreviewCountAction", "未確認に戻す（$1通）", [unreviewCount]));
+  $("review-selected").disabled = locked || !reviewCount;
+  $("unreview-selected").disabled = locked || !unreviewCount;
   const quarantineCount = chosen.filter(canQuarantine).length;
   setText($("quarantine-selected"), t("qSelectedCount", "隔離（$1通）", [quarantineCount]));
   $("quarantine-selected").disabled = locked || !quarantineCount || foldersLoading || !folderChoices.length;
@@ -376,14 +382,14 @@ function renderRecords() {
     const entry = rows.get(record.key) || makeRow(record);
     rows.set(record.key, entry);
     entry.row.dataset.status = record.status;
-    setText(entry.parts.state, record.status === "incomplete" && record.unscannedReason === "automaticExcluded" ? t("automaticExcludedFilter", "未検査：自動検査の対象から除外") : LABELS[record.status] || t("mail137", "不明"));
+    setText(entry.parts.state, isReviewed(record) ? t("reviewedState", "一部または全部が未検査（確認済み）") : record.status === "incomplete" && record.unscannedReason === "automaticExcluded" ? t("automaticExcludedFilter", "未検査：自動検査の対象から除外") : LABELS[record.status] || t("mail137", "不明"));
     entry.parts.time.dateTime = record.updatedAt;
     setText(entry.parts.time, new Date(record.updatedAt).toLocaleString(uiLanguage()));
     setText(entry.parts.sender, record.locator.author || t("mail021", "差出人なし"));
     setText(entry.parts.subject, record.locator.subject || t("mail022", "件名なし"));
     const account = latest.accounts.find(account => account.id === record.locator.accountId)?.name || record.locator.accountId || "";
     setText(entry.parts.location, [account, folderLabel(record.locator.folder, folderChoices, record.locator.accountId)].filter(Boolean).join(t("listSeparator", " ／ ")));
-    setText(entry.parts.detail, [localizeDetail(record), quarantineSummary(record, folderChoices)].filter(Boolean).join(" "));
+    setText(entry.parts.detail, [localizeDetail(record), quarantineSummary(record, folderChoices), isReviewed(record) && record.review.note ? t("reviewMemo", "判断メモ：$1", [record.review.note]) : ""].filter(Boolean).join(" "));
     setText(entry.parts.signatures, (record.signatures || []).join(" / "));
     setText(entry.parts.engine, record.engine || "");
     entry.remove.hidden = !canDelete(record);
@@ -407,7 +413,7 @@ function renderRecords() {
   $("batch-stop").hidden = !progress?.active;
   $("batch-stop").disabled = !progress?.active || progress.stopRequested;
   if (progress) {
-    const operation = progress.operation === "quarantine" ? t("qBatch", "メールの隔離") : progress.operation === "retry" ? t("bulkRetryName", "一括再検査") : progress.phase === "prepare" ? t("bulkPrepareName", "削除対象の照合") : t("bulkDeleteName", "メールの一括完全削除");
+    const operation = progress.operation === "review" ? t("reviewBatch", "確認状態の変更") : progress.operation === "quarantine" ? t("qBatch", "メールの隔離") : progress.operation === "retry" ? t("bulkRetryName", "一括再検査") : progress.phase === "prepare" ? t("bulkPrepareName", "削除対象の照合") : t("bulkDeleteName", "メールの一括完全削除");
     const state = progress.error ? t("mail180", "失敗") : progress.active ? progress.stopRequested ? t("bulkStopping", "中止しています") : t("bulkRunning", "処理中") : progress.stopRequested ? t("bulkStopped", "中止") : t("bulkDone", "終了");
     setText($("batch-progress"), t("bulkProgress", "$1：$2 ／ $3 / $4件 ／ 失敗$5件・未着手$6件", [operation, state, progress.completed, progress.total, progress.failed || 0, progress.active ? progress.total - progress.completed : progress.cancelled || 0]));
   }
@@ -622,6 +628,32 @@ async function loadFolders() {
 }
 $("scan-account").addEventListener("change", () => { selectedFolders.clear(); $("folder-search").value = ""; renderFolderChoices(); });
 $("reload-folders").addEventListener("click", () => { void loadFolders(); });
+for (const [id, reviewed] of [["review-selected", true], ["unreview-selected", false]]) {
+  $(id).addEventListener("click", () => {
+    const targets = selection().filter(reviewed ? canReview : canUnreview);
+    if (!targets.length || blocked()) return;
+    const stamps = Object.fromEntries(targets.map(record => [record.key, reviewStamp(record)]));
+    void action(async () => {
+      const title = reviewed ? t("reviewAction", "確認済みにする") : t("unreviewAction", "未確認に戻す");
+      setText($("review-title"), title); setText($("review-confirm"), title);
+      setText($("review-description"), reviewed ? t("reviewDescription", "未検査の結果と理由を残し、「確認が必要」の件数から除外します。安全性を検査で確認したという意味ではありません。再検査で本文や未検査の理由が変わった場合、本文を照合できない場合は未確認に戻ります。") : t("unreviewDescription", "確認済みの印と判断メモを取り消し、再び「確認が必要」に含めます。検査結果は変えません。"));
+      setText($("review-count"), t("reviewTargetsCount", "対象：$1通（画面外の選択を含む）", [targets.length]));
+      $("review-targets").replaceChildren(...targets.map(record => {
+        const item = document.createElement("li");
+        item.textContent = [record.locator.author, record.locator.subject, localizeDetail(record)].filter(Boolean).join(" ／ "); return item;
+      }));
+      $("review-note").value = ""; $("review-note").disabled = !reviewed;
+      $("review-dialog").returnValue = "cancel";
+      const confirmed = await new Promise(resolve => {
+        $("review-dialog").onclose = () => resolve($("review-dialog").returnValue === "apply");
+        $("review-dialog").showModal(); $("review-cancel").focus();
+      });
+      if (!confirmed) return t("reviewCancelled", "確認状態の変更を中止しました。");
+      const result = await request("reviewMany", { keys: targets.map(record => record.key), reviewed, note: $("review-note").value, stamps });
+      return t("reviewCompleted", "$1通の確認状態を変更しました。", [result.count]);
+    });
+  });
+}
 $("quarantine-selected").addEventListener("click", () => {
   const targets = selection().filter(canQuarantine);
   if (!targets.length || blocked()) return;

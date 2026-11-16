@@ -1,3 +1,4 @@
+import { isReviewed } from "./review.mjs";
 import { t, uiLanguage, localizeDetail } from "./i18n.mjs";
 export const MAX_BYTES = 25 * 1024 * 1024;
 export const CHUNK_BYTES = 64 * 1024;
@@ -20,7 +21,7 @@ export const LABELS = Object.freeze({
 });
 export const pausedAutomatic = (record, settings) => record.source === "automatic" && record.status === "queued" &&
   (!settings.enabled || !settings.accountIds.includes(record.locator.accountId));
-export const needsAttention = record => ["detected", "incomplete", "error"].includes(record.status);
+export const needsAttention = record => ["detected", "incomplete", "error"].includes(record.status) && !isReviewed(record);
 
 export function accountOf(message) {
   return message.folder?.accountId || "";

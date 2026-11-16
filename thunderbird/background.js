@@ -1,3 +1,4 @@
+import { canReview, canUnreview, reviewReason, reviewStamp, reconcileReview } from "./review.mjs";
 import { validateQuarantine, moveToQuarantine, inQuarantine, canQuarantine, refreshQuarantineLocation } from "./quarantine.mjs";
 import { t } from "./i18n.mjs";
 import { toolbarNotice } from "./installation.mjs";
@@ -460,7 +461,7 @@ function enqueue(first, source) {
 }
 
 async function drain() {
-  if (running || maintenanceActive() || helperRemoved || batchProgress?.active && batchProgress.operation === "quarantine") return;
+  if (running || maintenanceActive() || helperRemoved || batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation)) return;
   running = true;
   let client, engine;
   try {
@@ -490,6 +491,10 @@ async function drain() {
       }
       if (!record) break;
       const fromFolder = record.source === "folder";
+      const previousReview = record.review || record.reviewBeforeScan;
+      if (previousReview) record.reviewBeforeScan = previousReview;
+      delete record.review;
+      record.signatures = [];
       delete record.unscannedReason;
       record.status = "scanning";
       delete record.detailMessages;
@@ -497,6 +502,7 @@ async function drain() {
       record.attempts++;
       record.updatedAt = new Date().toISOString();
       await save();
+      let currentDigest = null;
       try {
         const message = await resolveRecord(record);
         if (message.headersOnly) {
@@ -504,6 +510,7 @@ async function drain() {
         }
         const bytes = await rawBytes(message.id);
         record.sha256 = await sha256(bytes);
+        currentDigest = record.sha256;
         refreshQuarantineLocation(record, message);
         if (!client || client.closed) {
           client = new NativeClient(api.runtime);
@@ -526,10 +533,16 @@ async function drain() {
           engine: record.engine, status: result.status };
         record.nextRetry = null;
       } catch (error) {
+        record.sha256 = currentDigest;
         record.status = error.incomplete ? "incomplete" : "error";
         delete record.detailMessages;
         record.detail = error.message || t("mail045", "検査に失敗しました。");
       }
+      let reviewFingerprint = record.sha256 ? "sha256:" + record.sha256 : null;
+      if (previousReview?.fingerprint && !record.sha256 && record.status === "incomplete") {
+        try { reviewFingerprint = (await verified(record)).fingerprint; } catch { /* Unverifiable contents require review again. */ }
+      }
+      reconcileReview(record, previousReview, reviewFingerprint);
       const quarantineConfig = settings.quarantine?.[record.locator.accountId];
       if (record.status === "detected" && record.source === "automatic" && quarantineConfig?.auto && record.quarantineIntent &&
           record.quarantineIntent.folderId === quarantineConfig.folderId && record.quarantineIntent.path === quarantineConfig.path &&
@@ -544,7 +557,7 @@ async function drain() {
       finishRetry(record);
       if (fromFolder) {
         const flag = record.status === "detected" ? "notifiedDetection" :
-          ["incomplete", "error"].includes(record.status) ? "notifiedProblem" : null;
+          needsAttention(record) ? "notifiedProblem" : null;
         if (flag && !folderScan.job[flag]) {
           folderScan.job[flag] = true;
           void notify(record);
@@ -722,7 +735,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
     if ((maintenanceActive() || helperRemoved) && !["state", "helperInfo", "helperApply", "helperCancel", "helperMarkRemoved", "health"].includes(request.type)) {
       throw new Error(t("mail054", "補助プログラムの管理中か削除後です。導入を確認してから操作してください。"));
     }
-    if (batchProgress?.active && batchProgress.operation === "quarantine" && !["state", "cancelBatch", "helperInfo", "health"].includes(request.type)) throw new Error(t("qBusy", "このメールは処理中です。"));
+    if (batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation) && !["state", "cancelBatch", "helperInfo", "health"].includes(request.type)) throw new Error(t("qBusy", "このメールは処理中です。"));
     switch (request.type) {
       case "state":
         return { ok: true, settings, records, issue, lastHealth, lastScan, resultsRequest, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
@@ -890,6 +903,39 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         }
         void drain().catch(report);
         return { ok: true, count: targets.length };
+      }
+      case "reviewMany": {
+        requestedKeys(request.keys);
+        if (typeof request.reviewed !== "boolean" || typeof request.note !== "string" || request.note.length > 1000) throw new Error(t("reviewInvalid", "確認状態の指定が不正です。"));
+        if (batchProgress?.active || running || folderScan.active || deleting.size) throw new Error(t("reviewWait", "検査・削除の処理が終わってから確認状態を変更してください。"));
+        const targets = request.keys.map(key => records.find(record => record.key === key));
+        if (targets.some(record => !record || !(request.reviewed ? canReview(record) : canUnreview(record)) ||
+            request.stamps?.[record.key] !== reviewStamp(record))) throw new Error(t("reviewChanged", "検査結果が変わりました。選び直してください。"));
+        const progress = startBatch("review", targets.length);
+        try {
+          for (const record of targets) {
+            if (progress.stopRequested) break;
+            if (request.stamps[record.key] !== reviewStamp(record)) throw new Error(t("reviewChanged", "検査結果が変わりました。選び直してください。"));
+            deleting.add(record.key);
+            try {
+              let fingerprint = record.sha256 ? "sha256:" + record.sha256 : null;
+              if (request.reviewed && !fingerprint) {
+                try { fingerprint = (await verified(record)).fingerprint; } catch { /* Acknowledge the result, but do not carry it through a rescan. */ }
+              }
+              if (request.stamps[record.key] !== reviewStamp(record)) throw new Error(t("reviewChanged", "検査結果が変わりました。選び直してください。"));
+              const previous = record.review;
+              if (request.reviewed) record.review = { at: new Date().toISOString(), note: request.note.trim(),
+                resultHash: record.sha256 || null, reason: reviewReason(record), fingerprint };
+              else delete record.review;
+              try { await save(); }
+              catch (error) { if (previous) record.review = previous; else delete record.review; throw error; }
+            } finally { deleting.delete(record.key); }
+            progress.completed++;
+            await yieldBatch();
+          }
+        } catch (error) { progress.error = true; throw error; }
+        finally { progress.active = false; progress.cancelled = progress.total - progress.completed; void drain().catch(report); }
+        return { ok: true, count: progress.completed };
       }
       case "quarantineMany": {
         requestedKeys(request.keys);

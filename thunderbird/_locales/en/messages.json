@@ -2647,5 +2647,84 @@
   },
   "qOutside": {
     "message": "Moved out of the quarantine folder."
+  },
+  "reviewInvalid": {
+    "message": "Invalid review state."
+  },
+  "reviewWait": {
+    "message": "Wait for scanning and deletion to finish before changing review status."
+  },
+  "reviewChanged": {
+    "message": "The scan results have changed. Select the results again."
+  },
+  "reviewedLabel": {
+    "message": "Reviewed"
+  },
+  "reviewAction": {
+    "message": "Mark as reviewed"
+  },
+  "unreviewAction": {
+    "message": "Mark as unreviewed"
+  },
+  "reviewDescription": {
+    "message": "Keep the incomplete scan result and its reason, and exclude it from the needs-attention count. This does not mean the scanner verified its safety. A rescan clears the review if the contents or incomplete-scan reason change, or the contents cannot be verified."
+  },
+  "unreviewDescription": {
+    "message": "Remove the review mark and decision note, and include the result in needs attention again. The scan result is unchanged."
+  },
+  "reviewNote": {
+    "message": "Decision note (optional, up to 1000 characters)"
+  },
+  "reviewCountAction": {
+    "message": "Mark as reviewed ($ARG1$ messages)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "unreviewCountAction": {
+    "message": "Mark as unreviewed ($ARG1$ messages)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "reviewedState": {
+    "message": "Partially or entirely unscanned (reviewed)"
+  },
+  "reviewMemo": {
+    "message": "Decision note: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "reviewBatch": {
+    "message": "Changing review status"
+  },
+  "reviewTargetsCount": {
+    "message": "Messages: $ARG1$ (including selections on other pages)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "reviewCancelled": {
+    "message": "Review status change cancelled."
+  },
+  "reviewCompleted": {
+    "message": "Changed review status for $ARG1$ messages.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "reviewHelp": {
+    "message": "Select partially or entirely unscanned results and choose Mark as reviewed, with an optional decision note. The scan verdict and incomplete reason remain, while the result is excluded from attention counts and notifications. Filter by Reviewed to find them; Mark as unreviewed removes the mark and note. A rescan retains the mark only after verifying identical contents and incomplete reasons. Changes, unverifiable contents, threats and scan failures clear it. Reviewed does not guarantee safety. Review dates and notes are stored locally with scan history."
   }
 }
