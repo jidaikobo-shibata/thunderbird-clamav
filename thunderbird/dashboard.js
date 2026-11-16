@@ -389,6 +389,7 @@ function renderRecords() {
     const entry = rows.get(record.key) || makeRow(record);
     rows.set(record.key, entry);
     entry.row.dataset.status = record.status;
+    entry.row.dataset.attention = String(needsAttention(record));
     setText(entry.parts.state, isReviewed(record) ? t("reviewedState", "一部または全部が未検査（確認済み）") : record.status === "incomplete" && record.unscannedReason === "automaticExcluded" ? t("automaticExcludedFilter", "未検査：自動検査の対象から除外") : LABELS[record.status] || t("mail137", "不明"));
     entry.parts.time.dateTime = record.updatedAt;
     setText(entry.parts.time, new Date(record.updatedAt).toLocaleString(uiLanguage()));
