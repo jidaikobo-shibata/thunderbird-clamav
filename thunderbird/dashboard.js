@@ -1,4 +1,5 @@
-import { permission } from "./direct-transport.mjs";
+import { configureDirectView } from "./direct-view.mjs";
+import { directRuntime, permission } from "./direct-transport.mjs";
 import { syncScanPolicy, readScanPolicy, policyDescription, advisoryDescription } from "./scan-policy.mjs";
 import { isReviewed, canReview, canUnreview, reviewStamp } from "./review.mjs";
 import { canQuarantine, quarantineNeedsPermission } from "./quarantine.mjs";
@@ -11,6 +12,8 @@ import { selectable, canDelete, canRetry, canForget, filterRecords, resultPage }
 import { FOLDER_STATES } from "./folder-scan.mjs";
 
 localizeDocument();
+configureDirectView();
+const DIRECT = directRuntime();
 
 const $ = id => document.getElementById(id);
 let latest, initialized = false, refreshing = false, busy = false, page = 0;
@@ -18,7 +21,7 @@ let visible = [], filteredRecords = [];
 const rows = new Map(), selected = new Set();
 let folderFilterId = null, seenFolderRequest = null;
 let folderAnnouncement = null, seenResultsRequest = null;
-const TABS = ["scan", "results", "settings", "setup", "uninstall", "help"];
+const TABS = DIRECT ? ["scan", "results", "settings", "help"] : ["scan", "results", "settings", "setup", "uninstall", "help"];
 let userNavigated = false, seenSetupRequest = null;
 const selectedFolders = new Set();
 let folderChoices = [], foldersLoading = false, settingsSaving = false;
@@ -120,21 +123,24 @@ async function action(callback, success) {
 
 function renderHelperNotice() {
   const notice = helperNotice(latest?.installation, messenger.runtime.getManifest().version);
-  const tab = $("tab-setup"), dot = $("setup-dot");
+  const tab = $(DIRECT ? "tab-settings" : "tab-setup"), dot = $("setup-dot");
+  const label = DIRECT ? t("mail255", "設定") : t("mail106", "セットアップ");
   dot.hidden = !notice;
   dot.dataset.kind = notice?.kind || "";
-  tab.title = notice?.message || t("mail106", "セットアップ");
-  tab.setAttribute("aria-label", notice ? t("mail107", "セットアップ：$1", [notice.message]) : t("mail106", "セットアップ"));
+  tab.title = notice?.message || label;
+  tab.setAttribute("aria-label", notice ? t("namedDetail", "$1：$2", [label, notice.message]) : label);
 }
 function openSetup() {
   userNavigated = true;
-  activateTab("setup");
-  const target = latest?.installation?.state === "integrated" || ["clamav_missing", "clamav_unusable"].includes(latest?.lastHealth?.code) ? $("connection-title") : $("installation-title");
+  activateTab(DIRECT ? "settings" : "setup");
+  const target = DIRECT || latest?.installation?.state === "integrated" || ["clamav_missing", "clamav_unusable"].includes(latest?.lastHealth?.code) ? $("connection-title") : $("installation-title");
   target.focus();
   target.scrollIntoView({ block: "start" });
 }
 
 function activateTab(name, focus = false) {
+  if (DIRECT && name === "setup") name = "settings";
+  if (DIRECT && name === "uninstall") name = "help";
   for (const id of TABS) {
     const active = id === name;
     const button = $("tab-" + id);
@@ -264,7 +270,10 @@ $("folder-only").addEventListener("change", () => {
   folderFilterId = $("folder-only").checked ? latest?.folderJob?.id : null; resetSelection();
 });
 for (const [index, name] of TABS.entries()) {
-  $("tab-" + name).addEventListener("click", () => { userNavigated = true; activateTab(name); });
+  $("tab-" + name).addEventListener("click", () => {
+    if (DIRECT && name === "settings" && helperNotice(latest?.installation, messenger.runtime.getManifest().version)) { openSetup(); return; }
+    userNavigated = true; activateTab(name);
+  });
   $("tab-" + name).addEventListener("keydown", event => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
@@ -484,10 +493,10 @@ async function refresh() {
         latest.installation = response.installation;
         latest.lastHealth = response.health || latest.lastHealth;
         renderConnection(); installer.render(); renderHelperNotice();
-        if (!userNavigated && !latest.folderRequest && !latest.resultsRequest && response.installation?.state !== "managed") {
+        if (!userNavigated && !latest.folderRequest && !latest.resultsRequest && response.installation?.state !== "managed" && (!DIRECT || response.installation?.healthy === false)) {
           activateTab(response.installation?.state === "removed" ? "uninstall" : "setup");
         }
-      }).catch(error => setText($("installation-status"), error.message));
+      }).catch(error => setText($(DIRECT ? "health-result" : "installation-status"), error.message));
     }
     // Add history-only accounts as well; don't reset the current filter.
     const accounts = new Map(latest.accounts.map(account => [account.id, account.name]));
@@ -616,7 +625,7 @@ function renderConnection() {
     t("mail153", "最終接続確認：$1 ／ $2。$3 $4", [health.status === "ready" ? t("mail154", "応答あり") : t("mail155", "確認失敗"), new Date(health.checkedAt).toLocaleString(uiLanguage()), health.engine || "", localizeDetail(health)]) :
     t("mail156", "接続はまだ確認していません。「接続を再確認」で確認できます。"));
   const guide = $("clamav-install-guide");
-  $("connection-title").closest("section").classList.toggle("needs-action", ["clamav_missing", "clamav_unusable"].includes(health?.code));
+  $("connection-title").closest("section").classList.toggle("needs-action", DIRECT ? health?.status === "error" : ["clamav_missing", "clamav_unusable"].includes(health?.code));
   guide.hidden = health?.status === "ready";
   if (guide.dataset.code !== (health?.code || "unknown")) {
     guide.dataset.code = health?.code || "unknown";

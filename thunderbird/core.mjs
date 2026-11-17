@@ -107,15 +107,15 @@ export class NativeClient {
       request.resolve(message);
     });
     this.port.onDisconnect.addListener(() => this.close(
-      this.direct ? t("directDisconnected", "内蔵の検査処理との接続が切れました。セットアップで状態を確認してください。") + (this.port.error?.message ? " " + String(this.port.error.message).slice(0, 300) : "") : t("mail093", "補助プログラムとの接続が切れました。登録状態を確認してください。")
+      this.direct ? t("directDisconnected", "内蔵の検査処理との接続が切れました。設定で状態を確認してください。") + (this.port.error?.message ? " " + String(this.port.error.message).slice(0, 300) : "") : t("mail093", "補助プログラムとの接続が切れました。登録状態を確認してください。")
     ));
   }
 
   request(op, values = {}, timeout = 15000) {
-    if (this.closed) return Promise.reject(new Error(this.direct ? t("directUnavailable", "内蔵の検査処理を開始できません。セットアップで状態を確認してください。") : t("mail094", "補助プログラムに接続できません。")));
+    if (this.closed) return Promise.reject(new Error(this.direct ? t("directUnavailable", "内蔵の検査処理を開始できません。設定で状態を確認してください。") : t("mail094", "補助プログラムに接続できません。")));
     const id = String(++this.sequence);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => this.close(this.direct ? t("directUnavailable", "内蔵の検査処理を開始できません。セットアップで状態を確認してください。") : t("mail095", "補助プログラムの応答がありません。")), timeout);
+      const timer = setTimeout(() => this.close(this.direct ? t("directUnavailable", "内蔵の検査処理を開始できません。設定で状態を確認してください。") : t("mail095", "補助プログラムの応答がありません。")), timeout);
       this.pending.set(id, { resolve, reject, timer });
       try { this.port.postMessage({ ...values, language: uiLanguage(), op, id }); }
       catch { this.close(t("mail096", "補助プログラムに送信できません。")); }

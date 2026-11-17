@@ -2887,13 +2887,13 @@
     "message": "保存枠不足の集計と直近の結果を消去します。メールと通常の検査履歴は変更しません。続けますか？"
   },
   "directDisconnected": {
-    "message": "内蔵の検査処理との接続が切れました。セットアップで状態を確認してください。"
+    "message": "内蔵の検査処理との接続が切れました。設定で状態を確認してください。"
   },
   "directPolicyMismatch": {
     "message": "指定した検査条件の適用を確認できません。拡張を更新して再検査してください。"
   },
   "directUnavailable": {
-    "message": "内蔵の検査処理を開始できません。セットアップで状態を確認してください。"
+    "message": "内蔵の検査処理を開始できません。設定で状態を確認してください。"
   },
   "directNoSetup": {
     "message": "この実験版では補助プログラムの別途導入・更新は不要です。"
@@ -2950,5 +2950,20 @@
   },
   "directDefinitions": {
     "message": "FreshClamによるウイルス定義の初回更新を完了させてから「接続を再確認」を押してください。OSのClamAVとPython3を使用します。"
+  },
+  "directHelpEnvironmentTitle": {
+    "message": "利用環境"
+  },
+  "directHelpEnvironment": {
+    "message": "ClamAVとPython3を使用します。連携状態は「設定」の末尾で確認できます。"
+  },
+  "directHelpMaintenanceTitle": {
+    "message": "更新と削除"
+  },
+  "directHelpUninstall": {
+    "message": "削除する場合は、Thunderbirdのアドオンマネージャーからこの拡張を削除します。設定・検査履歴は失われる可能性があります。メール・アカウント・ClamAV・Python3は残ります。"
+  },
+  "directHelpRetained": {
+    "message": "移行時に作成済みのバックアップや、旧版の補助プログラムは、この操作では削除しません。"
   }
 }

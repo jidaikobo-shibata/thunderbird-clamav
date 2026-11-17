@@ -72,7 +72,7 @@ async function readHealth(client) {
   try {
     return { ...await client.request("health"), checkedAt: new Date().toISOString() };
   } catch (error) {
-    if (DIRECT) return { status: "error", code: "direct_unavailable", checkedAt: new Date().toISOString(), detail: t("directUnavailable", "内蔵の検査処理を開始できません。セットアップで状態を確認してください。") + " " + String(error.message).slice(0, 300) };
+    if (DIRECT) return { status: "error", code: "direct_unavailable", checkedAt: new Date().toISOString(), detail: t("directUnavailable", "内蔵の検査処理を開始できません。設定で状態を確認してください。") + " " + String(error.message).slice(0, 300) };
     return { status: "error", code: "helper_unavailable", checkedAt: new Date().toISOString(),
       detail: t("helperClamavUnknown", "補助プログラムに接続できないため、ClamAVの有無はまだ確認できません。補助プログラムの導入・接続を確認してください。") };
   }

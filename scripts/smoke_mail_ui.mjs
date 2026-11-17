@@ -14,7 +14,7 @@ const catalogs = Object.fromEntries(await Promise.all(["ja", "en"].map(async lan
 const profile = await mkdtemp(path.join(tmpdir(), "clam-mail-ui-"));
 const server = createServer(async (request, response) => {
   const name = new URL(request.url, "http://localhost").pathname.slice(1);
-  if (!["direct-transport.mjs", "dashboard.html", "dashboard.css", "dashboard.js", "review.mjs", "scan-policy.mjs", "quarantine.mjs", "quarantine-ui.mjs", "core.mjs", "results.mjs", "folder-scan.mjs", "folder-labels.mjs", "installation.mjs", "i18n.mjs", "installer.pyz", "icon.svg"].includes(name)) {
+  if (!["direct-transport.mjs", "direct-view.mjs", "dashboard.html", "dashboard.css", "dashboard.js", "review.mjs", "scan-policy.mjs", "quarantine.mjs", "quarantine-ui.mjs", "core.mjs", "results.mjs", "folder-scan.mjs", "folder-labels.mjs", "installation.mjs", "i18n.mjs", "installer.pyz", "icon.svg"].includes(name)) {
     response.writeHead(404).end(); return;
   }
   const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript", ".svg": "image/svg+xml", ".pyz": "application/octet-stream" };
@@ -113,7 +113,7 @@ try {
       return { key, author: record.locator.author, subject: record.locator.subject,
         folder: "/Inbox", accountId: record.locator.accountId, status: record.status, signatures: record.signatures }; };
     let batchKeys = [], forgetKeys = [];
-    window.messenger = { i18n: { getUILanguage: () => language, getMessage }, runtime: { getManifest: () => ({ version: direct ? "0.20.0a1" : "0.19.2", ...(direct ? {experiment_apis:{clamDirect:{}}} : {}) }), getURL: name => "/" + name, sendMessage: async request => {
+    window.messenger = { i18n: { getUILanguage: () => language, getMessage }, runtime: { getManifest: () => ({ version: direct ? "0.20.0a2" : "0.19.2", ...(direct ? {experiment_apis:{clamDirect:{}}} : {}) }), getURL: name => "/" + name, sendMessage: async request => {
       testCalls.push(request);
       if (request.type === "state") return structuredClone(testState);
       if (request.type === "clearOverflow") testState.overflowReport = null;
@@ -244,14 +244,32 @@ try {
         await evaluate("sessionStorage.setItem('fixture-language','en-US')");
         await call("Page.reload");
       }
-      await until("document.getElementById('direct-runtime-card') && document.querySelectorAll('#results tr').length === 50");
-      await evaluate("document.getElementById('tab-setup').click()");
-      assert.equal(await evaluate("document.getElementById('helper-task').hidden"), true);
+      await until("document.querySelectorAll('#results tr').length === 50 && document.getElementById('panel-settings').contains(document.getElementById('connection-title'))");
+      assert.deepEqual(await evaluate("[...document.querySelectorAll('[role=tab]')].map(tab=>tab.id)"), ['tab-scan','tab-results','tab-settings','tab-help']);
+      assert.equal(await evaluate("document.getElementById('panel-scan').hidden"), false);
+      assert.equal(await evaluate("document.getElementById('tab-setup')"), null);
+      assert.equal(await evaluate("document.getElementById('panel-uninstall')"), null);
+      assert.equal(await evaluate("document.getElementById('helper-task')"), null);
+      assert.equal(await evaluate("document.getElementById('direct-backup')"), null);
+      assert.equal(await evaluate("document.getElementById('setup-dot').parentElement.id"), 'tab-settings');
       assert.equal(await evaluate("document.getElementById('setup-dot').hidden"), true);
-      assert.match(await evaluate("document.getElementById('direct-runtime-card').textContent"), /Python3/);
-      assert.match(await evaluate("document.getElementById('direct-backup').textContent"), /synthetic.*backup/);
+      await evaluate("document.getElementById('tab-settings').click()");
+      assert.equal(await evaluate("document.getElementById('settings-form').compareDocumentPosition(document.getElementById('connection-title')) & Node.DOCUMENT_POSITION_FOLLOWING"), 4);
+      assert.doesNotMatch(await evaluate("document.body.innerText"), /synthetic.*backup/);
       await evaluate("document.getElementById('health').click()");
       await until("!document.getElementById('health').disabled");
+      await evaluate("document.getElementById('tab-settings').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))");
+      assert.equal(await evaluate("document.activeElement.id"), 'tab-help');
+      await evaluate("document.getElementById('tab-help').dispatchEvent(new KeyboardEvent('keydown',{key:'Home',bubbles:true}))");
+      assert.equal(await evaluate("document.activeElement.id"), 'tab-scan');
+      await evaluate("testState.installation.healthy=false;testState.installation.clamavCode='direct_unavailable';testState.installation.detail='Synthetic connection failure';testState.lastHealth={status:'error',code:'direct_unavailable',detail:'Synthetic connection failure',checkedAt:new Date().toISOString()};testState.setupRequest='connection-warning'");
+      await until("!document.getElementById('setup-dot').hidden && document.getElementById('tab-settings').getAttribute('aria-selected')==='true'");
+      assert.equal(await evaluate("document.activeElement.id"), 'connection-title');
+      assert.equal(await evaluate("document.getElementById('connection-title').closest('section').classList.contains('needs-action')"), true);
+      await evaluate("document.getElementById('tab-scan').click();document.getElementById('tab-settings').click()");
+      assert.equal(await evaluate("document.activeElement.id"), 'connection-title');
+      await evaluate("testState.installation.healthy=true;testState.installation.clamavCode='ready';testState.setupRequest=null;document.getElementById('health').click()");
+      await until("!document.getElementById('health').disabled && document.getElementById('setup-dot').hidden");
       for (const [width, height, label] of [[1280,1000,'desktop'],[390,844,'mobile']]) {
         await call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
         const picture = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
@@ -265,15 +283,10 @@ try {
       assert.equal(await evaluate("testCalls.some(call => call.type === 'permission')"), false);
       await evaluate("document.getElementById('tab-help').click()");
       assert.doesNotMatch(await evaluate("document.getElementById('panel-help').innerText"), /Terminal/);
-      await evaluate("document.getElementById('tab-uninstall').click()");
-      assert.equal(await evaluate("document.getElementById('uninstall-start').hidden"), true);
-      assert.equal(await evaluate("document.getElementById('remove-extension').hidden"), false);
-      await evaluate("document.getElementById('remove-extension').click()");
-      await until("document.getElementById('uninstall-report').textContent.length > 0");
-      assert.equal(await evaluate("testCalls.find(call => call.type === 'uninstallSelf').showConfirmDialog"), true);
-      assert.equal(await evaluate("testCalls.some(call => call.type === 'helperPlan')"), false);
+      assert.match(await evaluate("document.getElementById('panel-help').innerText"), language === 'ja' ? /アドオンマネージャー/ : /Add-ons Manager/);
+      assert.equal(await evaluate("testCalls.some(call=>call.type==='helperPlan'||call.type==='uninstallSelf')"), false);
     }
-    console.log("Direct UI: passed (Japanese/English, integrated setup, backup path, desktop/mobile, required permissions, deletion confirmation, uninstall cancellation)");
+    console.log("Direct UI: passed (Japanese/English, four tabs, settings connection status and alerts, keyboard navigation, no backup path, desktop/mobile, required permissions, deletion confirmation, concise help)");
   } else {
   await until("document.querySelectorAll('#results tr').length === 50");
   assert.equal(await evaluate("document.querySelectorAll('[role=tab]').length"), 6);

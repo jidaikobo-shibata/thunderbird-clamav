@@ -1,6 +1,7 @@
 # 再開メモ
 
 ## 現状
+- 0.20.0a2：単独利用を前提に実験版を4タブ化。ClamAV状態は設定末尾、接続エラーの丸印/動線も設定へ。独立セットアップ/アンインストールとバックアップ保存場所表示を削除し、ヘルプを短く整理。日英UI・関連テスト通過。既存バックアップ/設定/履歴/検査処理を維持。利用者はa1で238件フォルダー検査成功を報告、新着は観察予定。成果物dist/clam-mail-check-direct-0.20.0a2.xpi。
 - 0.20.0a1：実メール用の内蔵検査実験版を実装・検証。専用ビルドscripts/build_direct_mail_check.py、成果物dist/clam-mail-check-direct-0.20.0a1.xpi。既存Python検査処理を同梱し、ClamAV/Python3は必要、補助の別途設置/登録/更新は不要。監視・移行前バックアップ・日英UI・同一IDでの履歴保持に対応。JS158/Python69と独立153.7.0esrの合成メールAPI試験が通過。実ユーザー環境への導入は未実施。main未統合。詳細experiments/direct-runtime/README.mdと非公開メモを参照。
 - 現在はexperiment/addon-only-clamav。合成メール専用の直接連携試作と独立Wayland実機ランチャーを追加。成立性は確認したが現行機能の移植と異常終了対応・権限/配布条件の課題があり、本格移行は未判断。mainの安定版0.19.2は未変更。概要はexperiments/direct-clamav/README.md、詳細は非公開メモを参照。
 - 0.19.2：通知設定を自動検査アカウントの直後へ移動。日英模擬UI通過、XPI作成済み。

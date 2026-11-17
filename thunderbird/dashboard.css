@@ -14,7 +14,7 @@ select, input[type="search"] { box-sizing: border-box; width: 100%; }
 button { cursor: pointer; }
 button:disabled { cursor: default; }
 :focus-visible { outline: 3px solid Highlight; outline-offset: 3px; }
-.tabs { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; border-bottom: 1px solid GrayText; background: Canvas; }
+.tabs { display: grid; grid-template-columns: repeat(var(--tab-columns, 6), minmax(0, 1fr)); gap: 4px; border-bottom: 1px solid GrayText; background: Canvas; }
 html { scroll-padding-block-start: 9rem; }
 [role="tab"] { border: 0; border-bottom: 4px solid transparent; background: transparent; color: CanvasText; min-width: 0; }
 [role="tab"][aria-selected="true"] { border-bottom-color: Highlight; font-weight: bold; }
@@ -74,11 +74,11 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid GrayText
 #panel-setup, #panel-uninstall { max-width: 1000px; }
 #uninstall-download { display: inline-block; padding: 8px 12px; min-height: 28px; border: 1px solid GrayText; border-radius: 4px; }
 #uninstall-status, #uninstall-report { overflow-wrap: anywhere; }
-@media (max-width: 850px) { .tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 850px) { .tabs { grid-template-columns: repeat(var(--tab-compact-columns, 3), minmax(0, 1fr)); } }
 
 .sticky-navigation { position: sticky; top: 0; z-index: 10; background: Canvas; }
 
-#tab-setup { position: relative; }
+#tab-setup, #tab-settings { position: relative; }
 .notification-dot { position: absolute; top: 8px; right: 8px; width: 8px; height: 8px; border-radius: 50%; background: #285b8f; }
 .notification-dot[data-kind="repair"], .notification-dot[data-kind="connection"] { background: #b34b17; }
 @media (forced-colors: active) { .notification-dot { background: Highlight; forced-color-adjust: none; } }

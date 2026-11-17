@@ -24,7 +24,7 @@ export function helperAction(info, bundledVersion) {
 export function helperNotice(info, version) {
   if (info?.state !== "removed" && info?.clamavCode === "clamav_missing") return { kind: "connection", badge: "!", message: t("clamavMissing", "ClamAVが見つかりません。この拡張は /usr/bin/clamscan を使用します。") };
   if (info?.state !== "removed" && info?.clamavCode === "clamav_unusable") return { kind: "connection", badge: "!", message: t("clamavUnusable", "ClamAVを起動・確認できません。導入状態と実行権限を確認してください。") };
-  if (info?.state === "integrated") return info.healthy === false ? { kind: "connection", badge: "!", message: info.detail || t("directUnavailable", "内蔵の検査処理を開始できません。セットアップで状態を確認してください。") } : null;
+  if (info?.state === "integrated") return info.healthy === false ? { kind: "connection", badge: "!", message: info.detail || t("directUnavailable", "内蔵の検査処理を開始できません。設定で状態を確認してください。") } : null;
   const action = helperAction(info, version);
   if (action === "update") return { kind: "update", badge: t("mail199", "更新"), label: t("mail200", "更新あり"), message: t("mail201", "補助プログラムの更新があります。"), button: t("mail202", "更新を確認") };
   if (action === "repair" || info?.state === "managed" && info.healthy === false)
@@ -43,6 +43,7 @@ export function toolbarNotice(info, version, issue, count) {
 }
 
 export function installationUI({ request, action, latest, busy }) {
+  if (directRuntime()) return { render() {} };
   const $ = id => document.getElementById(id);
   const version = messenger.runtime.getManifest().version;
   const filename = `clam-mail-check-installer-${version}.pyz`;
@@ -116,46 +117,10 @@ export function installationUI({ request, action, latest, busy }) {
       }).catch(() => { report.textContent = t("mail222", "コピーできませんでした。表示されたコマンドを選択してコピーしてください。"); });
     });
   }
-  function renderDirect(locked, working) {
-    $("helper-task").hidden = true;
-    let card = $("direct-runtime-card");
-    if (!card) {
-      card = document.createElement("section"); card.id = "direct-runtime-card"; card.className = "connection-status";
-      document.title = t("directAppTitle", "ClamAV メール検査（実験版）");
-      document.querySelector("header h1").textContent = document.title;
-      const heading = card.appendChild(document.createElement("h3")); heading.textContent = t("directTitle", "ClamAVとの連携（実験版）");
-      card.appendChild(document.createElement("p")).textContent = t("directIntro", "検査処理はこの拡張に含まれています。別途の補助プログラム導入・更新は不要です。ClamAVとPython3を使用します。旧版の補助プログラムがあっても、この版は使用・変更しません。");
-      const backup = card.appendChild(document.createElement("p")); backup.id = "direct-backup"; backup.style.overflowWrap = "anywhere";
-      $("helper-task").before(card);
-      const replace = (oldKey, key, fallback) => { for (const node of document.querySelectorAll('[data-i18n="' + oldKey + '"]')) node.textContent = t(key, fallback); };
-      for (const oldKey of ["mail314", "mail333"]) replace(oldKey, "directUninstallIntro", "この拡張をThunderbirdの確認画面から削除します。");
-      for (const oldKey of ["mail316", "mail336"]) replace(oldKey, "directUninstallKeep", "設定・検査履歴・再開情報は失われる可能性があります。メール・アカウント・ClamAV・Python3・旧版の補助プログラムは削除しません。移行前のバックアップはThunderbirdプロファイル内に残ります。");
-      replace("mail317", "directUninstallWait", "実行中の検査を中止し、停止してから拡張を削除してください。");
-      replace("mail328", "directNoSetup", "この実験版では補助プログラムの別途導入・更新は不要です。");
-      replace("mail331", "directIntro", "内蔵の検査処理を使用します。ClamAVとPython3が必要です。旧版の補助プログラムは使用・変更しません。");
-      replace("mail329", "directRequirements", "ClamAVとPython3が必要です。「接続を再確認」で利用できることを確認します。");
-      replace("mail330", "directPermissionsHelp", "この実験版はThunderbirdとコンピューターへの全面アクセス権限を要求します。完全削除などの操作前の確認画面は維持しています。");
-      replace("mail334", "directUninstallKeep", "設定・履歴は失われる可能性があります。メール・ClamAV・Python3と移行前バックアップは残ります。");
-      replace("mail335", "directUninstallIntro", "この拡張をThunderbirdの確認画面から削除します。");
-      replace("mail337", "directUpdateHelp", "通常の更新は、旧版を削除せずXPIを上書きします。内蔵の検査処理も一緒に更新されます。");
-      replace("scanHelp", "directScanHelp", "検査条件は設定タブで指定します。内蔵の検査処理は拡張と一緒に更新されます。");
-      replace("clamavDefinitions", "directDefinitions", "FreshClamによる初回更新を完了させてから接続を再確認してください。");
-      replace("mail341", "directLimitsHelp", "検査の上限は設定で指定します。暗号化や上限超過は未検査として案内します。定義が3日超古い場合は失敗として扱います。");
-    }
-    const backup = latest()?.directMigrationBackup?.path;
-    $("direct-backup").hidden = !backup;
-    $("direct-backup").textContent = backup ? t("directBackup", "移行前の設定・履歴のバックアップ：$1", [backup]) : "";
-    $("uninstall-start").hidden = true; $("uninstall-steps").hidden = false;
-    for (const child of $("uninstall-steps").children) child.hidden = child.id !== "remove-extension";
-    $("remove-extension").textContent = t("directRemove", "拡張を削除");
-    $("remove-extension").disabled = Boolean(locked || working);
-  }
-
   function render() {
     const state = latest(), info = state?.installation, locked = busy() || state?.maintenance || saving;
     for (const id of ["installer-download", "uninstall-download"]) $(id).disabled = Boolean(locked);
     const working = state?.batch?.active || state?.folderJob && ["collecting", "running", "stopping"].includes(state.folderJob.status) || state?.records.some(record => record.status === "scanning");
-    if (directRuntime()) { renderDirect(locked, working); return; }
     $("installation-status").textContent = !info ? t("mail223", "まだ確認していません。「導入を確認」を押してください。") :
       info.state === "managed" ? t("mail224", "導入済み：$1 ／ $2", [info.version, info.healthy ? t("mail225", "設置ファイルは一致しています") : t("mail226", "修復が必要です")]) :
       info.state === "legacy" ? t("mail227", "既存の補助プログラムは管理機能に未対応です。Terminalで更新・修復または削除できます。") :
