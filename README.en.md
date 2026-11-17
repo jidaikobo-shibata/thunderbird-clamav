@@ -1,6 +1,6 @@
 # ClamAV Mail Check
 
-This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a6**, an experimental macOS port of the integrated Ubuntu scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a6 has not been published.
+This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a7**, an experimental macOS port of the integrated Ubuntu scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a7 has not been published.
 
 ## Requirements
 
@@ -51,7 +51,7 @@ No additional Python or npm packages are needed:
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-Install `dist/clam-mail-check-direct-0.20.0a6.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
+Install `dist/clam-mail-check-direct-0.20.0a7.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
 
 Open Settings and choose Check connection again. Start with a small manual folder scan. Automatic scanning is disabled for a new installation; select accounts only after checking results.
 

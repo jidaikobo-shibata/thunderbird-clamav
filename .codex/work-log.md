@@ -422,3 +422,10 @@
 ### 公開完了
 - https://github.com/jidaikobo-shibata/thunderbird-clamav をPUBLICで作成。originを登録し、現在の履歴をmainへpush。GitHubの既定ブランチmain・MIT表示を確認。ローカルのexperiment/addon-only-clamavと従来のmainは維持し、履歴の書き換えはしていない。
 - https://github.com/jidaikobo-shibata/thunderbird-clamav/releases/tag/v0.20.0a5 をprereleaseとして公開。XPIとSHA256SUMSを添付。今後このローカル実験ブランチから公開mainへ送る場合はgit push origin HEAD:mainを明示する。公式アドオンサイトへの申請は未実施。
+
+
+## 2026-11-17：macOS対応の統合前監査とUbuntu検証（0.20.0a7）
+- 内容・理由：feature/macosの2コミットを検証ブランチへfast-forwardで取り込み、実行ファイル探索/権限/資源制限/親子終了/一時ファイル/画面/配布物を監査。候補がない場合の起動防止を強化し、修正前に失敗する回帰テストを2件追加。a7へ更新。詳細はGit除外・未追跡の非公開監査メモへ保存。
+- 確認：JS173件成功、Python80件中77成功・Darwin専用3件除外。日英のUbuntu/Apple Silicon/Intel模擬UI成功。Ubuntuの独立Wayland/D-Busと使い捨て153.7.0esrで通常/EICAR/ZIP/暗号化、メモ付き再検査、手動/自動隔離、完全削除、カスタム条件、中止、移行/更新/異常終了の全シナリオを確認。未導入/通常終了/削除も確認。プロセス/一時ファイル清掃、a7のXPIとソース/ライセンス一致、テストAPI除外を確認。
+- 判断：監査・修正・検証後に共有mainへ統合する提案への了承に基づき、現在ブランチをorigin/mainへfast-forwardで反映する。新規依存・OS設定/権限・普段のメール/設定の変更なし。公開済みリリースはa5のまま。a7の新規リリース公開は行わない。
+- 未確認・次：macOS実機は先方のa6記録と利用者の画面共有による報告に基づく。a7のmacOS実機とIntel実機は再確認が必要。Ubuntuはa7を削除せず上書きして日常利用を継続。

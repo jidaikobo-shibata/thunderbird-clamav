@@ -41,8 +41,8 @@ class MacRuntimeTests(unittest.TestCase):
     def test_missing_or_rejected_candidate_cannot_be_executed_later(self):
         with patch.object(Path, "exists", return_value=False), patch.object(Path, "is_symlink", return_value=False):
             scan, daemon, _, rejected = host.macos_clamav()
-        self.assertTrue(scan.endswith("clamscan-unavailable"))
-        self.assertTrue(daemon.endswith("clamd-unavailable"))
+        self.assertIsNone(scan)
+        self.assertIsNone(daemon)
         self.assertFalse(rejected)
 
     def test_mime_memory_limit_or_unobservable_worker_is_incomplete_and_killed(self):
@@ -70,3 +70,28 @@ class MacRuntimeTests(unittest.TestCase):
         self.assertIn(((resource.RLIMIT_AS, (512 * 1024 ** 2, 512 * 1024 ** 2)),), [(call.args,) for call in limit.call_args_list])
         limit.assert_any_call(resource.RLIMIT_CPU, (3, 3))
         limit.assert_any_call(resource.RLIMIT_CORE, (0, 0))
+
+
+class MacMissingExecutableTests(unittest.TestCase):
+    def test_missing_candidates_cannot_execute_an_unverified_fallback_file(self):
+        with patch.object(Path, "exists", return_value=False), patch.object(Path, "is_symlink", return_value=False):
+            scan, daemon, _, rejected = host.macos_clamav()
+        # Even if an arbitrary fallback file exists, only discovery may authorize
+        # execution; the health check must not turn absence into an executable.
+        with patch.object(host, "CLAMSCAN", scan), patch.object(host, "CLAMD", daemon), \
+             patch.object(host, "CLAMAV_TRUST_ERROR", rejected), patch.object(Path, "is_file", return_value=True), \
+             patch.object(host.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout=b"ClamAV 1.5.4")) as run:
+            self.assertEqual(host.health()["code"], "clamav_missing")
+            self.assertEqual(host.scan_clamscan(b"synthetic")["status"], "error")
+            run.assert_not_called()
+
+    def test_absent_daemon_cannot_start_an_unverified_fallback_file(self):
+        with patch.object(host.os, "uname", return_value=SimpleNamespace(machine="arm64")), \
+             patch.object(Path, "exists", return_value=True), \
+             patch.object(host, "trusted_macos_path", side_effect=["/opt/homebrew/Cellar/clamav/1/bin/clamscan", OSError("missing")]):
+            _, daemon, _, _ = host.macos_clamav()
+        with patch.object(host, "CLAMD", daemon), patch.object(host, "CLAMAV_TRUST_ERROR", False), \
+             patch.object(host.os, "access", return_value=True), patch.object(host.subprocess, "Popen") as spawn:
+            with self.assertRaises(host.DaemonUnavailable):
+                host.MailDaemon().start()
+            spawn.assert_not_called()

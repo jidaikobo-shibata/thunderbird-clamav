@@ -203,10 +203,10 @@ def macos_clamav():
         try:
             daemon = trusted_macos_path(Path(prefix) / "sbin/clamd", prefix)
         except OSError:
-            daemon = str(Path(prefix) / "sbin/clamd-unavailable")
+            daemon = None
         return scan, daemon, prefix + "/var/lib/clamav", False
     prefix = prefixes[0]
-    return prefix + "/bin/clamscan-unavailable", prefix + "/sbin/clamd-unavailable", prefix + "/var/lib/clamav", rejected
+    return None, None, prefix + "/var/lib/clamav", rejected
 
 
 if sys.platform == "darwin":
@@ -527,7 +527,7 @@ class MailDaemon:
                 # A failed running daemon is an error, never silently clean.
                 raise ProtocolError(tr('メール検査用clamdが終了しました。'))
             return
-        if not os.access(CLAMD, os.X_OK):
+        if not CLAMD or not os.access(CLAMD, os.X_OK):
             self.disabled = True
             raise DaemonUnavailable()
         try:
@@ -645,6 +645,8 @@ class MailDaemon:
 def scan_clamscan(data, options=None):
     if CLAMAV_TRUST_ERROR:
         return {"status": "error", "signatures": [], "detail": tr('ClamAVを起動・確認できません。導入状態と実行権限を確認してください。')}
+    if not CLAMSCAN:
+        return {"status": "error", "signatures": [], "detail": tr('ClamAVが対応する導入先に見つかりません。設定の導入案内を確認してください。')}
     options = scan_options(options)
     args = [CLAMSCAN, "--stdout", "--no-summary", "--scan-mail=yes",
             "--allmatch=yes", "--alert-encrypted=yes", "--alert-exceeds-max=yes",
@@ -726,7 +728,7 @@ def scan(data, scanner=None, options=None):
 def health():
     if CLAMAV_TRUST_ERROR:
         return {"status": "error", "code": "clamav_unusable", "detail": tr('ClamAVを起動・確認できません。導入状態と実行権限を確認してください。')}
-    if not Path(CLAMSCAN).is_file():
+    if not CLAMSCAN or not Path(CLAMSCAN).is_file():
         return {"status": "error", "code": "clamav_missing", "detail": tr('ClamAVが対応する導入先に見つかりません。設定の導入案内を確認してください。')}
     try:
         result = subprocess.run([CLAMSCAN, "--version"], capture_output=True,
@@ -741,7 +743,7 @@ def health():
     return {"status": "ready", "protocol": PROTOCOL, "engine": version,
             "maxBytes": MAX_TRANSFER, "chunkBytes": CHUNK_SIZE, "scanSettingsVersion": 1,
             "detail": (tr('連続検査では専用clamdを利用します。初回は定義を読み込みます。起動できない場合はclamscanを利用します。')
-                       if os.access(CLAMD, os.X_OK) else tr('検査はclamscanで1通ずつ実行します。') )}
+                       if CLAMD and os.access(CLAMD, os.X_OK) else tr('検査はclamscanで1通ずつ実行します。') )}
 
 
 class Session:
