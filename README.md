@@ -1,11 +1,14 @@
 # ClamAV Mail Check / ClamAV メール検査
 
 Thunderbirdのメールを、コンピューターにインストールしたClamAVで検査する拡張機能です。
-現在の配布版は **0.20.0a5（試用版）** です。補助プログラムの別途インストールは不要です。
+このブランチは **0.20.0a6（macOS対応の試用版）** です。補助プログラムの別途インストールは不要です。
+公開済みの0.20.0a5はUbuntu向けです。このブランチのXPIは末尾のビルド手順で作成できます。GitHubにはまだ公開していません。
+
+[English installation guide](README.en.md)
 
 ## インストール
 
-1. [Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)から、`clam-mail-check-direct-0.20.0a5.xpi`をダウンロードします。「Source code」のZIPではありません。
+1. このブランチから作成した`dist/clam-mail-check-direct-0.20.0a6.xpi`を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
 2. Thunderbirdのアドオンマネージャーで、歯車メニューの「ファイルからアドオンをインストール」を選び、XPIを指定します。
 3. 表示される権限を確認してインストールします。Experiment APIを使用するため、Thunderbirdとコンピューターへの全面アクセス権限が必要です。
 4. ツールバーのアイコンから画面を開き、「設定」末尾の「ClamAVの状態」で「接続を再確認」を押します。ClamAVが未導入なら、表示される導入手順に従います。ウイルス定義の初回更新も完了させてください。
@@ -14,9 +17,10 @@ Thunderbirdのメールを、コンピューターにインストールしたCla
 ### 確認済みの環境
 
 - Ubuntu、通常パッケージ版のThunderbird **153系**。153.7.0esr（64ビット）で検証しています。
-- Python 3.10以降（`/usr/bin/python3`）。
-- ClamAV（`/usr/bin/clamscan`）と更新済みの定義。高速な連続検査には`/usr/sbin/clamd`も使います。
-- Snap・Flatpak版、Windows・macOS、Thunderbirdの他のメジャーバージョンは未検証です。XPIの対応範囲は153系に限定しています。
+- macOS 15.6.1、Apple Silicon（arm64）、Thunderbird 153.5.1esr。macOSでの最新の確認結果・未確認事項は[検証記録](experiments/direct-runtime/README.md)を参照してください。
+- Python 3.10以降。Ubuntuは`/usr/bin/python3`、macOSはHomebrew版またはpython.org版を使用します。macOS付属の古いPythonや開発ツール導入用の起動ファイルは使用しません。
+- ClamAVと更新済みの定義。Ubuntuは`/usr/bin/clamscan`・`/usr/sbin/clamd`、macOSはHomebrew版を使用します。
+- Intel Macは実機未検証です。Snap・Flatpak版、Windows、Thunderbirdの他のメジャーバージョンも未検証です。XPIの対応範囲は153系に限定しています。
 
 ClamAVは別途必要です。Ubuntu / Debian向けの導入例は次のとおりです。OSのパッケージを変更する操作です。
 
@@ -25,6 +29,34 @@ sudo apt install clamav clamav-daemon clamav-freshclam
 ```
 
 [ClamAV公式の導入ガイド](https://docs.clamav.net/manual/Installing/Packages.html)
+
+### macOSの準備
+
+Homebrewが導入済みなら、次を実行します。パッケージと必要な依存を追加する操作です。python.org版のPython 3.10以降が既にある場合、`python`の追加は不要です。
+
+```bash
+brew install clamav python
+```
+
+定義の保存先はApple Siliconでは`/opt/homebrew/var/lib/clamav`、Intelでは`/usr/local/var/lib/clamav`です。画面の「設定」末尾にCPUに応じたコマンドを表示します。Apple Siliconで、既存のFreshClam設定がない場合の例です。設定ファイルが既にある場合は作成を拒否するので、既存の内容を確認してください。
+
+```bash
+mkdir -p /opt/homebrew/var/lib/clamav
+(
+  set -C
+  printf '%s\n' \
+    'DatabaseDirectory /opt/homebrew/var/lib/clamav' \
+    'DatabaseMirror database.clamav.net' \
+    > "$HOME/clam-mail-freshclam.conf"
+)
+freshclam --config-file="$HOME/clam-mail-freshclam.conf"
+```
+
+FreshClamは公式ミラーから定義を取得します。初回更新が成功してから「接続を再確認」を押し、少量のメールで試します。定義は同じFreshClamコマンドで定期的に更新してください。3日より古い定義では検査を完了しません。この拡張は定義の自動更新を設定しません。
+
+`brew services`による常駐サービスの登録やNative Messagingの登録は不要です。必要時だけアドオン専用の検査プロセスを起動します。署名検証やGatekeeper等の無効化、フルディスクアクセスの追加は導入手順に含めません。
+
+Homebrewの標準配置（Apple Siliconの`/opt/homebrew`、Intelの`/usr/local`）とpython.orgの`/Library/Frameworks/Python.framework/Versions/Current/bin/python3`を探索します。PATH、メール、画面から任意の実行ファイルやオプションは指定できません。リンク先と所有者・権限を検査し、PythonとClamAVの版を確認します。独自プレフィックス、MacPorts、ClamXAV同梱版はこの版の対象外です。既存の他製品やサービスは変更しません。
 
 ## できること
 
@@ -64,7 +96,7 @@ ClamAVが検出しないメールの安全性を保証するものではあり�
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-成果物は`dist/clam-mail-check-direct-0.20.0a5.xpi`です。JavaScriptのテストにはNode.js 22以降を使います。
+成果物は`dist/clam-mail-check-direct-0.20.0a6.xpi`です。同じXPIにUbuntu/macOS用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
 
 ```bash
 for test_file in tests/*.test.mjs; do

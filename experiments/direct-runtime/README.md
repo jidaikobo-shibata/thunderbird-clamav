@@ -1,11 +1,11 @@
-# 実メール用の内蔵検査実験版（0.20.0a5）
+# 実メール用の内蔵検査実験版（0.20.0a6）
 
 このブランチの実験版は、現行の画面・受信検査・フォルダー検査・履歴・確認メモ・通知・隔離・完全削除を、アドオン内蔵の検査処理へ接続します。合成メール専用の0.1.0試作とは別の成果物です。
 
 ## 利用条件と導入
 
-- Ubuntuの通常版Thunderbird 153系を対象にしています。153.7.0esrで検証しました。Snap/Flatpak、他OS、他のメジャーバージョンは未検証です。
-- OSにClamAVとPython3が必要です。新しいライブラリやサービスの追加インストールは行っていません。
+- Ubuntuの通常版Thunderbird 153系を維持し、macOSのHomebrew版ClamAVへ対応しました。Ubuntu 153.7.0esrの既存検証とmacOSの検証は下記のとおりです。Snap/Flatpak、Windows、他のメジャーバージョンは未検証です。
+- OSにClamAVとPython3が必要です。検査処理の追加Python/npm依存はありません。ClamAVの導入にはパッケージ管理による依存の追加が必要な場合があります。常駐サービスの登録は不要です。
 - 検証済みのPython検査処理をXPIに同梱し、Python3で必要時に起動します。補助プログラムの別途設置・Native Messaging登録・個別更新は不要です。
 - Experiment APIを使うため、インストール時にはThunderbirdとコンピューターへの全面アクセス権限が必要です。完全削除・手動隔離などの確認画面は維持しています。
 - 旧版を削除せず、実験版のXPIを上書きインストールします。同じアドオンIDを維持し、既存の設定・履歴を引き継ぎます。新規インストール時の自動検査は無効です。
@@ -41,7 +41,7 @@ python3 -B scripts/smoke_direct_mail_check.py
 node scripts/smoke_mail_ui.mjs --direct
 ```
 
-ビルド結果は `dist/clam-mail-check-direct-0.20.0a5.xpi` です。テスト用のメール取り込み・自動更新・診断APIはこの配布物へ含めません。実機検証は独立Wayland・D-Bus・XDG設定と使い捨てプロファイルを使用し、Thunderbirdはオフラインで起動します。実画面の操作・Xwayland・リモート操作用の権限変更は使いません。
+ビルド結果は `dist/clam-mail-check-direct-0.20.0a6.xpi` です。テスト用のメール取り込み・自動更新・診断APIはこの配布物へ含めません。Ubuntuの実機検証は独立Wayland・D-Bus・XDG設定、macOSは独立したThunderbirdインスタンスと使い捨てプロファイルを使用し、オフラインで起動します。実画面の操作・Xwayland・リモート操作用の権限変更は使いません。
 
 詳細な診断結果はGit除外の出力先へ、監視処理の詳細は非公開の作業メモへ保存しています。公式アドオンサイトへの公開・申請は行っていません。独自Experiment APIの公開条件については引き続き確認が必要です。
 
@@ -56,3 +56,64 @@ node scripts/smoke_mail_ui.mjs --direct
 ## GitHub試用配布（0.20.0a5）
 
 MITライセンスをXPIにも同梱し、初回導入の案内で、別の補助プログラムが不要であることを明記しました。配布手順はルートのREADMEを参照してください。旧方式の記録はREADME-legacy.mdに保持しています。
+
+## macOS対応（0.20.0a6、feature/macos）
+
+導入・定義更新・上書き更新・削除の手順は[日本語README](../../README.md)と[English guide](../../README.en.md)に記載しています。ローカル試用用で、GitHubへのpush・PR・リリース公開は行っていません。
+
+### 調査・検証した環境
+
+| 項目 | 環境・導入方法 |
+| --- | --- |
+| OS / CPU | macOS 15.6.1（24G90）、Apple M1 / arm64、メモリー16 GiB |
+| Thunderbird | 153.5.1esr、既存の`/Applications/Thunderbird.app`、Universal版。元のインストーラー履歴は未確認。起動前のアプリ情報は153.1.1で、初回起動時にアプリ側の待機済み更新が適用された |
+| Python | 既存のpython.org版3.13.2（Frameworkのインストール記録あり）とHomebrew版3.14.8。拡張の実機試験ではHomebrew版を選択 |
+| ClamAV | Homebrewで1.5.4（formula 1.5.4_2）を追加。`/opt/homebrew/bin/clamscan`・`/opt/homebrew/sbin/clamd`からCellar内の実体を検証 |
+| 定義 | FreshClam専用設定で公式ミラーから取得。daily 28186 / main 63 / bytecode 339。保存先`/opt/homebrew/var/lib/clamav` |
+| 試験ツール | Node.js 24.18.0、既存Chromium 141による独立プロファイルの模擬UI |
+
+Homebrewは必要な依存を追加し、既存のca-certificatesとjanssonも更新しました。常駐サービスは登録していません。別途存在していたClamXAV付属ClamAV 1.5.4とそのサービスは使用・変更していません。普段のThunderbirdプロファイルと実メールは使っていません。
+
+### OSごとの扱い
+
+- Ubuntuの実行パスと定義パス、親消失通知、仮想メモリー制限は維持しています。
+- macOSはCPUに応じた標準Homebrew配置とpython.orgの固定候補を探索します。候補とリンク先の親ディレクトリ、所有者、書込み権限、実行可否、バージョンを確認します。Homebrewの管理者グループによる書込みは信頼境界に含めます。同じ利用者や管理者がインストール済みプログラム自体を改変する攻撃への防御は提供しません。
+- macOSはLinuxの資源制限を同じ強さと見なさず、OSのプロセス情報を用いて検査グループとMIME解析子の実メモリー量を監視します。CPU時間、経過時間、MIME構造の制限も維持します。メモリーの定期観測は瞬間的な増加を完全には防ぎません。監視不能・上限超過は接続終了または未検査・失敗となり、未検出にはしません。
+- macOSのclamd起動待ちは最大180秒、初回接続を含む要求は45秒、検査要求全体は360秒です。Ubuntuは従来の60秒・15秒・225秒を維持します。設定画面の10〜120秒は検査エンジン本体の上限で、定義の読み込み時間とは別です。
+- 同じアドオンIDとデータ形式を維持し、設定・履歴・確認メモ・移行前バックアップを引き継ぎます。メールやUIからの任意コマンド、実行パス、シェル、任意ClamAVオプションの指定は追加していません。
+
+### 検証方法と結果
+
+単体試験はJavaScript173件成功、Python78件中77件成功・Linux専用旧GUIランチャー1件除外です。Pythonでは合成メールの一時ファイルを置き、通信終了、監視処理の終了、親の強制終了、監視処理の強制終了、検査ワーカーの強制終了、メモリー超過、監視不能後の清掃を確認しました。MIME解析の終了時タイマー競合を修正し、40回の暗号化判定が一致しました。
+
+日英の模擬UIはmacOS Apple Silicon、Intelの導入パス、従来のUbuntu案内で通過しました。4タブ、接続失敗の動線、キーボード操作、狭幅表示、削除確認、追加の任意権限要求がないことも確認しています。
+
+実Thunderbirdの専用ローカルフォルダーへ合成メールを取り込み、以下を試験しています。テスト用のa1/a2は更新段階を識別する別名で、実装はこのブランチのソースです。
+
+| 試験 | 状態 |
+| --- | --- |
+| 通常 / EICAR添付 / ZIP添付 / 暗号化 | clean / detected / detected / incompleteを確認 |
+| 再検査と確認メモの保持 | 確認済み |
+| 手動隔離と確認後の完全削除 | 確認済み |
+| ClamAV未導入相当 | テストXPIだけで不在を再現。開始拒否、履歴・確認メモ保持、異常終了清掃を確認 |
+| 旧データ移行とアドオン更新 | 設定・確認メモ・バックアップ保持、旧検査プロセスと一時ディレクトリの清掃を確認 |
+| Thunderbird通常終了 / アドオン削除 | 起動した実検査グループと一時ディレクトリの清掃を確認 |
+| 新着自動検査 / 自動隔離 / カスタム条件 / 中止 | 通し試験で確認。完了・再検査・中止後の検査グループと一時ディレクトリの清掃も確認 |
+| 更新直後 / Thunderbird強制終了 | 旧・現行の実検査グループと一時ディレクトリの清掃を確認 |
+
+再現コマンド（それぞれ別の使い捨てプロファイルで実行）：
+
+```bash
+python3 -B scripts/smoke_direct_mail_check.py
+python3 -B scripts/smoke_direct_mail_check.py --scenario missing
+python3 -B scripts/smoke_direct_mail_check.py --scenario quit
+python3 -B scripts/smoke_direct_mail_check.py --scenario uninstall
+node scripts/smoke_mail_ui.mjs --direct --mac
+node scripts/smoke_mail_ui.mjs --direct --mac --intel
+```
+
+### 未確認・制約
+
+Intel Mac実機、macOSの他のバージョン、Python 3.10〜3.12のmacOS実機、この変更後のUbuntu実機での再試験は未実施です。ClamAVの起動と定義ロードはこの環境で時間の変動が大きく、試験途中にタイムアウトも確認しました。macOSの起動時間枠を分離した後、実エンジン試験を同時実行せず行った通し試験が成功しています。重い環境で上限に達した場合は失敗として残し、安全判定に置き換えません。MacPorts・独自配置・ClamXAVは対象外です。
+
+Thunderbirdだけが強制終了した場合は独立した監視処理が清掃します。一方、電源断や監視を含む全プロセスの同時強制終了では、終了時の清掃を保証できません。一時ディレクトリは利用者だけがアクセスできる権限で作成します。署名・OS保護の無効化を前提とする手順は追加していません。

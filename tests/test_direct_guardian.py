@@ -8,14 +8,17 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
 STUB = '''import json,os,subprocess,sys
+from pathlib import Path
 class ProtocolError(Exception): pass
 class Session:
  def handle(self,request): return request
 def main():
+ Path(__file__).with_name("synthetic-mail.tmp").write_bytes(b"synthetic private mail")
  child=subprocess.Popen([sys.executable,"-I","-B","-c","import time; time.sleep(60)"])
  print(json.dumps({"worker":os.getpid(),"child":child.pid}),flush=True)
  try:
@@ -135,6 +138,16 @@ class DirectGuardianTests(unittest.TestCase):
         process.communicate(timeout=5)
         self.assertNotEqual(process.returncode, 0)
         self.assertFalse(directory.exists())
+
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin libproc fail-closed enumeration")
+    def test_empty_group_listing_for_live_worker_is_a_monitor_failure(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("guardian_monitor", ROOT / "experiments/direct-runtime/guardian.py")
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        monitor = module.MacProcessMonitor()
+        with patch.object(monitor.lib, "proc_listpgrppids", return_value=0), patch.object(monitor, "alive", return_value=True):
+            with self.assertRaisesRegex(OSError, "Cannot enumerate"):
+                monitor.group_rss(os.getpid())
 
 
 if __name__ == "__main__":

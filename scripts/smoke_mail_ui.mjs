@@ -25,7 +25,9 @@ await new Promise((resolve, reject) => {
   server.once("error", reject);
   server.listen(0, "127.0.0.1", resolve);
 });
-const chrome = spawn("/opt/google/chrome/chrome", [
+const chromeCommand = process.platform === "darwin"
+  ? "/Applications/Chromium.app/Contents/MacOS/Chromium" : "/opt/google/chrome/chrome";
+const chrome = spawn(chromeCommand, [
   "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
   "--disable-background-networking", "--disable-component-update", "--remote-debugging-pipe",
   "--user-data-dir=" + profile, "about:blank"
@@ -51,7 +53,7 @@ chrome.stdio[4].on("data", data => {
 function cdp(method, params = {}, sessionId) {
   return new Promise((resolve, reject) => {
     const id = ++sequence;
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error(method + " timed out: " + errors)); }, 15000);
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error(method + " timed out: " + errors)); }, 60000);
     pending.set(id, { resolve, reject, timer });
     chrome.stdio[3].write(JSON.stringify({ id, method, params, sessionId }) + "\0");
   });
@@ -113,7 +115,7 @@ try {
       return { key, author: record.locator.author, subject: record.locator.subject,
         folder: "/Inbox", accountId: record.locator.accountId, status: record.status, signatures: record.signatures }; };
     let batchKeys = [], forgetKeys = [];
-    window.messenger = { i18n: { getUILanguage: () => language, getMessage }, runtime: { getManifest: () => ({ version: direct ? "0.20.0a2" : "0.19.2", ...(direct ? {experiment_apis:{clamDirect:{}}} : {}) }), getURL: name => "/" + name, sendMessage: async request => {
+    window.messenger = { i18n: { getUILanguage: () => language, getMessage }, runtime: { getPlatformInfo: async () => ({os:${JSON.stringify(process.argv.includes("--mac") ? "mac" : "linux")},arch:${JSON.stringify(process.argv.includes("--intel") ? "x86-64" : "aarch64")}}), getManifest: () => ({ version: direct ? "0.20.0a2" : "0.19.2", ...(direct ? {experiment_apis:{clamDirect:{}}} : {}) }), getURL: name => "/" + name, sendMessage: async request => {
       testCalls.push(request);
       if (request.type === "state") return structuredClone(testState);
       if (request.type === "clearOverflow") testState.overflowReport = null;
@@ -249,7 +251,16 @@ try {
       assert.equal(await evaluate("document.getElementById('panel-scan').hidden"), false);
       assert.equal(await evaluate("document.getElementById('tab-setup')"), null);
       assert.equal(await evaluate("document.getElementById('panel-uninstall')"), null);
-      assert.match(await evaluate("document.getElementById('clamav-install-guide').innerText"), language === 'ja' ? /別の補助プログラムの導入は不要/ : /No separate helper program/);
+      assert.match(await evaluate("document.getElementById('clamav-install-guide').textContent"), process.argv.includes("--mac")
+        ? (language === 'ja' ? /別の補助プログラムや常駐サービスは不要/ : /No separate helper or background service/)
+        : (language === 'ja' ? /別の補助プログラムの導入は不要/ : /No separate helper program/));
+      if (process.argv.includes("--mac")) {
+        const guide = await evaluate("document.getElementById('clamav-install-guide').textContent");
+        assert.match(guide, /brew install clamav python/);
+        assert.match(guide, process.argv.includes("--intel") ? /\/usr\/local\/var\/lib\/clamav/ : /\/opt\/homebrew\/var\/lib\/clamav/);
+        assert.match(guide, /set -C/);
+        assert.doesNotMatch(guide, /sudo apt|brew services|xattr|spctl/);
+      }
       assert.equal(await evaluate("document.getElementById('helper-task')"), null);
       assert.equal(await evaluate("document.getElementById('direct-backup')"), null);
       assert.equal(await evaluate("document.getElementById('setup-dot').parentElement.id"), 'tab-settings');

@@ -55,7 +55,7 @@ class MacProcessMonitor:
         pids = (ctypes.c_int * 64)()
         count = self.lib.proc_listpgrppids(group, pids, ctypes.sizeof(pids))
         # libproc's convenience wrappers return a PID count (not byte count).
-        if count < 0 or count >= len(pids):
+        if count < 0 or count >= len(pids) or (count == 0 and self.alive(group)):
             raise OSError("Cannot enumerate scanner group")
         return [pid for pid in pids[:count] if pid > 0]
 

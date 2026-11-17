@@ -37,8 +37,10 @@ var testFixture = (() => {
           await guard();
           const message = context.extension.messageManager.get(id);
           if (!message || message.folder.URI !== folder("DirectSource").URI) throw new Error("Synthetic folder only");
-          message.flags |= Ci.nsMsgMessageFlags.New;
-          MailServices.mfn.notifyMsgAdded(message);
+          // messageManager may return a CachedMsgHeader rather than nsIMsgDBHdr.
+          const header = message.folder.GetMessageHeader(message.messageKey);
+          header.flags |= Ci.nsMsgMessageFlags.New;
+          MailServices.mfn.notifyMsgAdded(header);
         },
         update: async () => {
           await guard();
@@ -57,9 +59,34 @@ var testFixture = (() => {
           const transport = context.extension.__testDirect;
           return { parent: Services.appinfo.processID, sessions: transport ? [...transport.sessions.values()].map(session => ({ pid: session.process.pid, directory: session.directory })) : [] };
         },
+        finish: async action => {
+          await guard();
+          if (!["quit", "uninstall"].includes(action)) throw new Error("Invalid test lifecycle action");
+          const marker = PathUtils.join(profile, "direct-action-ready");
+          for (let attempt = 0; attempt < 600; attempt++) {
+            if (await IOUtils.exists(marker)) {
+              if (action === "quit") Services.startup.quit(Ci.nsIAppStartup.eAttemptQuit);
+              else await (await AddonManager.getAddonByID(context.extension.id)).uninstall();
+              return;
+            }
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+          throw new Error("Lifecycle launcher did not acknowledge process snapshot");
+        },
+        idle: async () => {
+          await guard();
+          for (let attempt = 0; attempt < 300; attempt++) {
+            const transport = context.extension.__testDirect;
+            const opened = transport?.opened || [];
+            if (!transport?.sessions.size && !(await Promise.all(opened.map(value => IOUtils.exists(value.directory)))).some(Boolean)) return opened;
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+          throw new Error("Completed/cancelled scan left a runtime directory");
+        },
         report: async data => {
           await guard();
-          await IOUtils.writeJSON(PathUtils.join(profile, "direct-result-" + context.extension.manifest.version + ".json"), JSON.parse(data));
+          const value = JSON.parse(data);
+          await IOUtils.writeJSON(PathUtils.join(profile, (value.running ? "direct-progress-" : "direct-result-") + context.extension.manifest.version + ".json"), value);
         }
       } };
     }

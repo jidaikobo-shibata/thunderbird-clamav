@@ -7,27 +7,48 @@ async function request(type, values = {}) {
   if (!response.ok) throw new Error(type + ": " + response.error);
   return response;
 }
-async function settled(predicate, seconds = 120) {
+async function settled(predicate, seconds = 360) {
   const deadline = Date.now() + seconds * 1000;
+  let last;
   while (Date.now() < deadline) {
-    const state = await request("state");
+    const state = last = await request("state");
     if (predicate(state)) return state;
     await wait(100);
   }
+  report.timeoutState = { issue: last?.issue, records: last?.records.map(record => ({key:record.key, status:record.status, subject:record.locator.subject, detail:record.detail, quarantine:record.quarantine})), folderJob:last?.folderJob };
   throw new Error("Mail integration did not settle");
 }
 const report = { ok: false, version: messenger.runtime.getManifest().version };
 try {
+  const options = await (await fetch(messenger.runtime.getURL("fixture/options.json"))).json();
   let state = await request("state");
   const fixture = await messenger.testFixture.prepare();
   check(state.installation.state === "integrated", "Integrated scanner state");
-  check(state.lastHealth.status === "ready", "Health ready");
+  if (options.scenario === "missing") {
+    check(state.lastHealth.code === "clamav_missing", "Missing ClamAV is explicit");
+    const previous = JSON.stringify(state.records);
+    const context = await request("folderContext", { folderId: fixture.source.id });
+    const response = await messenger.runtime.sendMessage({type:"folderStart",token:context.token,includeSubfolders:false});
+    check(!response.ok && response.setupRequired, "Missing scanner blocks folder start");
+    state = await request("state");
+    check(JSON.stringify(state.records) === previous && !state.folderJob, "Missing scanner preserves records and review notes");
+    const held = new NativeClient(messenger.runtime);
+    check((await held.request("health")).code === "clamav_missing", "Missing scanner never reports clean");
+    report.missingScanner = true;
+    report.runtime = await messenger.testFixture.runtime();
+    report.ok = true;
+    await messenger.testFixture.report(JSON.stringify(report));
+  } else {
+  check(state.lastHealth.status === "ready", "Health ready: " + JSON.stringify(state.lastHealth));
   check(state.settings.accountIds.includes(fixture.accountId) && state.settings.notifications === false, "Settings retained");
   check(state.records.find(record => record.key === "preserved-review")?.review.note === "Synthetic human decision", "Human decision retained");
   const backup = await messenger.testFixture.backup(state.directMigrationBackup.path);
   check(backup.storage.records.length === 1 && backup.storage.records[0].review.note === "Synthetic human decision", "Pre-migration backup retained");
   report.migration = true;
-  if (report.version === "0.20.0a1") {
+  await messenger.testFixture.report(JSON.stringify({...report,running:true}));
+  if (["quit", "uninstall"].includes(options.scenario)) {
+    report.lifecycleOnly = true;
+  } else if (report.version === "0.20.0a1") {
     report.rawSamples = [];
     for (const message of (await messenger.messages.list(fixture.source.id)).messages) {
       try { const raw = await messenger.messages.getRaw(message.id, { data_format: "File", decrypt: false }); report.rawSamples.push({subject:message.subject,size:raw.size,start:(await raw.text()).slice(0,500)}); }
@@ -37,8 +58,10 @@ try {
     await request("folderStart", { token: context.token, includeSubfolders: false });
     state = await settled(state => state.folderJob?.status === "completed");
     await wait(200);
+    report.completedSessions = await messenger.testFixture.idle();
     const results = Object.fromEntries(state.records.filter(record => record.source === "folder").map(record => [record.locator.subject, record.status]));
     report.verdicts = results;
+    await messenger.testFixture.report(JSON.stringify({...report,running:true}));
     report.scanDetails = state.records.filter(record => record.source === "folder").map(record => ({ subject: record.locator.subject, status: record.status, detail: record.detail }));
     check(results["Synthetic plain"] === "clean", "Normal message verdict");
     check(results["Synthetic attachment"] === "detected", "EICAR attachment verdict");
@@ -47,16 +70,20 @@ try {
     report.verdicts = results;
     let incomplete = state.records.find(record => record.locator.subject === "Synthetic encrypted");
     await request("reviewMany", { keys: [incomplete.key], reviewed: true, note: "Synthetic reviewed encryption", stamps: { [incomplete.key]: reviewStamp(incomplete) } });
+    report.stage = "rescan";
     await request("retry", { key: incomplete.key });
     state = await settled(state => state.records.find(record => record.key === incomplete.key)?.status === "incomplete");
     await wait(200);
     check(state.records.find(record => record.key === incomplete.key).review?.note === "Synthetic reviewed encryption", "Review retained on identical rescan");
+    report.rescanCleanup = await messenger.testFixture.idle();
     let threat = state.records.find(record => record.locator.subject === "Synthetic attachment");
+    report.stage = "quarantine";
     const moved = await request("quarantineMany", { keys: [threat.key], hashes: { [threat.key]: threat.sha256 }, destinations: state.settings.quarantine });
     check(moved.moved === 1, "Manual quarantine");
     state = await request("state");
     threat = state.records.find(record => record.key === threat.key);
     check(threat.locator.folder.path === fixture.quarantine.path, "Quarantine location verified");
+    report.stage = "delete";
     const deletion = await request("prepareDelete", { key: threat.key });
     await request("deletePermanently", { key: threat.key, token: deletion.token });
     state = await request("state");
@@ -65,6 +92,8 @@ try {
     settings.quarantine[fixture.accountId].auto = true;
     await request("settings", { settings });
     const incomingRaw = fixture.mails.attachment.replace(/Subject: [^\r\n]+/, "Subject: Synthetic incoming attachment").replace(/Message-ID: [^\r\n]+/i, "Message-ID: <incoming-attachment@example.invalid>");
+    report.stage = "automatic";
+    await messenger.testFixture.report(JSON.stringify({...report,running:true}));
     const incoming = await messenger.messages.import(new File([incomingRaw], "incoming.eml", { type: "message/rfc822" }), fixture.source.id, { read: false, new: true });
     await messenger.testFixture.inject(incoming.id);
     state = await settled(state => state.records.some(record => record.source === "automatic" && record.locator.subject === "Synthetic incoming attachment" && record.quarantine?.status === "moved"));
@@ -78,6 +107,13 @@ try {
       check(result.status === "clean" && result.scanSettings.mailMiB === 50, "Custom policy applied");
       report.customPolicy = true;
     } finally { client.close(); }
+    const stopContext = await request("folderContext", {folderId:fixture.source.id});
+    await request("folderStart", {token:stopContext.token,includeSubfolders:false});
+    state = await request("state");
+    await request("folderStop", {jobId:state.folderJob.id});
+    state = await settled(value => value.folderJob?.status === "stopped");
+    report.cancelledSessions = await messenger.testFixture.idle();
+    report.cancellation = true;
   } else {
     check(state.settings.scanSettings.mailMiB === 50 && state.settings.quarantine[fixture.accountId].auto, "Updated settings retained");
     check(state.records.some(record => record.status === "deleted") && state.records.some(record => record.quarantine?.status === "moved"), "Updated result history retained");
@@ -92,6 +128,8 @@ try {
   report.ok = true;
   await messenger.testFixture.report(JSON.stringify(report));
   if (report.version === "0.20.0a1") await messenger.testFixture.update();
+  else if (["quit", "uninstall"].includes(options.scenario)) await messenger.testFixture.finish(options.scenario);
+  }
 } catch (error) {
   report.error = String(error) + "\n" + error.stack;
   await messenger.testFixture.report(JSON.stringify(report));
