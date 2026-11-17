@@ -1,3 +1,4 @@
+import { scanHistoryDescription } from "./scan-history.mjs";
 import { configureDirectView } from "./direct-view.mjs";
 import { directRuntime, permission } from "./direct-transport.mjs";
 import { syncScanPolicy, readScanPolicy, policyDescription, advisoryDescription } from "./scan-policy.mjs";
@@ -443,7 +444,7 @@ function renderRecords() {
     setText(entry.parts.subject, record.locator.subject || t("mail022", "件名なし"));
     const account = latest.accounts.find(account => account.id === record.locator.accountId)?.name || record.locator.accountId || "";
     setText(entry.parts.location, [account, folderLabel(record.locator.folder, folderChoices, record.locator.accountId)].filter(Boolean).join(t("listSeparator", " ／ ")));
-    setText(entry.parts.detail, [localizeDetail(record), advisoryDescription(record), quarantineSummary(record, folderChoices), isReviewed(record) && record.review.note ? t("reviewMemo", "判断メモ：$1", [record.review.note]) : ""].filter(Boolean).join(" "));
+    setText(entry.parts.detail, [scanHistoryDescription(record) || localizeDetail(record), advisoryDescription(record), quarantineSummary(record, folderChoices), isReviewed(record) && record.review.note ? t("reviewMemo", "判断メモ：$1", [record.review.note]) : ""].filter(Boolean).join(" "));
     setText(entry.parts.signatures, (record.signatures || []).join(" / "));
     setText(entry.parts.engine, record.engine || "");
     setText(entry.parts.scanPolicy, record.scanSettings ? policyDescription(record.scanSettings) : "");

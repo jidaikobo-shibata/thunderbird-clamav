@@ -2965,5 +2965,24 @@
   },
   "directHelpRetained": {
     "message": "Previously created migration backups and older helpers are not removed by this operation."
+  },
+  "rescanPrevious": {
+    "message": "Previous result: $state$ ($detail$).",
+    "placeholders": {
+      "state": {
+        "content": "$1"
+      },
+      "detail": {
+        "content": "$2"
+      }
+    }
+  },
+  "rescanFailure": {
+    "message": "Latest rescan: $detail$",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
   }
 }

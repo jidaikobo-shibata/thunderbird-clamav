@@ -2965,5 +2965,24 @@
   },
   "directHelpRetained": {
     "message": "移行時に作成済みのバックアップや、旧版の補助プログラムは、この操作では削除しません。"
+  },
+  "rescanPrevious": {
+    "message": "前回の結果：$state$（$detail$）。",
+    "placeholders": {
+      "state": {
+        "content": "$1"
+      },
+      "detail": {
+        "content": "$2"
+      }
+    }
+  },
+  "rescanFailure": {
+    "message": "今回の再検査：$detail$",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
   }
 }

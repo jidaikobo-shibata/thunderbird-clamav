@@ -1680,3 +1680,88 @@ test("migration backup failure leaves existing stored history untouched and stop
   assert.deepEqual(h.stored(), saved);
   assert.equal(h.directRequests.length, 0);
 });
+
+async function knownThreat(options = {}) {
+  const target = mail(1);
+  const record = { key: "retained-threat", status: "detected", signatures: ["Synthetic.Threat"],
+    detail: "previous detection", engine: "previous engine", updatedAt: "2026-01-01T00:00:00Z",
+    sha256: await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello")), locator: locator(target) };
+  return harness({ direct: true, saved: { records: [record] }, mails: [target], ...options });
+}
+
+test("failed rescan retains a detected verdict, quarantine eligibility and delayed retry", async () => {
+  const { canQuarantine } = await import("../thunderbird/quarantine.mjs");
+  const h = await knownThreat({ nativeFailure: true });
+  await h.send("retry", { key: "retained-threat" });
+  let state = await settle(h, value => value.records[0].nextRetry);
+  const record = state.records[0];
+  assert.equal(record.status, "detected");
+  assert.deepEqual(record.signatures, ["Synthetic.Threat"]);
+  assert.equal(record.lastAttempt.status, "error");
+  assert.equal(record.detail, "previous detection");
+  assert.equal(canQuarantine(record), true);
+  assert.equal(h.notifications.length, 0);
+  record.nextRetry = 1;
+  h.timers[0]();
+  state = await settle(h, value => value.records[0].attempts === 2 && value.records[0].nextRetry === null && value.records[0].status === "detected");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(state.records[0].lastAttempt.status, "error");
+  assert.equal(h.notifications.length, 1);
+});
+
+test("a changed message keeps the previous detection separately and cannot be quarantined as detected", async () => {
+  const { canQuarantine } = await import("../thunderbird/quarantine.mjs");
+  const h = await knownThreat({ scanResult: { status: "error", detail: "synthetic engine error" } });
+  // Bind the current runtime ID first; then simulate changed bytes before retry.
+  await h.send("open", { key: "retained-threat" });
+  h.api.messages.getRaw = async () => new File(["changed contents"], "changed.eml");
+  await h.send("retry", { key: "retained-threat" });
+  const state = await settle(h, value => value.records[0].status === "error");
+  assert.equal(state.records[0].lastResult.status, "detected");
+  assert.deepEqual(state.records[0].lastResult.signatures, ["Synthetic.Threat"]);
+  assert.notEqual(state.records[0].sha256, state.records[0].lastResult.sha256);
+  assert.equal(canQuarantine(state.records[0]), false);
+});
+
+test("a conclusive clean rescan replaces the previous detection and failure", async () => {
+  const h = await knownThreat();
+  await h.send("retry", { key: "retained-threat" });
+  const state = await settle(h, value => value.records[0].status === "clean");
+  assert.deepEqual(state.records[0].signatures, []);
+  assert.equal(state.records[0].lastResult, undefined);
+  assert.equal(state.records[0].lastAttempt, undefined);
+});
+
+test("bulk incomplete rescans retain detections and the new reason", async () => {
+  const h = await knownThreat({ scanResult: { status: "incomplete", detail: "encrypted part" } });
+  await h.send("retryMany", { keys: ["retained-threat"] });
+  const state = await settle(h, value => value.batch?.active === false);
+  assert.equal(state.records[0].status, "detected");
+  assert.equal(state.records[0].lastAttempt.detail, "encrypted part");
+  assert.deepEqual(state.records[0].signatures, ["Synthetic.Threat"]);
+});
+
+test("retained detection survives restart and an interrupted bulk rescan", async () => {
+  const h = await knownThreat({ nativeFailure: true });
+  await h.send("retry", { key: "retained-threat" });
+  await settle(h, value => value.records[0].nextRetry);
+  const saved = structuredClone(h.stored());
+  saved.records[0].status = "scanning";
+  saved.records[0].bulkRetryId = "interrupted";
+  const restarted = await harness({ direct: true, saved, mails: [mail(1)], nativeFailure: true });
+  const state = await restarted.send("state");
+  assert.equal(state.records[0].status, "detected");
+  assert.deepEqual(state.records[0].signatures, ["Synthetic.Threat"]);
+  assert.equal(state.records[0].lastAttempt.status, "incomplete");
+  assert.equal(state.records[0].nextRetry, null);
+});
+
+test("retaining a detection never permits permanent deletion of changed bytes", async () => {
+  const h = await knownThreat({ nativeFailure: true, deleteAllowed: true });
+  await h.send("retry", { key: "retained-threat" });
+  await settle(h, value => value.records[0].nextRetry);
+  assert.equal((await h.send("prepareDelete", { key: "retained-threat" })).ok, true);
+  h.api.messages.getRaw = async () => new File(["changed after failure"], "changed.eml");
+  assert.equal((await h.send("prepareDelete", { key: "retained-threat" })).ok, false);
+  assert.equal(h.deleted.length, 0);
+});

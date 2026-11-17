@@ -14,7 +14,7 @@ const catalogs = Object.fromEntries(await Promise.all(["ja", "en"].map(async lan
 const profile = await mkdtemp(path.join(tmpdir(), "clam-mail-ui-"));
 const server = createServer(async (request, response) => {
   const name = new URL(request.url, "http://localhost").pathname.slice(1);
-  if (!["direct-transport.mjs", "direct-view.mjs", "dashboard.html", "dashboard.css", "dashboard.js", "review.mjs", "scan-policy.mjs", "quarantine.mjs", "quarantine-ui.mjs", "core.mjs", "results.mjs", "folder-scan.mjs", "folder-labels.mjs", "installation.mjs", "i18n.mjs", "installer.pyz", "icon.svg"].includes(name)) {
+  if (!["scan-history.mjs", "direct-transport.mjs", "direct-view.mjs", "dashboard.html", "dashboard.css", "dashboard.js", "review.mjs", "scan-policy.mjs", "quarantine.mjs", "quarantine-ui.mjs", "core.mjs", "results.mjs", "folder-scan.mjs", "folder-labels.mjs", "installation.mjs", "i18n.mjs", "installer.pyz", "icon.svg"].includes(name)) {
     response.writeHead(404).end(); return;
   }
   const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript", ".svg": "image/svg+xml", ".pyz": "application/octet-stream" };
@@ -275,6 +275,18 @@ try {
         const picture = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
         await writeFile(path.join(root, 'dist/ui-direct-' + language + '-' + label + '.png'), Buffer.from(picture.data, "base64"));
       }
+      await evaluate(`
+        const record = testState.records.find(record => record.status === 'detected');
+        record.lastResult = { status: 'detected', detail: 'previous result', signatures: ['Synthetic.Retained'] };
+        record.lastAttempt = { status: 'error', detail: 'synthetic retry failure' };
+        document.getElementById('tab-results').click();
+        document.getElementById('search').value = 'synthetic retry failure';
+        document.getElementById('search').dispatchEvent(new Event('input',{bubbles:true}));
+      `);
+      await until("document.getElementById('results').innerText.includes('synthetic retry failure')");
+      assert.match(await evaluate("document.getElementById('results').innerText"), /Synthetic.Retained/);
+      assert.match(await evaluate("document.getElementById('results').innerText"), language === 'ja' ? /今回の再検査/ : /Latest rescan/);
+      await evaluate("document.getElementById('search').value=''; document.getElementById('search').dispatchEvent(new Event('input',{bubbles:true}))");
       await evaluate("document.getElementById('tab-results').click(); document.querySelector('#results tr button.danger').click()");
       await until("document.getElementById('delete-dialog').open");
       assert.equal(await evaluate("document.activeElement.id"), "delete-cancel");

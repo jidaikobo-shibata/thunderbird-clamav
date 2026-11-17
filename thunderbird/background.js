@@ -1,3 +1,4 @@
+import { rememberResult, finishScanAttempt, scanFailed } from "./scan-history.mjs";
 import { directRuntime } from "./direct-transport.mjs";
 import { scanPolicy, defaultScanPolicy, advisoryNotifies } from "./scan-policy.mjs";
 import { canReview, canUnreview, reviewReason, reviewStamp, reconcileReview } from "./review.mjs";
@@ -290,7 +291,7 @@ function finishRetry(record) {
   retryContext.entries.delete(record.key);
   delete record.bulkRetryId; delete record.bulkRetryBefore;
   batchProgress.completed++;
-  if (record.status === "error") batchProgress.failed++;
+  if (scanFailed(record)) batchProgress.failed++;
   if (!retryContext.entries.size) { batchProgress.active = false; retryContext = null; }
 }
 
@@ -394,13 +395,13 @@ async function updateBadge() {
 async function notify(record) {
   if (!settings.notifications || !needsAttention(record)) return;
   // A transient failure is actionable only after its scheduled retry fails.
-  if (record.status === "error" && record.nextRetry) return;
+  if (scanFailed(record) && record.nextRetry) return;
   if (record.status === "advisory" && !advisoryNotifies(record)) return;
   // Subjects/senders are deliberately omitted from lock-screen notifications.
   try {
     await api.notifications.create(record.key, {
       type: "basic", iconUrl: api.runtime.getURL("icon.svg"),
-      title: t("mail211", "ClamAV メール検査：") + LABELS[record.status],
+      title: t("mail211", "ClamAV メール検査：") + LABELS[record.lastAttempt?.status || record.status],
       message: t("mail030", "Thunderbirdの検査結果画面で対象メールを確認してください。")
     });
   } catch { issue = t("mail031", "デスクトップ通知を表示できません。結果画面を確認してください。"); }
@@ -482,6 +483,7 @@ function enqueue(first, source) {
       // persisted overflow work item provides backpressure without dropping mail.
       const keep = Boolean(existing) || reserveHistory();
       const record = existing || { key: crypto.randomUUID(), createdAt: new Date().toISOString() };
+      rememberResult(record);
       Object.assign(record, {
         messageId: message.id, session, locator: locator(message), source,
         quarantineIntent: source === "automatic" && settings.quarantine?.[accountOf(message)]?.auto ? {
@@ -543,6 +545,7 @@ async function drain() {
       const policy = scanPolicy(settings.scanSettings);
       record.scanSettings = policy;
       record.advisories = [];
+      delete record.lastAttempt;
       const previousReview = record.review || record.reviewBeforeScan;
       if (previousReview) record.reviewBeforeScan = previousReview;
       delete record.review;
@@ -593,20 +596,21 @@ async function drain() {
         delete record.detailMessages;
         record.detail = error.message || t("mail045", "検査に失敗しました。");
       }
+      finishScanAttempt(record, currentDigest);
       let reviewFingerprint = record.sha256 ? "sha256:" + record.sha256 : null;
       if (previousReview?.fingerprint && !record.sha256 && record.status === "incomplete") {
         try { reviewFingerprint = (await verified(record)).fingerprint; } catch { /* Unverifiable contents require review again. */ }
       }
       reconcileReview(record, previousReview, reviewFingerprint);
       const quarantineConfig = settings.quarantine?.[record.locator.accountId];
-      if (record.status === "detected" && record.source === "automatic" && quarantineConfig?.auto && record.quarantineIntent &&
+      if (record.status === "detected" && !record.lastAttempt && record.source === "automatic" && quarantineConfig?.auto && record.quarantineIntent &&
           record.quarantineIntent.folderId === quarantineConfig.folderId && record.quarantineIntent.path === quarantineConfig.path &&
           record.quarantineIntent.activation === quarantineConfig.activation) {
         await quarantineRecord(record, settings.quarantine[record.locator.accountId], true);
       }
       record.updatedAt = new Date().toISOString();
       // Two automatic attempts total; no endless retry loop on bad mail/host.
-      if (!fromFolder && record !== overflowPending && !record.bulkRetryId && record.status === "error" && record.attempts < 2) {
+      if (!fromFolder && record !== overflowPending && !record.bulkRetryId && scanFailed(record) && record.attempts < 2) {
         record.nextRetry = Date.now() + 60000;
       }
       finishRetry(record);
@@ -646,6 +650,7 @@ async function drain() {
     if (active) {
       active.status = "error";
       active.detail = t("mail046", "検査状態の保存に失敗しました。保存領域を確認して再検査してください。");
+      finishScanAttempt(active, active.sha256);
     }
     if (folderScan.active) {
       await folderScan.finish("error", t("mail047", "検査状態の保存などに失敗したため停止しました。結果を確認して改めて開始してください。")).catch(() => {});
@@ -715,6 +720,7 @@ const ready = (async () => {
         record.detail = t("bulkRetryInterrupted", "一括再検査が中断され、このメールの結果は未確認です。必要に応じて再検査してください。");
         delete record.detailMessages;
         record.nextRetry = null;
+        finishScanAttempt(record, record.sha256);
       }
       delete record.bulkRetryId; delete record.bulkRetryBefore;
     }
@@ -948,6 +954,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         if (!record || deleting.has(record.key) || ["scanning", "queued", "deleted"].includes(record.status)) {
           throw new Error(t("mail074", "この結果は再検査できません。"));
         }
+        rememberResult(record);
         record.status = "queued";
         delete record.unscannedReason;
         record.source = "manual";
@@ -966,6 +973,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         retryContext = { id: progress.id, entries: new Map(targets.map(record => [record.key, record])) };
         for (const record of targets) {
           const before = { ...record };
+          rememberResult(record);
           Object.assign(record, { bulkRetryId: progress.id, bulkRetryBefore: before, unscannedReason: null,
             status: "queued", source: "manual", attempts: 0, nextRetry: null, folderJobId: null });
         }
@@ -1191,7 +1199,7 @@ setInterval(() => {
     if (pendingMaintenance && !pendingMaintenance.applying && Date.now() > pendingMaintenance.expires) releaseMaintenance();
     if (maintenanceActive() || helperRemoved) return;
     for (const record of records) {
-      if (record.status === "error" && record.nextRetry && record.nextRetry <= Date.now() &&
+      if (scanFailed(record) && record.nextRetry && record.nextRetry <= Date.now() &&
           (record.source === "manual" || (settings.enabled && settings.accountIds.includes(record.locator.accountId)))) {
         record.status = "queued";
         record.nextRetry = null;

@@ -1,3 +1,4 @@
+import { scanHistoryDescription, scanFailed } from "./scan-history.mjs";
 import { advisoryDescription } from "./scan-policy.mjs";
 import { isReviewed } from "./review.mjs";
 import { folderLabel } from "./folder-labels.mjs";
@@ -17,10 +18,10 @@ export function filterRecords(records, { status = "all", account = "all", search
     if (status === "attention" && !needsAttention(record)) return false;
     if (status === "automatic-excluded" && !(record.status === "incomplete" && record.unscannedReason === "automaticExcluded")) return false;
     if (status === "pending" && !["queued", "scanning"].includes(record.status)) return false;
-    if (!["all", "attention", "pending", "automatic-excluded", "reviewed"].includes(status) && record.status !== status) return false;
+    if (!["all", "attention", "pending", "automatic-excluded", "reviewed"].includes(status) && record.status !== status && !(status === "error" && scanFailed(record))) return false;
     if (account !== "all" && record.locator.accountId !== account) return false;
     if (query && ![record.locator.author, record.locator.subject, record.locator.folder?.path, folderLabel(record.locator.folder, folders, record.locator.accountId),
-      localizeDetail(record), advisoryDescription(record), record.review?.note || "", ...(record.signatures || [])].join("\n").toLocaleLowerCase().includes(query)) return false;
+      localizeDetail(record), scanHistoryDescription(record), advisoryDescription(record), record.review?.note || "", ...(record.signatures || [])].join("\n").toLocaleLowerCase().includes(query)) return false;
     return true;
   }).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
 }
