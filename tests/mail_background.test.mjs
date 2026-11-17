@@ -1147,7 +1147,7 @@ test("automatic quarantine moves detected new mail but not manual scans, and ign
   assert.equal(state.records[0].status, "detected");
   assert.equal(state.records[0].locator.folder.id, destination.id);
   assert.equal(state.records[0].nextRetry, null);
-  h.events.newMail.listeners[0](destination, { messages: [{ ...original, id: 33 }] });
+  h.events.newMail.listeners[0](destination, { messages: [original] });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal((await h.send("state")).records.length, 1);
   await h.send("retry", { key: state.records[0].key });
@@ -1542,4 +1542,90 @@ test("display-only advisories do not suppress later folder failure notifications
   assert.equal(state.folderJob.counts.error, 1);
   assert.equal(h.notifications.length, 2); // one failure and the ordinary completion summary
   assert.equal(h.notifications.some(([key, value]) => !key.startsWith("folder-") && value.title.includes("検査失敗")), true);
+});
+
+test("full protected history still scans consecutive incoming mail and retains human decisions", async () => {
+  const records = Array.from({ length: 1000 }, (_, i) => ({ key: `protected-${i}`, status: "incomplete", locator: { accountId: "one" }, review: { note: `human memo ${i}` } }));
+  const mails = Array.from({ length: 23 }, (_, i) => mail(i + 1));
+  const h = await harness({ saved: { records, settings: { enabled: true, accountIds: ["one"], notifications: true } }, mails,
+    scanResult: id => ({ status: id === 23 ? "clean" : "detected", detail: "synthetic", signatures: ["Synthetic"] }) });
+  h.events.newMail.listeners[0](mails[0].folder, { messages: mails });
+  let state;
+  for (let i = 0; i < 500; i++) {
+    state = await h.send("state");
+    if (state.overflowReport?.total === 23 && !state.overflowPending) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(state.overflowReport.total, 23);
+  assert.deepEqual(state.records.map(({ key, status, review }) => ({ key, status, review })), records.map(({ key, status, review }) => ({ key, status, review })));
+  assert.deepEqual(state.overflowReport.counts, { detected: 22, clean: 1 });
+  assert.equal(state.overflowReport.recent.length, 20);
+  assert.equal(h.notifications.length, 22);
+  assert.equal(h.rawReads.length, 23);
+  assert.equal(h.stored().overflowReport.total, 23);
+  const record = state.overflowReport.recent[0];
+  assert.equal((await h.send("openOverflow", { key: record.key })).ok, true);
+  assert.equal(h.opened[0].messageId, 22);
+  mails[21].raw = "changed content";
+  assert.equal((await h.send("openOverflow", { key: record.key })).ok, false);
+  assert.equal(h.opened.length, 1);
+  assert.equal((await h.send("clearOverflow")).ok, true);
+  assert.equal((await h.send("state")).overflowReport, null);
+  assert.equal((await h.send("state")).records.length, 1000);
+  assert.equal(h.deleted.length, 0);
+});
+
+test("unknown mail delivered directly to the current quarantine folder is scanned", async () => {
+  const message = mail(1);
+  message.folder = { id: "isolation", accountId: "one", path: "/Isolation" };
+  const h = await harness({ mails: [message], saved: { settings: { enabled: true, accountIds: ["one"], notifications: true,
+    quarantine: { one: { folderId: "isolation", path: "/Isolation", auto: false } } } } });
+  h.events.newMail.listeners[0](message.folder, { messages: [message] });
+  await settle(h, state => state.records[0]?.status === "clean");
+  assert.deepEqual(h.rawReads, [1]);
+});
+
+test("persisted overflow inspection resumes after restart without numeric ID reuse", async () => {
+  const message = mail(7);
+  const records = Array.from({ length: 1000 }, (_, i) => ({ key: `old-${i}`, status: "detected", locator: { accountId: "one" } }));
+  const h = await harness({ mails: [message], saved: { records, settings: { enabled: true, accountIds: ["one"], notifications: true },
+    overflowPending: { key: "interrupted", status: "scanning", source: "automatic", messageId: 999, session: "old", attempts: 1, locator: locator(message) } } });
+  await h.timers[0]();
+  const state = await settle(h, state => state.overflowReport?.total === 1);
+  assert.equal(state.overflowReport.counts.clean, 1);
+  assert.deepEqual(h.rawReads, [7]);
+  assert.equal(state.records.length, 1000);
+});
+
+test("overflow failures are reported immediately and do not block the following incoming mail", async () => {
+  const records = Array.from({ length: 1000 }, (_, i) => ({ key: `old-${i}`, status: "detected", locator: { accountId: "one" } }));
+  const h = await harness({ mails: [mail(1), mail(2)], saved: { records, settings: { enabled: true, accountIds: ["one"], notifications: true } },
+    scanResult: id => ({ status: id === 1 ? "error" : "clean", detail: "synthetic" }) });
+  h.events.newMail.listeners[0]({}, { messages: [mail(1), mail(2)] });
+  const state = await settle(h, state => state.overflowReport?.total === 2);
+  assert.deepEqual(state.overflowReport.counts, { error: 1, clean: 1 });
+  assert.equal(h.notifications.length, 1);
+  assert.equal(state.overflowReport.recent[0].nextRetry, null);
+});
+
+test("full protected history does not disable automatic quarantine", async () => {
+  const original = mail(1); original.folder.id = "inbox";
+  const destination = { id: "isolation", accountId: "one", path: "/Isolation", name: "Isolation" };
+  const records = Array.from({ length: 1000 }, (_, i) => ({ key: `old-${i}`, status: "detected", locator: { accountId: "one" } }));
+  const h = await harness({ mails: [original], folderRefs: [original.folder, destination], scanResult: { status: "detected", signatures: ["Synthetic"] },
+    saved: { records, settings: { enabled: true, accountIds: ["one"], notifications: true,
+      quarantine: { one: { folderId: destination.id, path: destination.path, auto: true } } } } });
+  h.api.permissions.contains = async () => true;
+  h.api.folders.getFolderCapabilities = async () => ({ canAddMessages: true, canDeleteMessages: true });
+  let moves = 0;
+  h.api.messages.move = async () => { moves++; original.folder = destination; };
+  h.events.newMail.listeners[0](original.folder, { messages: [original] });
+  const state = await settle(h, state => state.overflowReport?.total === 1);
+  assert.equal(state.overflowReport.recent[0].quarantine.status, "moved");
+  assert.equal(moves, 1);
+  h.events.newMail.listeners[0](destination, { messages: [original] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await h.send("state")).overflowReport.total, 1);
+  assert.equal(moves, 1);
+  assert.equal(h.notifications.length, 1);
 });

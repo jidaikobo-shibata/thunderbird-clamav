@@ -137,6 +137,9 @@ _MESSAGE_KEYS.update({"検査設定が不正です。": "scanSettingsInvalid", "
 _EN_MESSAGES["検査が制限時間内に完了しませんでした。"] = "The scan did not finish within the time limit."
 _MESSAGE_KEYS["検査が制限時間内に完了しませんでした。"] = "scanTimeout"
 
+_EN_MESSAGES.update({"MIME解析の上限に達したため、検査範囲を確認できない部分があります。": "MIME analysis reached its resource limit; some scan coverage could not be verified.", " MIME解析の上限に達した部分があります。脅威の検出結果は保持しています。": " MIME analysis reached its resource limit. The malware detection is preserved."})
+_MESSAGE_KEYS.update({"MIME解析の上限に達したため、検査範囲を確認できない部分があります。": "mimeLimited", " MIME解析の上限に達した部分があります。脅威の検出結果は保持しています。": "mimeLimitedThreat"})
+
 def tr(message):
     text = message if _LANGUAGE == "ja" else _EN_MESSAGES.get(message, message)
     key = _MESSAGE_KEYS.get(message)
@@ -270,26 +273,71 @@ def classify(returncode, output):
             "detail": tr('脅威は検出されませんでした。安全を保証するものではありません。')}
 
 
-def encrypted_mail(data):
-    # Only parse MIME structure; never render HTML or open URLs/attachments.
-    from email import policy
-    from email.parser import BytesParser
+class MimeLimitError(Exception):
+    pass
 
-    message = BytesParser(policy=policy.default).parsebytes(data)
-    for part in message.walk():
-        if part.get_content_type() in {
-            "multipart/encrypted", "application/pgp-encrypted", "message/external-body"
-        }:
-            return True
-        if part.get_content_type() in {
-            "application/pkcs7-mime", "application/x-pkcs7-mime"
-        } and part.get_param("smime-type") != "signed-data":
-            return True
-        if part.get_content_maintype() == "text":
-            payload = part.get_payload(decode=True) or b""
-            if b"-----BEGIN PGP MESSAGE-----" in payload:
-                return True
-    return False
+
+def encrypted_mail(data):
+    # Parsing is also isolated by mime_inspection; public factory limits bound
+    # allocations before constructing a full Message tree.
+    from email import policy
+    from email.parser import BytesFeedParser
+    from email.message import EmailMessage
+    parts = 0
+    def factory(*args, **kwargs):
+        nonlocal parts
+        parts += 1
+        if parts > 2000:
+            raise MimeLimitError("too many MIME parts")
+        return EmailMessage(*args, **kwargs)
+    parser = BytesFeedParser(_factory=factory, policy=policy.default)
+    for offset in range(0, len(data), 64 * 1024):
+        parser.feed(data[offset:offset + 64 * 1024])
+    stack = [(parser.close(), 0)]
+    encrypted = False
+    while stack:
+        part, depth = stack.pop()
+        if depth > 32 or sum(len(name) + len(value) for name, value in part.raw_items()) > 256 * 1024:
+            raise MimeLimitError("MIME depth or headers exceeded")
+        content_type = part.get_content_type()
+        if content_type in {"multipart/encrypted", "application/pgp-encrypted", "message/external-body"}:
+            encrypted = True
+        if content_type in {"application/pkcs7-mime", "application/x-pkcs7-mime"} and part.get_param("smime-type") != "signed-data":
+            encrypted = True
+        if part.is_multipart():
+            stack.extend((child, depth + 1) for child in part.get_payload())
+        elif part.get_content_maintype() == "text" and b"-----BEGIN PGP MESSAGE-----" in (part.get_payload(decode=True) or b""):
+            encrypted = True
+    return encrypted
+
+
+def mime_worker():
+    # Linux is the supported initial platform. Fail closed if limits cannot be applied.
+    try:
+        import resource
+        resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
+        resource.setrlimit(resource.RLIMIT_CPU, (3, 3))
+        child_lifetime(os.getppid())
+        data = sys.stdin.buffer.read(MAX_TRANSFER + 1)
+        if len(data) > MAX_TRANSFER:
+            return 1
+        encrypted = encrypted_mail(data)
+        sys.stdout.buffer.write(b"encrypted" if encrypted else b"clear")
+        return 0
+    except (Exception, MemoryError):
+        return 1
+
+
+def mime_inspection(data):
+    try:
+        result = subprocess.run(["/usr/bin/python3", "-I", str(Path(__file__).absolute()), "--mime-check"],
+                                input=data, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                timeout=5, check=False)
+        if result.returncode == 0 and result.stdout in (b"encrypted", b"clear"):
+            return result.stdout.decode("ascii")
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return "limited"
 
 
 class DaemonUnavailable(Exception):
@@ -541,11 +589,14 @@ def scan(data, scanner=None, options=None):
                  "detail": tr('clamdとの通信に失敗しました。検査は完了していません。')}
     if fallback:
         value["detail"] += tr(' clamdを利用できないため、通常のclamscanで検査しました。')
-    try:
-        encrypted = encrypted_mail(data)
-    except (ValueError, RecursionError):
-        encrypted = True
-    if encrypted:
+    inspection = mime_inspection(data) if value["status"] not in ("error", "incomplete") else "clear"
+    if inspection == "limited":
+        if value["status"] in ("clean", "advisory"):
+            value["status"] = "incomplete"
+            value["detail"] = tr("MIME解析の上限に達したため、検査範囲を確認できない部分があります。")
+        elif value["status"] == "detected":
+            value["detail"] += tr(" MIME解析の上限に達した部分があります。脅威の検出結果は保持しています。")
+    elif inspection == "encrypted":
         if value["status"] in ("clean", "advisory"):
             value["status"] = "incomplete"
             value["detail"] = tr('暗号化または外部参照の内容は検査していません。')
@@ -698,4 +749,4 @@ def main(input_stream=None, output_stream=None):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(mime_worker() if sys.argv[1:] == ["--mime-check"] else main())

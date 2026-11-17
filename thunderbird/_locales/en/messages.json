@@ -2643,7 +2643,7 @@
     "message": "Automatic quarantine applies only to threats detected by automatic scans of new messages received after enabling it. Incomplete scans, failed scans and folder scans do not trigger a move. Choose a normal folder in the same account; special folders such as Inbox, Junk and Trash cannot be destinations."
   },
   "qHelpOperations": {
-    "message": "Select detected threats in Results and choose Quarantine to review and move them. Currently configured quarantine folders are excluded from new-mail scanning. In former destinations, only identified quarantined messages are excluded; unrelated new messages are scanned. You can still rescan or permanently delete quarantined messages from Results. To restore a message, move it in Thunderbird. After verifying the contents during a move or rescan, the quarantine status reflects its current location. If a move is unconfirmed or interrupted, check both folders. Moves are not retried automatically."
+    "message": "Select detected threats in Results and choose Quarantine to review and move them. Only identified quarantined messages are excluded from new-mail scanning. Unrelated new messages in current and former quarantine folders are scanned. You can still rescan or permanently delete quarantined messages from Results. To restore a message, move it in Thunderbird. After verifying the contents during a move or rescan, the quarantine status reflects its current location. If a move is unconfirmed or interrupted, check both folders. Moves are not retried automatically."
   },
   "qOutside": {
     "message": "Moved out of the quarantine folder."
@@ -2850,5 +2850,40 @@
   },
   "scanHelp": {
     "message": "In Settings, choose additional phishing, OLE2 macro and PUA detection: off, results only, or notify on detection. Disabling notifications globally also disables these notifications. Advisory findings are separate from malware and do not automatically trigger quarantine. Regular malware scanning, encryption alerts and limit alerts stay enabled. Limits are 5–100 MiB for whole messages, 25–500 MiB expanded (at least the message limit), and 10–120 seconds for internal scanning. Changes apply to subsequent scans. Applied settings are stored under Detection names and scan information. Update the helper to use custom scan settings."
+  },
+  "overflowTitle": {
+    "message": "Results outside the history limit"
+  },
+  "overflowHint": {
+    "message": "Incoming mail is still scanned when history is full. This section retains totals and the latest 20 results needing attention. Free space in history, then rescan any messages you want to retain in normal history."
+  },
+  "overflowSummary": {
+    "message": "Results outside history: $ARG1$ / Needing attention: $ARG2$ / In progress: $ARG3$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "overflowFailure": {
+    "message": "Scanning outside the history limit failed. Find the message in Thunderbird and scan it again."
+  },
+  "mimeLimited": {
+    "message": "MIME analysis reached its resource limit; some scan coverage could not be verified."
+  },
+  "mimeLimitedThreat": {
+    "message": " MIME analysis reached its resource limit. The malware detection is preserved."
+  },
+  "overflowClear": {
+    "message": "Clear these totals and recent results"
+  },
+  "overflowClearConfirm": {
+    "message": "Clear the totals and recent results outside history? Messages and normal scan history will remain unchanged."
   }
 }

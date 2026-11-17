@@ -111,7 +111,7 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(self.temp.stat().st_mode & 0o777, 0o700)
             self.assertEqual(kwargs["input"], b"Subject: test\r\n\r\nhello")
             return subprocess.CompletedProcess(args, 0, b"stdin: OK\n", b"")
-        with patch.object(host.subprocess, "run", side_effect=fake_run):
+        with patch.object(host.subprocess, "run", side_effect=fake_run), patch.object(host, "mime_inspection", return_value="clear"):
             result = host.scan(b"Subject: test\r\n\r\nhello")
         self.assertEqual(result["status"], "clean")
         self.assertFalse(self.temp.exists())
@@ -305,6 +305,39 @@ class PackagingTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 install(stage, home, apply=True)
             self.assertEqual(registration.read_bytes(), before)
+
+
+
+class MimeIsolationTests(unittest.TestCase):
+    def test_worker_handles_clear_and_encrypted_mail(self):
+        self.assertEqual(host.mime_inspection(b"Subject: sample\r\n\r\nhello"), "clear")
+        self.assertEqual(host.mime_inspection(b"Content-Type: text/plain\r\n\r\n-----BEGIN PGP MESSAGE-----"), "encrypted")
+
+    def test_large_part_count_is_bounded_in_worker(self):
+        data = b'Content-Type: multipart/mixed; boundary="x"\r\n\r\n' + b'--x\r\nContent-Type: text/plain\r\n\r\nx\r\n' * 50000 + b'--x--\r\n'
+        self.assertEqual(host.mime_inspection(data), "limited")
+
+    def test_depth_and_header_limits(self):
+        data = b"Content-Type: text/plain\r\n\r\nhello"
+        for i in range(35):
+            boundary = f"level-{i}".encode()
+            data = b'Content-Type: multipart/mixed; boundary="' + boundary + b'"\r\n\r\n--' + boundary + b'\r\n' + data + b'\r\n--' + boundary + b'--\r\n'
+        self.assertEqual(host.mime_inspection(data), "limited")
+        self.assertEqual(host.mime_inspection(b"X-Large: " + b"x" * (257 * 1024) + b"\r\n\r\nhello"), "limited")
+
+    def test_timeout_and_crashed_worker_fail_closed(self):
+        for result in [subprocess.CompletedProcess([], 1, b"", b""), subprocess.CompletedProcess([], 0, b"unexpected", b"")]:
+            with patch.object(host.subprocess, "run", return_value=result):
+                self.assertEqual(host.mime_inspection(b"hello"), "limited")
+        with patch.object(host.subprocess, "run", side_effect=subprocess.TimeoutExpired([], 5)):
+            self.assertEqual(host.mime_inspection(b"hello"), "limited")
+
+    def test_failed_auxiliary_parser_preserves_malware_verdict(self):
+        for status, expected in [("clean", "incomplete"), ("advisory", "incomplete"), ("detected", "detected")]:
+            with patch.object(host, "scan_clamscan", return_value={"status": status, "detail": "synthetic", "signatures": ["Synthetic"]}), patch.object(host, "mime_inspection", return_value="limited"):
+                result = host.scan(b"hello")
+            self.assertEqual(result["status"], expected)
+            self.assertEqual(result["signatures"], ["Synthetic"])
 
 
 if __name__ == "__main__":

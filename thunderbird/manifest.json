@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "ClamAV Mail Check",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "description": "__MSG_extensionDescription__",
   "browser_specific_settings": {
     "gecko": {

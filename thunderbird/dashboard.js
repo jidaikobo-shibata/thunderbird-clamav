@@ -64,6 +64,8 @@ function updateControls() {
   const navigationLocked = Boolean(latest?.maintenance) || busy && !latest?.batch?.active;
   for (const id of ["filter", "account-filter", "search", "reset-filters"]) $(id).disabled = navigationLocked;
   $("health").disabled = locked;
+  $("overflow-clear").disabled = locked || !latest?.overflowReport?.total;
+  for (const button of $("overflow-recent").querySelectorAll("button")) button.disabled = locked || button.dataset.noDigest === "true";
   const job = latest?.folderJob;
   const folderActive = job && ["collecting", "running", "stopping"].includes(job.status);
   $("scan-folder").disabled = locked || latest?.helperRemoved || Boolean(folderActive) || foldersLoading || !selectedFolders.size;
@@ -371,9 +373,42 @@ function makeRow(record) {
   return { row, parts, checkbox, open, retry, review, remove };
 }
 
+$("overflow-clear").addEventListener("click", () => {
+  if (blocked() || !confirm(t("overflowClearConfirm", "保存枠不足の集計と直近の結果を消去します。メールと通常の検査履歴は変更しません。続けますか？"))) return;
+  void action(() => request("clearOverflow"));
+});
+let overflowRendered = "";
+function renderOverflow() {
+  const report = latest.overflowReport;
+  $("overflow-report").hidden = !report?.total && !latest.overflowPending;
+  setText($("overflow-summary"), t("overflowSummary", "保存枠不足の結果$1件 ／ 要確認$2件 ／ 検査中$3件", [report?.total || 0, Object.entries(report?.counts || {}).filter(([status]) => ["detected", "incomplete", "error", "advisory"].includes(status)).reduce((sum, [, count]) => sum + count, 0), latest.overflowPending ? 1 : 0]));
+  const signature = JSON.stringify(report?.recent || []);
+  if (signature === overflowRendered) return;
+  overflowRendered = signature;
+  $("overflow-recent").replaceChildren();
+  for (const record of report?.recent || []) {
+    const item = document.createElement("li");
+    const description = document.createElement("p");
+    description.textContent = [LABELS[record.status], record.locator.author, record.locator.subject, folderLabel(record.locator.folder, folderChoices, record.locator.accountId), localizeDetail(record)].filter(Boolean).join(" / ");
+    item.append(description);
+    const open = document.createElement("button");
+    open.textContent = t("mail131", "開く");
+    open.setAttribute("aria-label", t("namedDetail", "$1：$2", [record.locator.subject || t("mail022", "件名なし"), open.textContent]));
+    open.disabled = blocked() || !record.sha256;
+    open.dataset.noDigest = String(!record.sha256);
+    open.addEventListener("click", () => {
+      if (blocked()) return;
+      if (record.status === "detected" && !confirm(t("mail132", "脅威候補を検出したメールを開きます。本文が表示されます。添付ファイルやリンクは開かずに確認してください。"))) return;
+      void action(() => request("openOverflow", { key: record.key }), t("mail133", "Thunderbirdで対象メールを開きました。"));
+    });
+    item.append(open); $("overflow-recent").append(item);
+  }
+}
+
 function renderRecords() {
   if (!latest) return;
   renderFolder();
+  renderOverflow();
   const filtered = filterRecords(latest.records, { status: $("filter").value, account: $("account-filter").value, search: $("search").value, folderJobId: folderFilterId, folders: folderChoices });
   filteredRecords = filtered;
   const result = resultPage(filtered, page);
@@ -414,7 +449,7 @@ function renderRecords() {
     if (at !== entry.row) $("results").insertBefore(entry.row, at || null);
   }
   const waiting = latest.records.filter(record => record.status === "queued").length;
-  const attention = latest.records.filter(needsAttention).length;
+  const attention = latest.records.filter(needsAttention).length + (latest.overflowReport?.recent || []).filter(needsAttention).length;
   setText($("tab-results"), attention ? t("mail140", "検査結果（$1）", [attention]) : t("mail141", "検査結果"));
   $("tab-results").setAttribute("aria-label", t("mail142", "検査結果、確認が必要$1件", [attention]));
   $("tab-results").title = t("mail143", "確認が必要$1件", [attention]);

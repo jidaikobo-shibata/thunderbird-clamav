@@ -8,9 +8,7 @@ export function quarantineFolder(folder) {
 }
 export function canQuarantine(record) { return record?.status === "detected" && Boolean(record.sha256); }
 export async function inQuarantine(message, settings, records = [], { session, digestOf } = {}) {
-  const destination = settings.quarantine?.[message.folder?.accountId];
-  if (destination && destination.path === message.folder?.path) return true;
-  // A past destination must never exclude an entire folder. Suppress only a
+  // A quarantine destination must never exclude an entire folder. Suppress only a
   // known detected message, identified by its current session ID or contents.
   const candidates = records.filter(record => record.status === "detected" && record.sha256 &&
     ["moving", "moved", "error"].includes(record.quarantine?.status) &&

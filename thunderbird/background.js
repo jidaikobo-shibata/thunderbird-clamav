@@ -15,6 +15,37 @@ const session = crypto.randomUUID();
 const MAX_RECORDS = 1000;
 let settings = { ...DEFAULTS };
 let records = [];
+let overflowPending = null, overflowReport = null;
+const overflowWaiters = new Set();
+function wakeOverflow() { for (const resolve of overflowWaiters) resolve(); overflowWaiters.clear(); }
+function reserveHistory() {
+  if (records.length < MAX_RECORDS) return true;
+  const index = records.findIndex(record => ["clean", "deleted"].includes(record.status) && !deleting.has(record.key));
+  if (index < 0) return false;
+  records.splice(index, 1); return true;
+}
+async function finishOverflow(record) {
+  if (overflowPending !== record) return;
+  if (reserveHistory()) records.push(record);
+  else {
+    overflowReport ||= { total: 0, counts: {}, recent: [] };
+    overflowReport.total++;
+    overflowReport.counts[record.status] = (overflowReport.counts[record.status] || 0) + 1;
+    overflowReport.updatedAt = new Date().toISOString();
+    if (needsAttention(record)) overflowReport.recent = [record, ...overflowReport.recent].slice(0, 20);
+  }
+  overflowPending = null;
+  try { await save(); } finally { wakeOverflow(); }
+}
+async function queueOverflow(record) {
+  while (overflowPending) await new Promise(resolve => overflowWaiters.add(resolve));
+  overflowPending = record;
+  try { await save(); }
+  catch (error) { overflowPending = null; wakeOverflow(); throw error; }
+  const done = new Promise(resolve => overflowWaiters.add(resolve));
+  void drain().catch(report);
+  await done;
+}
 let issue = "";
 let running = false;
 let lastMailTab;
@@ -184,7 +215,7 @@ async function verified(record, expectedFingerprint = null) {
 
 function excludePausedAutomatic() {
   const changes = [];
-  for (const record of records) {
+  for (const record of [...records, ...(overflowPending ? [overflowPending] : [])]) {
     if (!pausedAutomatic(record, settings)) continue;
     const before = { ...record };
     record.status = "incomplete";
@@ -331,14 +362,14 @@ function report(error) {
 function save() {
   // Take a snapshot now, then serialize storage writes so an older snapshot
   // cannot overwrite a later scan result.
-  const value = JSON.parse(JSON.stringify({ settings, records, issue, lastHealth, lastScan, helperRemoved, installation, folderJob: folderScan.snapshot(), folderCheckpoint: folderScan.checkpointState() }));
+  const value = JSON.parse(JSON.stringify({ settings, records, overflowPending, overflowReport, issue, lastHealth, lastScan, helperRemoved, installation, folderJob: folderScan.snapshot(), folderCheckpoint: folderScan.checkpointState() }));
   writes = writes.catch(() => {}).then(() => api.storage.local.set(value));
   void updateBadge().catch(() => {});
   return writes;
 }
 
 function toolbarState() {
-  return toolbarNotice(installation, api.runtime.getManifest().version, issue, records.filter(needsAttention).length);
+  return toolbarNotice(installation, api.runtime.getManifest().version, issue, records.filter(needsAttention).length + (overflowReport?.recent || []).filter(needsAttention).length);
 }
 async function updateBadge() {
   const notice = toolbarState();
@@ -424,23 +455,20 @@ async function resolveRecord(record) {
 
 function enqueue(first, source) {
   const work = async () => {
-    let overflow = false;
     for await (const message of messagePages(api.messages, first)) {
       if (source === "manual" && helperRemoved) throw new Error(t("mail037", "補助プログラムの導入を確認してから検査してください。"));
       if (message.external || !message.folder) continue;
-      if (source === "automatic" && await inQuarantine(message, settings, records, { session, digestOf: async message => sha256(await rawBytes(message.id)) })) continue;
+      if (source === "automatic" && await inQuarantine(message, settings, [...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : [])], { session, digestOf: async message => sha256(await rawBytes(message.id)) })) continue;
       if (source === "automatic" && (!settings.enabled ||
           !settings.accountIds.includes(accountOf(message)))) continue;
+      if (source === "automatic" && (overflowReport?.recent || []).some(record => record.session === session && record.messageId === message.id)) continue;
       const existing = records.find(record => record.session === session && record.messageId === message.id);
       if (existing && (deleting.has(existing.key) || existing.status === "deleted")) continue;
       if (existing && ["queued", "scanning"].includes(existing.status)) continue;
       if (existing && source === "automatic") continue;
-      // Only discard old non-alert results when the bounded history is full.
-      if (!existing && records.length >= MAX_RECORDS) {
-        const index = records.findIndex(record => ["clean", "deleted"].includes(record.status));
-        if (index === -1) { overflow = true; continue; }
-        records.splice(index, 1);
-      }
+      // History retention is independent from incoming inspection. A single
+      // persisted overflow work item provides backpressure without dropping mail.
+      const keep = Boolean(existing) || reserveHistory();
       const record = existing || { key: crypto.randomUUID(), createdAt: new Date().toISOString() };
       Object.assign(record, {
         messageId: message.id, session, locator: locator(message), source,
@@ -451,9 +479,11 @@ function enqueue(first, source) {
         unscannedReason: null, status: "queued", detail: t("mail038", "検査を待っています。"), signatures: [],
         sha256: null, engine: null, attempts: 0, nextRetry: null, folderJobId: null, updatedAt: new Date().toISOString()
       });
-      if (!existing) records.push(record);
+      if (!existing) {
+        if (keep) records.push(record);
+        else await queueOverflow(record);
+      }
     }
-    if (overflow) issue = t("mail039", "結果が1000件に達しました。新着の一部を検査できません。履歴を整理してください。");
     await save();
     await updateBadge();
     void drain().catch(report);
@@ -468,10 +498,15 @@ async function drain() {
   let client, engine, configurable = false;
   try {
     while (true) {
+      if (overflowPending && !["queued", "scanning"].includes(overflowPending.status)) {
+        await notify(overflowPending);
+        await finishOverflow(overflowPending);
+      }
       // Folder work is fed one at a time, after fresh mail and manual work.
       let record = records.find(item => item.status === "queued" && item.source === "automatic" &&
         settings.enabled && settings.accountIds.includes(item.locator.accountId)) ||
-        records.find(item => item.status === "queued" && item.source === "manual");
+        records.find(item => item.status === "queued" && item.source === "manual") ||
+        (overflowPending?.status === "queued" && (overflowPending.source === "manual" || settings.enabled && settings.accountIds.includes(overflowPending.locator.accountId)) ? overflowPending : null);
       if (!record && folderScan.available()) {
         if (records.length >= MAX_RECORDS) {
           const index = records.findIndex(item => ["clean", "deleted"].includes(item.status));
@@ -559,7 +594,7 @@ async function drain() {
       }
       record.updatedAt = new Date().toISOString();
       // Two automatic attempts total; no endless retry loop on bad mail/host.
-      if (!fromFolder && !record.bulkRetryId && record.status === "error" && record.attempts < 2) {
+      if (!fromFolder && record !== overflowPending && !record.bulkRetryId && record.status === "error" && record.attempts < 2) {
         record.nextRetry = Date.now() + 60000;
       }
       finishRetry(record);
@@ -576,6 +611,7 @@ async function drain() {
       }
       await save();
       if (!fromFolder) await notify(record);
+      if (record === overflowPending) await finishOverflow(record);
       await updateBadge();
     }
   } catch (error) {
@@ -586,6 +622,13 @@ async function drain() {
         else { delete record.bulkRetryId; delete record.bulkRetryBefore; }
       }
       batchProgress.active = false; batchProgress.error = true; retryContext = null;
+    }
+    if (overflowPending && overflowPending.status === "scanning") {
+      const interrupted = overflowPending;
+      interrupted.status = "error"; interrupted.nextRetry = null;
+      interrupted.detail = t("overflowFailure", "保存枠不足時の検査処理に失敗しました。Thunderbirdで対象を確認して再検査してください。");
+      await notify(interrupted);
+      try { await finishOverflow(interrupted); } catch { overflowPending = null; wakeOverflow(); }
     }
     const active = records.find(record => record.status === "scanning");
     if (active) {
@@ -614,9 +657,12 @@ async function scanSelection() {
 }
 
 const ready = (async () => {
-  const data = await api.storage.local.get(["settings", "records", "issue", "folderJob", "folderCheckpoint", "lastHealth", "lastScan", "helperRemoved", "installation"]);
+  const data = await api.storage.local.get(["settings", "records", "overflowPending", "overflowReport", "issue", "folderJob", "folderCheckpoint", "lastHealth", "lastScan", "helperRemoved", "installation"]);
   settings = normalizeAutomaticSettings(data.settings);
   records = Array.isArray(data.records) ? data.records : [];
+  overflowPending = data.overflowPending || null;
+  overflowReport = data.overflowReport || null;
+  if (overflowReport) overflowReport.recent = (overflowReport.recent || []).slice(0, 20);
   issue = typeof data.issue === "string" ? data.issue : "";
   lastHealth = data.lastHealth || null;
   helperRemoved = data.helperRemoved === true;
@@ -637,7 +683,7 @@ const ready = (async () => {
     }
   }
   let retryInterrupted = false;
-  for (const record of records) {
+  for (const record of [...records, ...(overflowPending ? [overflowPending] : []), ...(overflowReport?.recent || [])]) {
     if (record.quarantine?.status === "moving") {
       record.quarantine.status = "error";
       record.quarantine.detail = t("qInterrupted", "隔離中に終了しました。元のフォルダーと隔離先を確認してください。自動で再移動はしません。");
@@ -729,11 +775,11 @@ api.menus.onClicked.addListener((info, tab) => {
 api.browserAction.onClicked.addListener(() => {
   void ready.then(async () => {
     if (toolbarState().setup) setupRequest = crypto.randomUUID();
-    else if (records.some(needsAttention) || issue) resultsRequest = crypto.randomUUID();
+    else if (records.some(needsAttention) || overflowReport?.total || issue) resultsRequest = crypto.randomUUID();
     await openDashboard();
   }).catch(report);
 });
-api.notifications.onClicked.addListener(() => { void openDashboard().catch(report); });
+api.notifications.onClicked.addListener(() => { resultsRequest = crypto.randomUUID(); void openDashboard().catch(report); });
 api.runtime.onInstalled.addListener(() => { void openDashboard().catch(report); });
 
 api.runtime.onMessage.addListener(async (request, sender) => {
@@ -746,7 +792,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
     if (batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation) && !["state", "cancelBatch", "helperInfo", "health"].includes(request.type)) throw new Error(t("qBusy", "このメールは処理中です。"));
     switch (request.type) {
       case "state":
-        return { ok: true, settings, records, issue, lastHealth, lastScan, resultsRequest, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
+        return { ok: true, settings, records, overflowPending, overflowReport, issue, lastHealth, lastScan, resultsRequest, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
           folderJob: folderScan.snapshot(), accounts: (await api.accounts.list())
           .filter(account => ["imap", "pop3", "none"].includes(account.type))
           .map(account => ({ id: account.id, name: account.name, type: account.type })) };
@@ -1037,6 +1083,30 @@ api.runtime.onMessage.addListener(async (request, sender) => {
           progress.cancelled = progress.total - progress.completed;
           return { ok: true, results, cancelled: progress.cancelled };
         } finally { batchProgress.active = false; }
+      }
+      case "clearOverflow": {
+        const before = overflowReport;
+        overflowReport = null;
+        try { await save(); } catch (error) {
+          // Incoming inspection can finish while the clear operation is saving.
+          // Restore the cleared totals without discarding those newer results.
+          if (!overflowReport) overflowReport = before;
+          else if (before) {
+            overflowReport.total += before.total;
+            for (const [status, count] of Object.entries(before.counts)) overflowReport.counts[status] = (overflowReport.counts[status] || 0) + count;
+            overflowReport.recent = [...overflowReport.recent, ...before.recent].slice(0, 20);
+          }
+          throw error;
+        }
+        return { ok: true };
+      }
+      case "openOverflow": {
+        const record = overflowReport?.recent.find(record => record.key === request.key);
+        if (!record?.sha256) throw new Error(t("mail078", "検査対象を照合できません。メール一覧から確認してください。"));
+        const { message } = await verified(record);
+        if (!overflowReport?.recent.includes(record)) throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
+        await api.messageDisplay.open({ messageId: message.id, location: "tab" });
+        return { ok: true };
       }
       case "open": {
         const record = records.find(item => item.key === request.key);

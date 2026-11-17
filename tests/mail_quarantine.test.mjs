@@ -38,7 +38,7 @@ test("quarantine verifies moved contents and updates the message ID and locator"
   assert.equal(record.locator.folder.id, destination.id);
   assert.equal(record.quarantine.status, "moved");
   assert.equal(calls[0].options.isUserAction, false);
-  assert.equal(await inQuarantine({ folder: destination }, { quarantine: { one: config } }), true);
+  assert.equal(await inQuarantine({ folder: destination }, { quarantine: { one: config } }), false);
   assert.equal(await inQuarantine(await api.messages.get(2), {}, [record], { session: "new" }), true);
 });
 
