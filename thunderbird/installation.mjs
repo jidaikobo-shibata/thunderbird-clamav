@@ -172,10 +172,13 @@ export function installationUI({ request, action, latest, busy }) {
       t("mail243", "$1メール・設定・検査履歴は残します。次の場所の管理対象ファイルと接続登録を変更します。", [needed === "repair" ? t("mail244", "補助プログラム$1の設置ファイルを修復します。", [plan.version]) : t("mail245", "補助プログラムを同梱の$1へ更新します。", [plan.version])]);
     $("helper-paths").replaceChildren();
     for (const path of plan.paths) { const li = document.createElement("li"); li.textContent = path; $("helper-paths").append(li); }
-    $("helper-ack").checked = false; $("helper-confirm").disabled = true;
+    $("helper-ack").checked = false;
+    $("helper-ack").closest("label").hidden = !removing;
+    $("helper-confirm").disabled = removing;
+    $("helper-confirm").textContent = removing ? t("mail349", "実行") : needed === "repair" ? t("mail230", "補助プログラムを修復") : t("mail231", "補助プログラムを更新");
     dialog.returnValue = "cancel";
     return new Promise(resolve => {
-      dialog.addEventListener("close", () => resolve(dialog.returnValue === "apply" && $("helper-ack").checked), { once: true });
+      dialog.addEventListener("close", () => resolve(dialog.returnValue === "apply" && (!removing || $("helper-ack").checked)), { once: true });
       dialog.showModal(); $("helper-cancel").focus();
     });
   }
