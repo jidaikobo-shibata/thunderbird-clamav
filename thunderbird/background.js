@@ -118,6 +118,27 @@ async function helperInfo() {
   return installation;
 }
 
+/** Check prerequisites before enumerating mail or reserving history slots. */
+async function requireFolderScanner() {
+  const client = new NativeClient(api.runtime);
+  try { lastHealth = await readHealth(client); }
+  finally { client.close(); }
+  if (lastHealth.status === "ready" && lastHealth.protocol !== 1) {
+    lastHealth = { ...lastHealth, status: "error", code: "protocol_incompatible",
+      detail: t("mail044", "補助プログラムのバージョンが対応していません。") };
+  }
+  applyHealthToInstallation();
+  const unavailable = lastHealth.status !== "ready";
+  if (unavailable) setupRequest = crypto.randomUUID();
+  await save();
+  await updateBadge();
+  if (unavailable) {
+    const error = new Error(lastHealth.detail);
+    error.setupRequired = true;
+    throw error;
+  }
+}
+
 const folderScan = new FolderScan(api, {
   digestOf: async message => {
     if (message.headersOnly || message.external) return null;
@@ -923,6 +944,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         if (!folderRequest || folderRequest.token !== request.token) throw new Error(t("mail068", "フォルダーの選択が変わりました。選び直してください。"));
         if (typeof request.includeSubfolders !== "boolean") throw new Error(t("mail069", "サブフォルダーの選択が不正です。"));
         const context = folderRequest, folders = context.folders || [context.folder];
+        await requireFolderScanner();
         const current = await Promise.all(folders.map(folder => folder.id ? api.folders.get(folder.id, false) : folder));
         if (folderRequest !== context || current.some((folder, index) => !realFolder(folder) || folder.accountId !== folders[index].accountId || folder.path !== folders[index].path)) throw new Error(t("mail070", "フォルダーが見つからないか、場所が変わりました。選び直してください。"));
         const job = await folderScan.start(current.map((folder, index) => ({ ...folder, displayNames: folders[index].displayNames })), request.includeSubfolders);
@@ -933,6 +955,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
       case "folderResume": {
         if (request.jobId !== folderScan.job?.id || !folderScan.resumable) throw new Error(t("mail071", "この検査は再開できません。画面を更新してください。"));
         const job = folderScan.job, folders = job.folders || [job.folder];
+        await requireFolderScanner();
         const current = await Promise.all(folders.map(folder => folder.id ? api.folders.get(folder.id, false) : folder));
         if (folderScan.job !== job || current.some((folder, index) => !realFolder(folder) || folder.accountId !== folders[index].accountId || folder.path !== folders[index].path)) throw new Error(t("mail072", "元のフォルダーが見つからないか、場所が変わりました。"));
         await folderScan.resume(current);
@@ -1189,7 +1212,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         return { ok: true };
       default: throw new Error(t("mail082", "未対応の操作です。"));
     }
-  } catch (error) { return { ok: false, error: error.message || t("mail083", "操作に失敗しました。") }; }
+  } catch (error) { return { ok: false, error: error.message || t("mail083", "操作に失敗しました。"), ...(error.setupRequired ? { setupRequired: true } : {}) }; }
 });
 
 // Timers are sufficient for a persistent MV2 background page. Restart recovery

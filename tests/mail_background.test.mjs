@@ -496,7 +496,7 @@ test("attention-only history capacity stops folder work with unprocessed counts"
 });
 
 test("folder errors are counted once and interrupted work is not auto-resumed", async () => {
-  const h = await harness({ mails: [mail(1)], nativeFailure: true });
+  const h = await harness({ mails: [mail(1)], scanResult: { status: "error", detail: "synthetic engine failure" } });
   await startFolder(h);
   const state = await settledFolder(h, "completed");
   assert.equal(state.folderJob.counts.error, 1);
@@ -589,7 +589,7 @@ test("stopped folder resumes after reload using legacy history and never deletes
   assert.equal(state.folderJob.total, 3);
   assert.equal(state.records.filter(record => record.folderJobId === jobId).length, 3);
   assert.deepEqual(next.rawReads, [101, 102, 103]); // First read only verifies already-scanned bytes.
-  assert.equal(next.nativePorts.length, 1);
+  assert.equal(next.nativePorts.length, 2); // Preflight plus the shared scan connection.
   const retained = JSON.parse(JSON.stringify(state.records));
   assert.equal((await next.send("folderDelete", { jobId: "wrong" })).ok, false);
   assert.equal((await next.send("folderDelete", { jobId })).ok, true);
@@ -1764,4 +1764,61 @@ test("retaining a detection never permits permanent deletion of changed bytes", 
   h.api.messages.getRaw = async () => new File(["changed after failure"], "changed.eml");
   assert.equal((await h.send("prepareDelete", { key: "retained-threat" })).ok, false);
   assert.equal(h.deleted.length, 0);
+});
+
+
+test("missing ClamAV blocks folder start without reading mail or replacing full history, and can recover", async () => {
+  const health = { status: "error", code: "clamav_missing", detail: "ClamAV missing" };
+  const records = Array.from({ length: 1000 }, (_, index) => ({ key: "old-" + index, status: "clean", locator: { accountId: "one" } }));
+  const h = await harness({ direct: true, saved: { records }, mails: [mail(1)], healthResult: health });
+  const before = structuredClone((await h.send("state")).records);
+  let listings = 0;
+  const list = h.api.messages.list;
+  h.api.messages.list = async (...args) => { listings++; return list(...args); };
+  const context = await h.send("folderContext");
+  const result = await h.send("folderStart", { token: context.token, includeSubfolders: false });
+  assert.equal(result.ok, false);
+  assert.equal(result.setupRequired, true);
+  const state = await h.send("state");
+  assert.equal(state.folderJob, null);
+  assert.deepEqual(state.records, before);
+  assert.equal(state.lastHealth.code, "clamav_missing");
+  assert.ok(state.setupRequest);
+  assert.equal(listings, 0);
+  assert.equal(h.rawReads.length, 0);
+  Object.assign(health, { status: "ready", protocol: 1, engine: "synthetic restored engine" });
+  assert.equal((await h.send("folderStart", { token: context.token, includeSubfolders: false })).ok, true);
+  await settledFolder(h, "completed");
+});
+
+test("missing ClamAV blocks folder resume without changing its progress or retained results", async () => {
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  const h = await harness({ mails: [mail(1), mail(2)], scanGate: async () => { entered(); await gate; } });
+  const jobId = await startFolder(h);
+  await started;
+  await h.send("folderStop", { jobId }); release();
+  await settledFolder(h, "stopped");
+  const next = await harness({ direct: true, saved: structuredClone(h.stored()), mails: [mail(1), mail(2)],
+    healthResult: { status: "error", code: "clamav_missing", detail: "ClamAV missing" } });
+  const before = structuredClone(await next.send("state"));
+  const result = await next.send("folderResume", { jobId });
+  const after = await next.send("state");
+  assert.equal(result.ok, false);
+  assert.equal(result.setupRequired, true);
+  assert.deepEqual(after.folderJob, before.folderJob);
+  assert.deepEqual(after.records, before.records);
+  assert.equal(next.rawReads.length, 0);
+});
+
+test("unavailable scanner blocks folder start before creating a job", async () => {
+  const h = await harness({ direct: true, nativeFailure: true, mails: [mail(1)] });
+  const context = await h.send("folderContext");
+  const result = await h.send("folderStart", { token: context.token, includeSubfolders: false });
+  assert.equal(result.setupRequired, true);
+  const state = await h.send("state");
+  assert.equal(state.folderJob, null);
+  assert.equal(state.records.length, 0);
+  assert.equal(state.lastHealth.code, "direct_unavailable");
 });

@@ -29,7 +29,10 @@ let folderChoices = [], foldersLoading = false, settingsSaving = false;
 
 async function request(type, values = {}) {
   const response = await messenger.runtime.sendMessage({ ...values, type });
-  if (!response?.ok) throw new Error(response?.error || t("mail102", "拡張の処理に接続できませんでした。"));
+  if (!response?.ok) {
+    if (response?.setupRequired) { await refresh(); openSetup(); }
+    throw new Error(response?.error || t("mail102", "拡張の処理に接続できませんでした。"));
+  }
   return response;
 }
 function setText(element, text) {
