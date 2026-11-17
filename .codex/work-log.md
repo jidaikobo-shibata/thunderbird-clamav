@@ -405,3 +405,7 @@
 - 内容：READMEを初回導入/対応環境/データ取扱い/更新/不具合報告の案内に整理。旧全文はREADME-legacy.mdに保持。MITを追加してXPIにも同梱。内蔵方式の導入案内で別の補助が不要と明記。0.20.0a5とSHA256SUMSを準備。新規依存/権限変更なし。
 - 検証：全履歴の典型的な認証情報パターン検査は該当なし。非公開メモ・検査出力は全履歴でGit管理外。JS170件/Python69件と、追加した同梱ライセンス/日英案内表示の確認を実施。普段のメール/設定は変更しない。ATNへの掲載審査は別課題。
 - 次：公開リポジトリ作成、mainへのpush、v0.20.0a5の試用版リリース公開と取得確認。完了状態は後続記録へ追記する。
+
+### 公開完了
+- https://github.com/jidaikobo-shibata/thunderbird-clamav をPUBLICで作成。originを登録し、現在の履歴をmainへpush。GitHubの既定ブランチmain・MIT表示を確認。ローカルのexperiment/addon-only-clamavと従来のmainは維持し、履歴の書き換えはしていない。
+- https://github.com/jidaikobo-shibata/thunderbird-clamav/releases/tag/v0.20.0a5 をprereleaseとして公開。XPIとSHA256SUMSを添付。今後このローカル実験ブランチから公開mainへ送る場合はgit push origin HEAD:mainを明示する。公式アドオンサイトへの申請は未実施。
