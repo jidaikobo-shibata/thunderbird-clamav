@@ -107,6 +107,7 @@
     <h2><span data-i18n="mail255">設定</span></h2>
     <form id="settings-form">
       <fieldset><legend data-i18n="autoAccountsHeading">新着メールを自動検査するアカウント</legend><div id="accounts"></div></fieldset>
+      <fieldset><legend data-i18n="notificationHeading">通知</legend><label><input id="notifications" type="checkbox"> <span data-i18n="mail296">デスクトップ通知を有効にする</span></label></fieldset>
       <fieldset><legend data-i18n="qHeading">検出したメールの隔離</legend>
         <p data-i18n="qSettingsHint">同じアカウント内の専用フォルダーを選んでください。フォルダーはThunderbirdで作成できます。自動隔離は、設定後に届く新着メールで脅威を検出した場合だけに適用します。</p>
         <div id="quarantine-settings"></div>
@@ -124,7 +125,6 @@
           <p class="hint" data-i18n="scanLimitsHint">暗号化・上限超過の警告と添付形式の検査は有効のままです。内部時間制限の適用範囲はClamAVによります。補助処理全体にも別の待ち時間制限があります。設定変更後の初回は定義を読み直す場合があります。</p>
         </details>
       </fieldset>
-      <fieldset><legend data-i18n="notificationHeading">通知</legend><label><input id="notifications" type="checkbox"> <span data-i18n="mail296">デスクトップ通知を有効にする</span></label></fieldset>
       <p id="settings-status" role="status" aria-live="polite"></p>
     </form>
 
