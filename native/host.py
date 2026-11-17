@@ -159,6 +159,7 @@ MAX_MAIL = 25 * 1024 * 1024
 CHUNK_SIZE = 64 * 1024
 MAX_FRAME = 128 * 1024
 CLAMSCAN = "/usr/bin/clamscan"
+TEMP_ROOT = "/tmp"
 TIMEOUT = 120
 CLAMD = "/usr/sbin/clamd"
 START_TIMEOUT = 60
@@ -421,7 +422,7 @@ class MailDaemon:
             raise DaemonUnavailable()
         try:
             # Fixed /tmp avoids long/newline-containing TMPDIR socket paths.
-            self.temp = tempfile.TemporaryDirectory(prefix="clam-mail-daemon-", dir="/tmp")
+            self.temp = tempfile.TemporaryDirectory(prefix="clam-mail-daemon-", dir=TEMP_ROOT)
             directory = Path(self.temp.name)
             self.address = str(directory / "clamd.sock")
             config = directory / "clamd.conf"
@@ -548,7 +549,7 @@ def scan_clamscan(data, options=None):
     try:
         # ClamAV may unpack containers internally. Give it a private temporary
         # directory, including on failures/timeouts, rather than keeping mail.
-        with tempfile.TemporaryDirectory(prefix="clam-mail-check-") as temp:
+        with tempfile.TemporaryDirectory(prefix="clam-mail-check-", dir=TEMP_ROOT) as temp:
             result = subprocess.run(args[:-1] + ["--tempdir=" + temp, "-"],
                                     input=data, stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, timeout=max(TIMEOUT, options["seconds"] + 30),

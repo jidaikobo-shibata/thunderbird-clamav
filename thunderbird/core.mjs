@@ -1,3 +1,4 @@
+import { directRuntime, directPort } from "./direct-transport.mjs";
 import { scanPolicy } from "./scan-policy.mjs";
 import { isReviewed } from "./review.mjs";
 import { t, uiLanguage, localizeDetail } from "./i18n.mjs";
@@ -92,7 +93,8 @@ export async function* messagePages(api, first) {
 
 export class NativeClient {
   constructor(runtime) {
-    this.port = runtime.connectNative(HOST);
+    this.direct = directRuntime(runtime);
+    this.port = this.direct ? directPort(globalThis.messenger.clamDirect) : runtime.connectNative(HOST);
     this.pending = new Map();
     this.sequence = 0;
     this.closed = false;
@@ -105,15 +107,15 @@ export class NativeClient {
       request.resolve(message);
     });
     this.port.onDisconnect.addListener(() => this.close(
-      t("mail093", "補助プログラムとの接続が切れました。登録状態を確認してください。")
+      this.direct ? t("directDisconnected", "内蔵の検査処理との接続が切れました。セットアップで状態を確認してください。") + (this.port.error?.message ? " " + String(this.port.error.message).slice(0, 300) : "") : t("mail093", "補助プログラムとの接続が切れました。登録状態を確認してください。")
     ));
   }
 
   request(op, values = {}, timeout = 15000) {
-    if (this.closed) return Promise.reject(new Error(t("mail094", "補助プログラムに接続できません。")));
+    if (this.closed) return Promise.reject(new Error(this.direct ? t("directUnavailable", "内蔵の検査処理を開始できません。セットアップで状態を確認してください。") : t("mail094", "補助プログラムに接続できません。")));
     const id = String(++this.sequence);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => this.close(t("mail095", "補助プログラムの応答がありません。")), timeout);
+      const timer = setTimeout(() => this.close(this.direct ? t("directUnavailable", "内蔵の検査処理を開始できません。セットアップで状態を確認してください。") : t("mail095", "補助プログラムの応答がありません。")), timeout);
       this.pending.set(id, { resolve, reject, timer });
       try { this.port.postMessage({ ...values, language: uiLanguage(), op, id }); }
       catch { this.close(t("mail096", "補助プログラムに送信できません。")); }
@@ -151,7 +153,7 @@ export class NativeClient {
     if (result.status !== "error" && result.sha256 !== digest) {
       throw new Error(t("mail101", "検査対象の照合に失敗しました。"));
     }
-    if (options && JSON.stringify(result.scanSettings) !== JSON.stringify(options)) throw new Error(t("scanPolicyMismatch", "指定した検査条件の適用を確認できません。補助プログラムを更新して再検査してください。"));
+    if (options && JSON.stringify(result.scanSettings) !== JSON.stringify(options)) throw new Error(this.direct ? t("directPolicyMismatch", "指定した検査条件の適用を確認できません。拡張を更新して再検査してください。") : t("scanPolicyMismatch", "指定した検査条件の適用を確認できません。補助プログラムを更新して再検査してください。"));
     return result;
   }
 }

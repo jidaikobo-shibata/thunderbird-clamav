@@ -1,0 +1,98 @@
+import { NativeClient, sha256 } from "../core.mjs";
+import { reviewStamp } from "../review.mjs";
+const check = (value, message) => { if (!value) throw new Error(message); };
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function request(type, values = {}) {
+  const response = await messenger.runtime.sendMessage({ type, ...values });
+  if (!response.ok) throw new Error(type + ": " + response.error);
+  return response;
+}
+async function settled(predicate, seconds = 120) {
+  const deadline = Date.now() + seconds * 1000;
+  while (Date.now() < deadline) {
+    const state = await request("state");
+    if (predicate(state)) return state;
+    await wait(100);
+  }
+  throw new Error("Mail integration did not settle");
+}
+const report = { ok: false, version: messenger.runtime.getManifest().version };
+try {
+  let state = await request("state");
+  const fixture = await messenger.testFixture.prepare();
+  check(state.installation.state === "integrated", "Integrated scanner state");
+  check(state.lastHealth.status === "ready", "Health ready");
+  check(state.settings.accountIds.includes(fixture.accountId) && state.settings.notifications === false, "Settings retained");
+  check(state.records.find(record => record.key === "preserved-review")?.review.note === "Synthetic human decision", "Human decision retained");
+  const backup = await messenger.testFixture.backup(state.directMigrationBackup.path);
+  check(backup.storage.records.length === 1 && backup.storage.records[0].review.note === "Synthetic human decision", "Pre-migration backup retained");
+  report.migration = true;
+  if (report.version === "0.20.0a1") {
+    report.rawSamples = [];
+    for (const message of (await messenger.messages.list(fixture.source.id)).messages) {
+      try { const raw = await messenger.messages.getRaw(message.id, { data_format: "File", decrypt: false }); report.rawSamples.push({subject:message.subject,size:raw.size,start:(await raw.text()).slice(0,500)}); }
+      catch(error) {report.rawSamples.push({subject:message.subject,error:String(error)});}
+    }
+    const context = await request("folderContext", { folderId: fixture.source.id });
+    await request("folderStart", { token: context.token, includeSubfolders: false });
+    state = await settled(state => state.folderJob?.status === "completed");
+    await wait(200);
+    const results = Object.fromEntries(state.records.filter(record => record.source === "folder").map(record => [record.locator.subject, record.status]));
+    report.verdicts = results;
+    report.scanDetails = state.records.filter(record => record.source === "folder").map(record => ({ subject: record.locator.subject, status: record.status, detail: record.detail }));
+    check(results["Synthetic plain"] === "clean", "Normal message verdict");
+    check(results["Synthetic attachment"] === "detected", "EICAR attachment verdict");
+    check(results["Synthetic zip"] === "detected", "EICAR ZIP verdict");
+    check(results["Synthetic encrypted"] === "incomplete", "Encrypted mail coverage");
+    report.verdicts = results;
+    let incomplete = state.records.find(record => record.locator.subject === "Synthetic encrypted");
+    await request("reviewMany", { keys: [incomplete.key], reviewed: true, note: "Synthetic reviewed encryption", stamps: { [incomplete.key]: reviewStamp(incomplete) } });
+    await request("retry", { key: incomplete.key });
+    state = await settled(state => state.records.find(record => record.key === incomplete.key)?.status === "incomplete");
+    await wait(200);
+    check(state.records.find(record => record.key === incomplete.key).review?.note === "Synthetic reviewed encryption", "Review retained on identical rescan");
+    let threat = state.records.find(record => record.locator.subject === "Synthetic attachment");
+    const moved = await request("quarantineMany", { keys: [threat.key], hashes: { [threat.key]: threat.sha256 }, destinations: state.settings.quarantine });
+    check(moved.moved === 1, "Manual quarantine");
+    state = await request("state");
+    threat = state.records.find(record => record.key === threat.key);
+    check(threat.locator.folder.path === fixture.quarantine.path, "Quarantine location verified");
+    const deletion = await request("prepareDelete", { key: threat.key });
+    await request("deletePermanently", { key: threat.key, token: deletion.token });
+    state = await request("state");
+    check(state.records.find(record => record.key === threat.key).status === "deleted", "Permanent deletion");
+    const settings = structuredClone(state.settings);
+    settings.quarantine[fixture.accountId].auto = true;
+    await request("settings", { settings });
+    const incomingRaw = fixture.mails.attachment.replace(/Subject: [^\r\n]+/, "Subject: Synthetic incoming attachment").replace(/Message-ID: [^\r\n]+/i, "Message-ID: <incoming-attachment@example.invalid>");
+    const incoming = await messenger.messages.import(new File([incomingRaw], "incoming.eml", { type: "message/rfc822" }), fixture.source.id, { read: false, new: true });
+    await messenger.testFixture.inject(incoming.id);
+    state = await settled(state => state.records.some(record => record.source === "automatic" && record.locator.subject === "Synthetic incoming attachment" && record.quarantine?.status === "moved"));
+    report.automaticQuarantine = true;
+    report.reviewAndDeletion = true;
+    await request("settings", { settings: { ...state.settings, scanSettings: { phishing: "display", macros: "notify", pua: "display", mailMiB: 50, expandedMiB: 200, seconds: 90 } } });
+    const client = new NativeClient(messenger.runtime);
+    try {
+      const bytes = new TextEncoder().encode("Subject: synthetic custom policy\r\n\r\nhello");
+      const result = await client.scan(bytes, await sha256(bytes), { phishing: "display", macros: "notify", pua: "display", mailMiB: 50, expandedMiB: 200, seconds: 90 });
+      check(result.status === "clean" && result.scanSettings.mailMiB === 50, "Custom policy applied");
+      report.customPolicy = true;
+    } finally { client.close(); }
+  } else {
+    check(state.settings.scanSettings.mailMiB === 50 && state.settings.quarantine[fixture.accountId].auto, "Updated settings retained");
+    check(state.records.some(record => record.status === "deleted") && state.records.some(record => record.quarantine?.status === "moved"), "Updated result history retained");
+    report.experimentalUpdate = true;
+  }
+  // Leave one actual clamd alive so the launcher can verify update/crash cleanup.
+  const retained = new NativeClient(messenger.runtime);
+  const sample = new TextEncoder().encode("Subject: synthetic lifecycle\r\n\r\nhello");
+  check((await retained.scan(sample, await sha256(sample), state.settings.scanSettings)).status === "clean", "Lifecycle scan");
+  report.runtime = await messenger.testFixture.runtime();
+  check(report.runtime.sessions.length > 0, "Live supervised scanner");
+  report.ok = true;
+  await messenger.testFixture.report(JSON.stringify(report));
+  if (report.version === "0.20.0a1") await messenger.testFixture.update();
+} catch (error) {
+  report.error = String(error) + "\n" + error.stack;
+  await messenger.testFixture.report(JSON.stringify(report));
+}

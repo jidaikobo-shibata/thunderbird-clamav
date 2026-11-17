@@ -8,7 +8,7 @@ function event() {
 }
 
 let caseId = 0;
-async function harness({ saved = {}, mails = [], nativeFailure = false, oversized = false, deleteAllowed = false, deleteFailure = false, deleteFailureIds = [], scanResult = {}, scanGate = null,
+async function harness({ direct = false, backupFailure = false, saved = {}, mails = [], nativeFailure = false, oversized = false, deleteAllowed = false, deleteFailure = false, deleteFailureIds = [], scanResult = {}, scanGate = null,
   manageInfo = null, healthResult = null, folderRefs = [{ id: "inbox", accountId: "one", path: "/Inbox", name: "受信トレイ" }] } = {}) {
   let stored = structuredClone(saved);
   const notifications = [], opened = [], rawReads = [], timers = [], deleted = [], nativePorts = [];
@@ -72,6 +72,29 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
     tabs: { query: async () => [], create: async () => {} }, windows: { update: async () => {} },
     messageDisplay: { open: async value => opened.push(value) }
   };
+  const directRequests = [], migrationBackups = [];
+  if (direct) {
+    const createPort = api.runtime.connectNative;
+    const sessions = new Map();
+    api.runtime.getManifest = () => ({ version: "0.20.0a1", experiment_apis: { clamDirect: {} } });
+    api.runtime.connectNative = () => { throw new Error("Direct mode must not connect to an installed native host"); };
+    api.clamDirect = {
+      open: async () => { const token = crypto.randomUUID(); sessions.set(token, createPort()); return token; },
+      close: async token => { sessions.get(token)?.disconnect(); sessions.delete(token); },
+      request: (token, value) => new Promise((resolve, reject) => {
+        const port = sessions.get(token), request = JSON.parse(value);
+        directRequests.push(request);
+        port.onMessage.listeners[0] = response => resolve(JSON.stringify(response));
+        port.onDisconnect.listeners[0] = () => reject(new Error("synthetic direct failure"));
+        port.postMessage(request);
+      }),
+      backup: async snapshot => {
+        if (backupFailure) throw new Error("synthetic backup failure");
+        migrationBackups.push(JSON.parse(snapshot));
+        return { path: "/synthetic/profile/migration-backup.json" };
+      }
+    };
+  }
   globalThis.messenger = api;
   const realInterval = globalThis.setInterval;
   globalThis.setInterval = callback => { timers.push(callback); return 0; };
@@ -81,7 +104,7 @@ async function harness({ saved = {}, mails = [], nativeFailure = false, oversize
     events.message.listeners[0]({ type, ...values }, sender);
   await send("state");
   nativePorts.length = 0; // Startup installation check is separate from scan connections.
-  return { api, send, events, notifications, opened, rawReads, timers, deleted, nativePorts, stored: () => stored };
+  return { api, send, events, notifications, opened, rawReads, timers, deleted, nativePorts, directRequests, migrationBackups, stored: () => stored };
 }
 
 function mail(id, accountId = "one") {
@@ -1628,4 +1651,32 @@ test("full protected history does not disable automatic quarantine", async () =>
   assert.equal((await h.send("state")).overflowReport.total, 1);
   assert.equal(moves, 1);
   assert.equal(h.notifications.length, 1);
+});
+
+
+test("integrated scanner preserves settings and history, backs up before writes, and never calls nativeMessaging", async () => {
+  const retained = { key: "human", status: "incomplete", locator: { accountId: "one" }, review: { note: "preserve this" } };
+  const saved = { settings: { enabled: true, accountIds: ["one"], notifications: false }, records: [retained], helperRemoved: true };
+  const h = await harness({ direct: true, saved, mails: [mail(1)] });
+  let state = await h.send("state");
+  assert.equal(state.installation.state, "integrated");
+  assert.equal(state.helperRemoved, false);
+  assert.equal(state.records[0].review.note, "preserve this");
+  assert.deepEqual(h.migrationBackups[0], saved);
+  assert.equal((await h.send("helperPlan", { operation: "uninstall" })).ok, false);
+  h.events.newMail.listeners[0]({}, { messages: [mail(1)] });
+  state = await settle(h, state => state.records.some(record => record.messageId === 1 && record.status === "clean"));
+  assert.equal(state.records[0].review.note, "preserve this");
+  assert.ok(h.directRequests.some(request => request.op === "end"));
+  assert.ok(h.directRequests.every(request => !request.op.startsWith("manage")));
+  const next = await harness({ direct: true, saved: h.stored(), mails: [mail(1)] });
+  assert.equal(next.migrationBackups.length, 0);
+});
+
+test("migration backup failure leaves existing stored history untouched and stops startup", async () => {
+  const saved = { settings: { enabled: false, accountIds: [], notifications: false }, records: [{ key: "human", review: { note: "keep" } }] };
+  const h = await harness({ direct: true, backupFailure: true, saved });
+  assert.equal((await h.send("state")).ok, false);
+  assert.deepEqual(h.stored(), saved);
+  assert.equal(h.directRequests.length, 0);
 });

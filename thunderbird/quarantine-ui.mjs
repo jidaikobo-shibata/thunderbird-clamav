@@ -1,3 +1,4 @@
+import { permission } from "./direct-transport.mjs";
 import { t } from "./i18n.mjs";
 import { quarantineFolder, canQuarantine } from "./quarantine.mjs";
 import { folderLabel } from "./folder-labels.mjs";
@@ -39,7 +40,7 @@ export function readQuarantineSettings(previous, folders) {
   return result;
 }
 export async function requireMovePermission() {
-  if (!await messenger.permissions.request({ permissions: ["messagesMove"] })) throw new Error(t("qPermission", "隔離にはメール移動の権限が必要です。"));
+  if (!await permission(messenger, ["messagesMove"])) throw new Error(t("qPermission", "隔離にはメール移動の権限が必要です。"));
 }
 export function confirmQuarantine(records, settings, accounts, folders) {
   const dialog = document.getElementById("quarantine-dialog"), list = document.getElementById("quarantine-targets");

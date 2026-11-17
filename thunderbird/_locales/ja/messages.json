@@ -2885,5 +2885,70 @@
   },
   "overflowClearConfirm": {
     "message": "保存枠不足の集計と直近の結果を消去します。メールと通常の検査履歴は変更しません。続けますか？"
+  },
+  "directDisconnected": {
+    "message": "内蔵の検査処理との接続が切れました。セットアップで状態を確認してください。"
+  },
+  "directPolicyMismatch": {
+    "message": "指定した検査条件の適用を確認できません。拡張を更新して再検査してください。"
+  },
+  "directUnavailable": {
+    "message": "内蔵の検査処理を開始できません。セットアップで状態を確認してください。"
+  },
+  "directNoSetup": {
+    "message": "この実験版では補助プログラムの別途導入・更新は不要です。"
+  },
+  "directTitle": {
+    "message": "ClamAVとの連携（実験版）"
+  },
+  "directIntro": {
+    "message": "検査処理はこの拡張に含まれています。別途の補助プログラム導入・更新は不要です。ClamAVとPython3を使用します。旧版の補助プログラムがあっても、この版は使用・変更しません。"
+  },
+  "directBackup": {
+    "message": "移行前の設定・履歴のバックアップ：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "directUninstallIntro": {
+    "message": "この拡張をThunderbirdの確認画面から削除します。"
+  },
+  "directUninstallKeep": {
+    "message": "設定・検査履歴・再開情報は失われる可能性があります。メール・アカウント・ClamAV・Python3・旧版の補助プログラムは削除しません。移行前のバックアップはThunderbirdプロファイル内に残ります。"
+  },
+  "directUninstallWait": {
+    "message": "実行中の検査を中止し、停止してから拡張を削除してください。"
+  },
+  "directRemove": {
+    "message": "拡張を削除"
+  },
+  "directUninstallCancelled": {
+    "message": "拡張の削除は完了していません。取り消した場合はこのまま利用できます。"
+  },
+  "directUpdateHelp": {
+    "message": "通常の更新は、旧版を削除せずXPIを上書きします。内蔵の検査処理も一緒に更新されます。"
+  },
+  "directRequirements": {
+    "message": "ClamAVとPython3が必要です。「接続を再確認」で利用できることを確認します。"
+  },
+  "directPermissionsHelp": {
+    "message": "この実験版はThunderbirdとコンピューターへの全面アクセス権限を要求します。完全削除などの操作前の確認画面は維持しています。"
+  },
+  "directLimitsHelp": {
+    "message": "検査の上限は「設定」で指定します。暗号化や上限超過で検査しきれない部分は未検査として案内します。定義が3日超古い場合は失敗として扱います。"
+  },
+  "directScanHelp": {
+    "message": "「設定」のClamAV検査設定で、フィッシング・マクロを含むOLE2文書・PUAの追加判定を選べます。検査しない／結果だけ表示／検出時に通知の3段階です。通知全体を無効にすると、追加判定の通知も出しません。注意情報はウイルスと区別し、それだけでは自動隔離しません。通常のウイルス検査や暗号化・上限超過の警告は有効のままです。メール全体5〜100MiB、展開後25〜500MiB（メール上限以上）、内部検査時間10〜120秒の範囲で変更でき、変更後に開始する検査から適用します。結果の「検出名・検査情報」には実施した検査条件を残します。検査処理は拡張と一緒に更新されます。"
+  },
+  "directExtensionDescription": {
+    "message": "ClamAVメール検査の実験版。検査処理を内蔵し、補助プログラムの別途設置を不要にします。"
+  },
+  "directAppTitle": {
+    "message": "ClamAV メール検査（実験版）"
+  },
+  "directDefinitions": {
+    "message": "FreshClamによるウイルス定義の初回更新を完了させてから「接続を再確認」を押してください。OSのClamAVとPython3を使用します。"
   }
 }

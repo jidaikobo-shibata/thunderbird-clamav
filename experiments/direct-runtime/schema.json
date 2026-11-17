@@ -1,0 +1,54 @@
+[
+  {
+    "namespace": "clamDirect",
+    "functions": [
+      {
+        "name": "open",
+        "type": "function",
+        "async": true,
+        "parameters": []
+      },
+      {
+        "name": "close",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          {
+            "name": "session",
+            "type": "string",
+            "maxLength": 80
+          }
+        ]
+      },
+      {
+        "name": "request",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          {
+            "name": "session",
+            "type": "string",
+            "maxLength": 80
+          },
+          {
+            "name": "data",
+            "type": "string",
+            "maxLength": 131072
+          }
+        ]
+      },
+      {
+        "name": "backup",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          {
+            "name": "snapshot",
+            "type": "string",
+            "maxLength": 67108864
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -2885,5 +2885,70 @@
   },
   "overflowClearConfirm": {
     "message": "Clear the totals and recent results outside history? Messages and normal scan history will remain unchanged."
+  },
+  "directDisconnected": {
+    "message": "The integrated scanner disconnected. Check its status in Setup."
+  },
+  "directPolicyMismatch": {
+    "message": "The requested scan policy could not be verified. Update the extension and scan again."
+  },
+  "directUnavailable": {
+    "message": "The integrated scanner could not start. Check its status in Setup."
+  },
+  "directNoSetup": {
+    "message": "This experimental version does not require a separately installed helper."
+  },
+  "directTitle": {
+    "message": "ClamAV integration (experimental)"
+  },
+  "directIntro": {
+    "message": "The scanner is included in this extension; no separate helper installation or update is needed. ClamAV and Python3 are required. Any previously installed helper is left untouched and is not used."
+  },
+  "directBackup": {
+    "message": "Pre-migration settings/history backup: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "directUninstallIntro": {
+    "message": "Remove this extension through Thunderbird’s confirmation dialog."
+  },
+  "directUninstallKeep": {
+    "message": "Settings, scan history, and resume data may be lost. Messages, accounts, ClamAV, Python3, and previously installed helpers are not removed. The pre-migration backup remains in the Thunderbird profile."
+  },
+  "directUninstallWait": {
+    "message": "Stop any running scans before removing the extension."
+  },
+  "directRemove": {
+    "message": "Remove extension"
+  },
+  "directUninstallCancelled": {
+    "message": "Extension removal did not complete. If canceled, the extension remains usable."
+  },
+  "directUpdateHelp": {
+    "message": "For updates, install the new XPI over the existing version without removing it. The integrated scanner is updated at the same time."
+  },
+  "directRequirements": {
+    "message": "ClamAV and Python3 are required. Use Recheck connection to verify availability."
+  },
+  "directPermissionsHelp": {
+    "message": "This experimental version requests full access to Thunderbird and your computer. Confirmation dialogs before operations such as permanent deletion are retained."
+  },
+  "directLimitsHelp": {
+    "message": "Configure scan limits in Settings. Encrypted or oversized content that cannot be fully scanned is reported as incomplete. Definitions older than three days cause scanning to fail."
+  },
+  "directScanHelp": {
+    "message": "In Settings, choose additional phishing, OLE2 macro and PUA detection: off, results only, or notify on detection. Disabling notifications globally also disables these notifications. Advisory findings are separate from malware and do not automatically trigger quarantine. Regular malware scanning, encryption alerts and limit alerts stay enabled. Limits are 5–100 MiB for whole messages, 25–500 MiB expanded (at least the message limit), and 10–120 seconds for internal scanning. Changes apply to subsequent scans. Applied settings are stored under Detection names and scan information. The integrated scanner is updated with the extension."
+  },
+  "directExtensionDescription": {
+    "message": "Experimental ClamAV mail scanner with an integrated scanner and no separately installed helper."
+  },
+  "directAppTitle": {
+    "message": "ClamAV Mail Check (Experimental)"
+  },
+  "directDefinitions": {
+    "message": "Complete the initial virus-definition update with FreshClam, then recheck the connection. The installed ClamAV and Python3 are used."
   }
 }

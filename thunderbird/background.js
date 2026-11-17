@@ -1,3 +1,4 @@
+import { directRuntime } from "./direct-transport.mjs";
 import { scanPolicy, defaultScanPolicy, advisoryNotifies } from "./scan-policy.mjs";
 import { canReview, canUnreview, reviewReason, reviewStamp, reconcileReview } from "./review.mjs";
 import { validateQuarantine, moveToQuarantine, inQuarantine, canQuarantine, refreshQuarantineLocation } from "./quarantine.mjs";
@@ -11,6 +12,8 @@ import { canDelete, canForget, canRetry } from "./results.mjs";
 import { FolderScan, FOLDER_STATES, realFolder, checkpointHint } from "./folder-scan.mjs";
 
 const api = messenger;
+const DIRECT = directRuntime(api.runtime);
+let directMigrationBackup = null;
 const session = crypto.randomUUID();
 const MAX_RECORDS = 1000;
 let settings = { ...DEFAULTS };
@@ -68,13 +71,15 @@ function releaseMaintenance() {
 async function readHealth(client) {
   try {
     return { ...await client.request("health"), checkedAt: new Date().toISOString() };
-  } catch {
+  } catch (error) {
+    if (DIRECT) return { status: "error", code: "direct_unavailable", checkedAt: new Date().toISOString(), detail: t("directUnavailable", "内蔵の検査処理を開始できません。セットアップで状態を確認してください。") + " " + String(error.message).slice(0, 300) };
     return { status: "error", code: "helper_unavailable", checkedAt: new Date().toISOString(),
       detail: t("helperClamavUnknown", "補助プログラムに接続できないため、ClamAVの有無はまだ確認できません。補助プログラムの導入・接続を確認してください。") };
   }
 }
 function applyHealthToInstallation() {
   if (!installation || installation.state === "removed") return;
+  if (DIRECT) { installation.state = "integrated"; installation.healthy = lastHealth.status === "ready"; installation.detail = lastHealth.detail; }
   installation.clamavCode = lastHealth.status === "ready" ? "ready" : lastHealth.code || "unconfirmed";
   if (lastHealth.code === "helper_unavailable") installation.state = "unavailable";
 }
@@ -84,6 +89,13 @@ async function helperInfo() {
   let client;
   try {
     client = new NativeClient(api.runtime);
+    if (DIRECT) {
+      lastHealth = await readHealth(client);
+      installation = { state: "integrated", version: api.runtime.getManifest().version,
+        healthy: lastHealth.status === "ready", detail: lastHealth.detail,
+        clamavCode: lastHealth.status === "ready" ? "ready" : lastHealth.code || "direct_unavailable" };
+      return installation;
+    }
     const info = await client.request("manageInfo");
     if (generation !== maintenanceGeneration) return installation;
     const candidate = { state: info.status === "managed" ? "managed" : "legacy",
@@ -99,7 +111,7 @@ async function helperInfo() {
     installation = { state: helperRemoved && installation?.state === "removed" ? "removed" : "unavailable", detail: error.message };
     lastHealth = { status: "error", code: "helper_unavailable", checkedAt: new Date().toISOString(),
       detail: t("helperClamavUnknown", "補助プログラムに接続できないため、ClamAVの有無はまだ確認できません。補助プログラムの導入・接続を確認してください。") };
-  } finally { client?.close(); }
+  } finally { client?.close(); if (DIRECT) { await save(); await updateBadge(); } }
   await save();
   await updateBadge();
   return installation;
@@ -362,7 +374,7 @@ function report(error) {
 function save() {
   // Take a snapshot now, then serialize storage writes so an older snapshot
   // cannot overwrite a later scan result.
-  const value = JSON.parse(JSON.stringify({ settings, records, overflowPending, overflowReport, issue, lastHealth, lastScan, helperRemoved, installation, folderJob: folderScan.snapshot(), folderCheckpoint: folderScan.checkpointState() }));
+  const value = JSON.parse(JSON.stringify({ directMigrationBackup, settings, records, overflowPending, overflowReport, issue, lastHealth, lastScan, helperRemoved, installation, folderJob: folderScan.snapshot(), folderCheckpoint: folderScan.checkpointState() }));
   writes = writes.catch(() => {}).then(() => api.storage.local.set(value));
   void updateBadge().catch(() => {});
   return writes;
@@ -657,7 +669,12 @@ async function scanSelection() {
 }
 
 const ready = (async () => {
-  const data = await api.storage.local.get(["settings", "records", "overflowPending", "overflowReport", "issue", "folderJob", "folderCheckpoint", "lastHealth", "lastScan", "helperRemoved", "installation"]);
+  const data = await api.storage.local.get(["directMigrationBackup", "settings", "records", "overflowPending", "overflowReport", "issue", "folderJob", "folderCheckpoint", "lastHealth", "lastScan", "helperRemoved", "installation"]);
+  directMigrationBackup = data.directMigrationBackup || null;
+  if (DIRECT && !directMigrationBackup) {
+    directMigrationBackup = data.settings || data.records?.length ? await api.clamDirect.backup(JSON.stringify(data)) : { notNeeded: true };
+    await api.storage.local.set({ directMigrationBackup });
+  }
   settings = normalizeAutomaticSettings(data.settings);
   records = Array.isArray(data.records) ? data.records : [];
   overflowPending = data.overflowPending || null;
@@ -665,7 +682,7 @@ const ready = (async () => {
   if (overflowReport) overflowReport.recent = (overflowReport.recent || []).slice(0, 20);
   issue = typeof data.issue === "string" ? data.issue : "";
   lastHealth = data.lastHealth || null;
-  helperRemoved = data.helperRemoved === true;
+  helperRemoved = !DIRECT && data.helperRemoved === true;
   installation = data.installation || null;
   lastScan = data.lastScan || records.filter(record => record.engine &&
     ["clean", "detected", "incomplete", "deleted", "advisory"].includes(record.status))
@@ -784,21 +801,22 @@ api.runtime.onInstalled.addListener(() => { void openDashboard().catch(report); 
 
 api.runtime.onMessage.addListener(async (request, sender) => {
   if (sender.id !== api.runtime.id || sender.url !== api.runtime.getURL("dashboard.html")) return undefined;
-  await ready;
   try {
+    await ready;
     if ((maintenanceActive() || helperRemoved) && !["state", "helperInfo", "helperApply", "helperCancel", "helperMarkRemoved", "health"].includes(request.type)) {
       throw new Error(t("mail054", "補助プログラムの管理中か削除後です。導入を確認してから操作してください。"));
     }
     if (batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation) && !["state", "cancelBatch", "helperInfo", "health"].includes(request.type)) throw new Error(t("qBusy", "このメールは処理中です。"));
     switch (request.type) {
       case "state":
-        return { ok: true, settings, records, overflowPending, overflowReport, issue, lastHealth, lastScan, resultsRequest, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
+        return { ok: true, directMigrationBackup, settings, records, overflowPending, overflowReport, issue, lastHealth, lastScan, resultsRequest, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
           folderJob: folderScan.snapshot(), accounts: (await api.accounts.list())
           .filter(account => ["imap", "pop3", "none"].includes(account.type))
           .map(account => ({ id: account.id, name: account.name, type: account.type })) };
       case "helperInfo":
         return { ok: true, installation: await helperInfo(), health: lastHealth };
       case "helperPlan": {
+        if (DIRECT) throw new Error(t("directNoSetup", "この実験版では補助プログラムの別途導入・更新は不要です。"));
         if (running || folderScan.active || batchProgress?.active || deleting.size) throw new Error(t("mail055", "検査・削除の処理が終了してから操作してください。フォルダー検査中は先に中止してください。"));
         maintenanceGeneration++;
         const client = new NativeClient(api.runtime);
@@ -847,6 +865,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         } finally { releaseMaintenance(); void drain().catch(report); }
       }
       case "helperMarkRemoved":
+        if (DIRECT) throw new Error(t("directNoSetup", "この実験版では補助プログラムの別途導入・更新は不要です。"));
         if (request.acknowledged !== true || running || folderScan.active || batchProgress?.active || deleting.size) throw new Error(t("mail065", "処理を停止し、Terminalで補助プログラムの削除が完了したことを確認してください。"));
         helperRemoved = true;
         settings = { ...settings, enabled: false, accountIds: [] };

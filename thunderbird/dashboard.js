@@ -1,3 +1,4 @@
+import { permission } from "./direct-transport.mjs";
 import { syncScanPolicy, readScanPolicy, policyDescription, advisoryDescription } from "./scan-policy.mjs";
 import { isReviewed, canReview, canUnreview, reviewStamp } from "./review.mjs";
 import { canQuarantine, quarantineNeedsPermission } from "./quarantine.mjs";
@@ -128,7 +129,7 @@ function renderHelperNotice() {
 function openSetup() {
   userNavigated = true;
   activateTab("setup");
-  const target = ["clamav_missing", "clamav_unusable"].includes(latest?.lastHealth?.code) ? $("connection-title") : $("installation-title");
+  const target = latest?.installation?.state === "integrated" || ["clamav_missing", "clamav_unusable"].includes(latest?.lastHealth?.code) ? $("connection-title") : $("installation-title");
   target.focus();
   target.scrollIntoView({ block: "start" });
 }
@@ -309,7 +310,7 @@ $("delete-ack").addEventListener("change", () => { $("delete-confirm").disabled 
 async function requireDeletePermission() {
   // Called synchronously from the delete click, before any other awaited work.
   // Already-granted permissions resolve without another permission prompt.
-  const granted = await messenger.permissions.request({ permissions: ["messagesDelete"] });
+  const granted = await permission(messenger, ["messagesDelete"]);
   if (!granted) throw new Error(t("mail126", "完全削除が許可されなかったため、メールは削除していません。"));
 }
 

@@ -1,0 +1,106 @@
+import json
+import os
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+STUB = '''import json,os,subprocess,sys
+class ProtocolError(Exception): pass
+class Session:
+ def handle(self,request): return request
+def main():
+ child=subprocess.Popen(["/usr/bin/sleep","60"])
+ print(json.dumps({"worker":os.getpid(),"child":child.pid}),flush=True)
+ try:
+  sys.stdin.buffer.read()
+ finally:
+  child.terminate();child.wait()
+ return 0
+'''
+
+
+def alive(pid):
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].strip().split()[0] != "Z"
+    except FileNotFoundError:
+        return False
+
+
+class DirectGuardianTests(unittest.TestCase):
+    def prepare(self):
+        directory = Path(tempfile.mkdtemp(prefix="clam-mail-direct-", dir="/tmp"))
+        shutil.copyfile(ROOT / "experiments/direct-runtime/guardian.py", directory / "guardian.py")
+        (directory / "host.py").write_text(STUB)
+        self.addCleanup(lambda: shutil.rmtree(directory, ignore_errors=True))
+        return directory
+
+    def wait_clean(self, directory, pids):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if not directory.exists() and not any(alive(pid) for pid in pids):
+                return
+            time.sleep(0.05)
+        self.fail("Supervisor left a process or private runtime directory")
+
+    def test_pipe_close_stops_worker_and_descendants_and_removes_files(self):
+        directory = self.prepare()
+        process = subprocess.Popen([sys.executable, "-I", "-B", str(directory / "guardian.py"), str(os.getpid())],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        self.addCleanup(lambda: process.poll() is None and process.terminate())
+        pids = json.loads(process.stdout.readline())
+        process.stdin.close()
+        process.wait(timeout=5)
+        process.stdout.close()
+        self.wait_clean(directory, pids.values())
+
+    def test_terminating_guardian_stops_the_entire_scan_group(self):
+        directory = self.prepare()
+        process = subprocess.Popen([sys.executable, "-I", "-B", str(directory / "guardian.py"), str(os.getpid())],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        pids = json.loads(process.stdout.readline())
+        process.terminate()
+        process.wait(timeout=5)
+        process.stdin.close(); process.stdout.close()
+        self.wait_clean(directory, pids.values())
+
+    def test_parent_crash_is_detected_without_relying_on_clamd_parent_death_signal(self):
+        directory = self.prepare()
+        command = ("import os,subprocess,sys; "
+                   "p=subprocess.Popen([sys.executable,'-I','-B',sys.argv[1],str(os.getpid())]); p.wait()")
+        parent = subprocess.Popen([sys.executable, "-I", "-c", command, str(directory / "guardian.py")],
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        pids = json.loads(parent.stdout.readline())
+        parent.kill(); parent.wait(timeout=5)
+        parent.stdin.close(); parent.stdout.close()
+        self.wait_clean(directory, pids.values())
+
+    def test_guardian_crash_still_allows_worker_to_clean_itself(self):
+        directory = self.prepare()
+        process = subprocess.Popen([sys.executable, "-I", "-B", str(directory / "guardian.py"), str(os.getpid())],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        pids = json.loads(process.stdout.readline())
+        process.kill(); process.wait(timeout=5)
+        # Keep the pipe open: the worker must notice its guardian disappeared.
+        self.wait_clean(directory, pids.values())
+        process.stdin.close(); process.stdout.close()
+
+    def test_worker_crash_does_not_leave_its_child(self):
+        directory = self.prepare()
+        process = subprocess.Popen([sys.executable, "-I", "-B", str(directory / "guardian.py"), str(os.getpid())],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        pids = json.loads(process.stdout.readline())
+        os.kill(pids["worker"], signal.SIGKILL)
+        process.wait(timeout=5)
+        process.stdin.close(); process.stdout.close()
+        self.wait_clean(directory, pids.values())
+
+
+if __name__ == "__main__":
+    unittest.main()
