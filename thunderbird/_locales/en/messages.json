@@ -2949,7 +2949,7 @@
     "message": "ClamAV Mail Check (Experimental)"
   },
   "directDefinitions": {
-    "message": "Complete the initial virus-definition update with FreshClam, then recheck the connection. The installed ClamAV and Python3 are used."
+    "message": "Let FreshClam complete its initial virus definition update, then click Check connection again. This extension uses ClamAV and Python3 installed on your computer. No separate helper program needs to be installed."
   },
   "directHelpEnvironmentTitle": {
     "message": "Requirements"

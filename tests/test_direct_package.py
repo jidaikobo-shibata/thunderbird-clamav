@@ -19,6 +19,7 @@ class DirectPackageTests(unittest.TestCase):
             self.assertEqual(set(manifest['experiment_apis']), {'clamDirect'})
             self.assertIn('messagesDelete', manifest['permissions'])
             self.assertIn('messagesMove', manifest['permissions'])
+            self.assertEqual(archive.read('LICENSE'), (root / 'LICENSE').read_bytes())
             self.assertNotIn('installer.pyz', archive.namelist())
             self.assertFalse(any(name.startswith(('fixture/', 'setup/')) for name in archive.namelist()))
             self.assertEqual(archive.read('direct/host.py'), (root / 'native/host.py').read_bytes())

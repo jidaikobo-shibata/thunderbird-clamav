@@ -5,7 +5,7 @@ from pathlib import Path
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.20.0a4"
+VERSION = "0.20.0a5"
 
 
 def build():
@@ -28,6 +28,7 @@ def build():
                 archive.writestr(name, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n" if name == "manifest.json" else path.read_bytes())
         for name in ["api.js", "schema.json", "guardian.py"]:
             archive.writestr("direct/" + name, (ROOT / "experiments/direct-runtime" / name).read_bytes())
+        archive.writestr("LICENSE", (ROOT / "LICENSE").read_bytes())
         archive.writestr("direct/host.py", (ROOT / "native/host.py").read_bytes())
     return output
 

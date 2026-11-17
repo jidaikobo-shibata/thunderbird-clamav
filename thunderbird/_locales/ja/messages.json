@@ -2949,7 +2949,7 @@
     "message": "ClamAV メール検査（実験版）"
   },
   "directDefinitions": {
-    "message": "FreshClamによるウイルス定義の初回更新を完了させてから「接続を再確認」を押してください。OSのClamAVとPython3を使用します。"
+    "message": "FreshClamによるウイルス定義の初回更新を完了させてから「接続を再確認」を押してください。OSのClamAVとPython3を使用します。別の補助プログラムの導入は不要です。"
   },
   "directHelpEnvironmentTitle": {
     "message": "利用環境"

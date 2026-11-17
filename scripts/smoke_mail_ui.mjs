@@ -249,6 +249,7 @@ try {
       assert.equal(await evaluate("document.getElementById('panel-scan').hidden"), false);
       assert.equal(await evaluate("document.getElementById('tab-setup')"), null);
       assert.equal(await evaluate("document.getElementById('panel-uninstall')"), null);
+      assert.match(await evaluate("document.getElementById('clamav-install-guide').innerText"), language === 'ja' ? /別の補助プログラムの導入は不要/ : /No separate helper program/);
       assert.equal(await evaluate("document.getElementById('helper-task')"), null);
       assert.equal(await evaluate("document.getElementById('direct-backup')"), null);
       assert.equal(await evaluate("document.getElementById('setup-dot').parentElement.id"), 'tab-settings');
