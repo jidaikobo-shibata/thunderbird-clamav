@@ -1,0 +1,45 @@
+[
+  {
+    "namespace": "directClam",
+    "functions": [
+      {
+        "name": "health",
+        "type": "function",
+        "async": true,
+        "parameters": []
+      },
+      {
+        "name": "scan",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          {
+            "name": "content",
+            "type": "string",
+            "maxLength": 26214400
+          },
+          {
+            "name": "mode",
+            "type": "string",
+            "enum": [
+              "direct",
+              "daemon"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "close",
+        "type": "function",
+        "async": true,
+        "parameters": []
+      },
+      {
+        "name": "selfTest",
+        "type": "function",
+        "async": true,
+        "parameters": []
+      }
+    ]
+  }
+]

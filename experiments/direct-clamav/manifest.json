@@ -1,0 +1,38 @@
+{
+  "manifest_version": 2,
+  "name": "ClamAV Direct API Probe (synthetic mail only)",
+  "version": "0.1.0",
+  "description": "Isolated Experiment API feasibility probe. Does not read real mail.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "direct-clam-probe@local.invalid",
+      "strict_min_version": "153.0",
+      "strict_max_version": "153.*"
+    }
+  },
+  "background": {
+    "scripts": [
+      "background.js"
+    ]
+  },
+  "browser_action": {
+    "default_title": "ClamAV direct API probe",
+    "default_popup": "popup.html"
+  },
+  "experiment_apis": {
+    "directClam": {
+      "schema": "schema.json",
+      "parent": {
+        "scopes": [
+          "addon_parent"
+        ],
+        "paths": [
+          [
+            "directClam"
+          ]
+        ],
+        "script": "api.js"
+      }
+    }
+  }
+}
