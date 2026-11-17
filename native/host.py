@@ -127,9 +127,9 @@ _MESSAGE_KEYS = {'メールが空か、検査上限の25MiBを超えています
 
 
 
-_EN_MESSAGES.update({'ClamAVが見つかりません。この拡張は /usr/bin/clamscan を使用します。': 'ClamAV was not found. This extension uses /usr/bin/clamscan.', 'ClamAVを起動・確認できません。導入状態と実行権限を確認してください。': 'ClamAV could not be started or verified. Check its installation and execution permissions.'})
+_EN_MESSAGES.update({'ClamAVが対応する導入先に見つかりません。設定の導入案内を確認してください。': 'ClamAV was not found in a supported installation location. See the installation guide in Settings.', 'ClamAVを起動・確認できません。導入状態と実行権限を確認してください。': 'ClamAV could not be started or verified. Check its installation and execution permissions.'})
 
-_MESSAGE_KEYS.update({'ClamAVが見つかりません。この拡張は /usr/bin/clamscan を使用します。': 'clamavMissing', 'ClamAVを起動・確認できません。導入状態と実行権限を確認してください。': 'clamavUnusable'})
+_MESSAGE_KEYS.update({'ClamAVが対応する導入先に見つかりません。設定の導入案内を確認してください。': 'clamavMissing', 'ClamAVを起動・確認できません。導入状態と実行権限を確認してください。': 'clamavUnusable'})
 
 _EN_MESSAGES.update({"検査設定が不正です。": "Invalid scan settings.", "注意情報を検出しました。ウイルスの検出とは区別して確認してください。": "Advisory findings detected. Review them separately from malware detections."})
 _MESSAGE_KEYS.update({"検査設定が不正です。": "scanSettingsInvalid", "注意情報を検出しました。ウイルスの検出とは区別して確認してください。": "scanAdvisoryDetail"})
@@ -162,8 +162,66 @@ CLAMSCAN = "/usr/bin/clamscan"
 TEMP_ROOT = "/tmp"
 TIMEOUT = 120
 CLAMD = "/usr/sbin/clamd"
-START_TIMEOUT = 60
+DATABASE = "/var/lib/clamav"
+DIRECT_RUNTIME = False
+CLAMAV_TRUST_ERROR = False
+START_TIMEOUT = 180 if sys.platform == "darwin" else 60
 sys.dont_write_bytecode = True
+
+
+def trusted_macos_path(path, prefix):
+    """Only an installed Homebrew ClamAV, owned by root/current user/admin.
+
+    Resolve symlinks and inspect both the link path and target's ancestors.
+    This does not attempt to defend against another process of the same user.
+    """
+    path, prefix = Path(path), Path(prefix)
+    target = path.resolve(strict=True)
+    if not target.is_relative_to(prefix / "Cellar/clamav") or not target.is_file() or not os.access(target, os.X_OK):
+        raise OSError("ClamAV is outside the trusted installation")
+    for item in {*path.parents, path, *target.parents, target}:
+        info = item.stat()
+        if info.st_uid not in (0, os.getuid()) or info.st_mode & 0o002:
+            raise OSError("Untrusted ClamAV ownership or permissions")
+        if info.st_mode & 0o020 and info.st_gid not in (0, 80):
+            raise OSError("Untrusted writable ClamAV group")
+    return str(target)
+
+
+def macos_clamav():
+    prefixes = ("/opt/homebrew", "/usr/local") if os.uname().machine == "arm64" else ("/usr/local", "/opt/homebrew")
+    rejected = False
+    for prefix in prefixes:
+        executable = Path(prefix) / "bin/clamscan"
+        if not executable.exists() and not executable.is_symlink():
+            continue
+        try:
+            scan = trusted_macos_path(executable, prefix)
+        except OSError:
+            rejected = True
+            continue
+        try:
+            daemon = trusted_macos_path(Path(prefix) / "sbin/clamd", prefix)
+        except OSError:
+            daemon = str(Path(prefix) / "sbin/clamd-unavailable")
+        return scan, daemon, prefix + "/var/lib/clamav", False
+    prefix = prefixes[0]
+    return prefix + "/bin/clamscan-unavailable", prefix + "/sbin/clamd-unavailable", prefix + "/var/lib/clamav", rejected
+
+
+if sys.platform == "darwin":
+    CLAMSCAN, CLAMD, DATABASE, CLAMAV_TRUST_ERROR = macos_clamav()
+
+
+def macos_rss(pid):
+    import ctypes
+    lib = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    lib.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+    lib.proc_pidinfo.restype = ctypes.c_int
+    info = ctypes.create_string_buffer(96)  # Darwin proc_taskinfo
+    if lib.proc_pidinfo(pid, 4, 0, info, len(info)) != len(info):
+        raise OSError(ctypes.get_errno(), "Cannot inspect MIME worker memory")
+    return int.from_bytes(info.raw[8:16], sys.byteorder)
 
 
 SCAN_DEFAULTS = {"phishing": "off", "macros": "off", "pua": "off", "mailMiB": 25, "expandedMiB": 100, "seconds": 60}
@@ -313,11 +371,24 @@ def encrypted_mail(data):
 
 
 def mime_worker():
-    # Linux is the supported initial platform. Fail closed if limits cannot be applied.
+    # Fail closed if limits or parent monitoring cannot be applied.
     try:
         import resource
-        resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
+        if sys.platform == "linux":
+            resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
+        elif sys.platform == "darwin":
+            parent = os.getppid()
+
+            def check_parent(_signal, _frame):
+                if os.getppid() != parent:
+                    raise SystemExit(1)
+
+            signal.signal(signal.SIGALRM, check_parent)
+            signal.setitimer(signal.ITIMER_REAL, 0.1, 0.1)
+        else:
+            return 1
         resource.setrlimit(resource.RLIMIT_CPU, (3, 3))
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
         child_lifetime(os.getppid())
         data = sys.stdin.buffer.read(MAX_TRANSFER + 1)
         if len(data) > MAX_TRANSFER:
@@ -327,11 +398,42 @@ def mime_worker():
         return 0
     except (Exception, MemoryError):
         return 1
+    finally:
+        if sys.platform == "darwin":
+            # Do not leave SIGALRM armed while Python restores signal defaults
+            # during interpreter shutdown (it can turn a valid result into -14).
+            signal.setitimer(signal.ITIMER_REAL, 0)
 
 
 def mime_inspection(data):
     try:
-        result = subprocess.run(["/usr/bin/python3", "-I", str(Path(__file__).absolute()), "--mime-check"],
+        command = [sys.executable, "-I", "-B", str(Path(__file__).absolute()), "--mime-check"]
+        if sys.platform == "darwin":
+            with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as child:
+                deadline = time.monotonic() + 5
+                try:
+                    first = True
+                    while True:
+                        try:
+                            output, _ = child.communicate(input=data if first else None, timeout=0.05)
+                            return output.decode("ascii") if child.returncode == 0 and output in (b"encrypted", b"clear") else "limited"
+                        except subprocess.TimeoutExpired:
+                            first = False
+                            if time.monotonic() >= deadline:
+                                return "limited"
+                            try:
+                                if macos_rss(child.pid) > 512 * 1024 ** 2:
+                                    return "limited"
+                            except ProcessLookupError:
+                                continue  # Harvest the output of a just-exited worker.
+                            except OSError:
+                                if child.poll() is None:
+                                    raise
+                finally:
+                    if child.poll() is None:
+                        child.kill()
+                    child.wait(timeout=5)
+        result = subprocess.run(command,
                                 input=data, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                 timeout=5, check=False)
         if result.returncode == 0 and result.stdout in (b"encrypted", b"clear"):
@@ -346,7 +448,13 @@ class DaemonUnavailable(Exception):
 
 
 def child_lifetime(parent):
-    """Linux child: terminate if the Native Messaging host disappears."""
+    """Linux uses prctl; Darwin direct children stay in the supervised group."""
+    if sys.platform == "darwin":
+        if os.getppid() != parent:
+            os._exit(1)
+        return
+    if sys.platform != "linux":
+        os._exit(1)
     import ctypes
     libc = ctypes.CDLL(None, use_errno=True)
     if libc.prctl(1, signal.SIGTERM) != 0:
@@ -410,6 +518,8 @@ class MailDaemon:
             return bytes(reply[:-1]).decode("utf-8", "replace")
 
     def start(self):
+        if CLAMAV_TRUST_ERROR:
+            raise ProtocolError(tr('ClamAVを起動・確認できません。導入状態と実行権限を確認してください。'))
         if self.disabled:
             raise DaemonUnavailable()
         if self.process is not None:
@@ -428,7 +538,7 @@ class MailDaemon:
             config = directory / "clamd.conf"
             config.write_text("\n".join([
                 "Foreground yes", "LocalSocket " + self.address, "LocalSocketMode 600",
-                "TemporaryDirectory " + str(directory), "DatabaseDirectory /var/lib/clamav",
+                "TemporaryDirectory " + str(directory), "DatabaseDirectory " + DATABASE,
                 "FailIfCvdOlderThan 3", "SelfCheck 60", "ConcurrentDatabaseReload no",
                 "ScanMail yes", "ScanArchive yes", "AlertEncrypted yes", "AlertExceedsMax yes",
                 "PhishingSignatures " + ("yes" if self.options["phishing"] != "off" else "no"),
@@ -533,6 +643,8 @@ class MailDaemon:
 
 
 def scan_clamscan(data, options=None):
+    if CLAMAV_TRUST_ERROR:
+        return {"status": "error", "signatures": [], "detail": tr('ClamAVを起動・確認できません。導入状態と実行権限を確認してください。')}
     options = scan_options(options)
     args = [CLAMSCAN, "--stdout", "--no-summary", "--scan-mail=yes",
             "--allmatch=yes", "--alert-encrypted=yes", "--alert-exceeds-max=yes",
@@ -546,6 +658,8 @@ def scan_clamscan(data, options=None):
         "--phishing-scan-urls=" + ("yes" if options["phishing"] != "off" else "no"),
         "--alert-macros=" + ("yes" if options["macros"] != "off" else "no"),
         "--detect-pua=" + ("yes" if options["pua"] != "off" else "no")]
+    if sys.platform == "darwin":
+        args.insert(1, "--database=" + DATABASE)
     try:
         # ClamAV may unpack containers internally. Give it a private temporary
         # directory, including on failures/timeouts, rather than keeping mail.
@@ -610,8 +724,10 @@ def scan(data, scanner=None, options=None):
 
 
 def health():
+    if CLAMAV_TRUST_ERROR:
+        return {"status": "error", "code": "clamav_unusable", "detail": tr('ClamAVを起動・確認できません。導入状態と実行権限を確認してください。')}
     if not Path(CLAMSCAN).is_file():
-        return {"status": "error", "code": "clamav_missing", "detail": tr('ClamAVが見つかりません。この拡張は /usr/bin/clamscan を使用します。')}
+        return {"status": "error", "code": "clamav_missing", "detail": tr('ClamAVが対応する導入先に見つかりません。設定の導入案内を確認してください。')}
     try:
         result = subprocess.run([CLAMSCAN, "--version"], capture_output=True,
                                 timeout=10, check=False)

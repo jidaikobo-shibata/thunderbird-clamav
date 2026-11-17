@@ -8,6 +8,7 @@ import subprocess
 import struct
 import select
 import unittest
+import sys
 import warnings
 from unittest.mock import patch
 import zipfile
@@ -25,7 +26,7 @@ class CliSetupTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="clam-cli-fixture-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name) / "package"
-        self.home = Path(self.temp.name) / "home"
+        self.home = Path(self.temp.name).resolve() / "home"
         self.root.mkdir(); self.home.mkdir()
         self.package = installer_bytes(ROOT)
         unpack(self.package, self.root)
@@ -166,7 +167,7 @@ class CliSetupTests(unittest.TestCase):
         self.install()
         release = self.manager.layout.base / self.manager.receipt()["release"]
         driver = "import pathlib,sys,runpy; home=pathlib.Path(sys.argv[2]); pathlib.Path.home=classmethod(lambda cls:home); runpy.run_path(sys.argv[1],run_name='__main__')"
-        process = subprocess.Popen(["/usr/bin/python3", "-I", "-c", driver,
+        process = subprocess.Popen([sys.executable, "-I", "-c", driver,
                                     str(release / "native/host.py"), str(self.home)],
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         def request(value):

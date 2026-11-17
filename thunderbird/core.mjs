@@ -112,6 +112,9 @@ export class NativeClient {
   }
 
   request(op, values = {}, timeout = 15000) {
+    // The first direct request includes fixed-path executable verification.
+    // RPC deadlines in the privileged bridge remain bounded independently.
+    if (this.direct && timeout === 15000) timeout = 45000;
     if (this.closed) return Promise.reject(new Error(this.direct ? t("directUnavailable", "内蔵の検査処理を開始できません。設定で状態を確認してください。") : t("mail094", "補助プログラムに接続できません。")));
     const id = String(++this.sequence);
     return new Promise((resolve, reject) => {
@@ -146,7 +149,7 @@ export class NativeClient {
         throw new Error(result.detail || t("mail099", "メールの転送に失敗しました。"));
       }
     }
-    result = await this.request("end", { sha256: digest }, 225000);
+    result = await this.request("end", { sha256: digest }, this.direct ? 360000 : 225000);
     if (!["clean", "detected", "incomplete", "error", "advisory"].includes(result.status)) {
       throw new Error(t("mail100", "補助プログラムの結果を解釈できません。"));
     }

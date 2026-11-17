@@ -5,6 +5,7 @@ import tempfile
 import subprocess
 import tarfile
 import unittest
+import sys
 from unittest.mock import patch
 
 from setup.manager import Manager, SetupError, PAYLOAD, PRODUCT
@@ -211,6 +212,7 @@ class SetupTests(unittest.TestCase):
         self.assertTrue((release / "user-directory").is_dir())
         self.assertIn(str(release), result["retained"])
 
+    @unittest.skipUnless(sys.platform == "linux", "Legacy GUI launcher targets Linux/ELF only")
     def test_bundle_is_self_contained_and_launcher_finds_neighbor_without_shell(self):
         shutil.copytree(ROOT / "thunderbird", self.root / "thunderbird", dirs_exist_ok=True)
         shutil.copyfile(ROOT / "setup/launcher.c", self.root / "setup/launcher.c")

@@ -2,7 +2,7 @@ import { directRuntime } from "./direct-transport.mjs";
 import { t } from "./i18n.mjs";
 
 /** Keep the daily-use view small; legacy management remains in the legacy build. */
-export function configureDirectView() {
+export async function configureDirectView() {
   if (!directRuntime()) return;
   const $ = id => document.getElementById(id);
   document.title = t("directAppTitle", "ClamAV メール検査（実験版）");
@@ -42,4 +42,15 @@ export function configureDirectView() {
   replace("scanHelp", "directScanHelp", "検査条件は設定で指定します。検査処理は拡張と一緒に更新されます。");
   replace("clamavDefinitions", "directDefinitions", "FreshClamで定義を更新してから接続を再確認してください。");
   replace("mail341", "directLimitsHelp", "検査上限は設定で指定します。暗号化や上限超過は未検査として案内します。");
+  const platform = await globalThis.messenger.runtime.getPlatformInfo?.();
+  if (platform?.os === "mac") {
+    replace("clamavInstallHeading", "directMacInstallHeading", "ClamAVの導入方法（macOS）");
+    replace("clamavInstallInstructions", "directMacInstallInstructions", "HomebrewでClamAVとPython 3.10以降を導入します。別の補助プログラムや常駐サービスは不要です。");
+    const prefix = platform.arch === "aarch64" || platform.arch === "arm" ? "/opt/homebrew" : "/usr/local";
+    $("clamav-install-guide").querySelector("pre code").textContent = "brew install clamav python\n" +
+      "mkdir -p " + prefix + "/var/lib/clamav\n" +
+      "(\n  set -C\n  printf '%s\\n' \\\n  'DatabaseDirectory " + prefix + "/var/lib/clamav' \\\n  'DatabaseMirror database.clamav.net' \\\n  > \"$HOME/clam-mail-freshclam.conf\"\n)\n" +
+      "freshclam --config-file=\"$HOME/clam-mail-freshclam.conf\"";
+    replace("clamavDefinitions", "directMacDefinitions", "上の設定ファイルが既にある場合は上書きせず内容を確認してください。FreshClamの初回更新を完了させてから、接続を再確認します。定義は定期的に更新してください。3日より古い定義では検査が失敗します。python.org版のPythonも利用できます。macOS付属のPythonは使用しません。");
+  }
 }

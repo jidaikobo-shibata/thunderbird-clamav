@@ -2450,8 +2450,7 @@
     }
   },
   "clamavMissing": {
-    "message": "ClamAV was not found. This extension uses /usr/bin/clamscan.",
-    "description": "ClamAVが見つかりません。この拡張は /usr/bin/clamscan を使用します。"
+    "message": "ClamAV was not found in a supported installation location. See the installation guide in Settings."
   },
   "clamavUnusable": {
     "message": "ClamAV could not be started or verified. Check its installation and execution permissions.",
@@ -2984,5 +2983,14 @@
         "content": "$1"
       }
     }
+  },
+  "directMacInstallHeading": {
+    "message": "Install ClamAV (macOS)"
+  },
+  "directMacInstallInstructions": {
+    "message": "Install ClamAV and Python 3.10+ with Homebrew. No separate helper or background service is needed. These commands add packages and download definitions from the official mirror."
+  },
+  "directMacDefinitions": {
+    "message": "The creation command refuses to overwrite an existing configuration file; inspect it if creation fails. Complete the first FreshClam update, then check the connection again. Update definitions regularly: definitions older than three days cause scans to fail. Python from python.org is also supported. The macOS-provided Python is not used."
   }
 }

@@ -2450,8 +2450,7 @@
     }
   },
   "clamavMissing": {
-    "message": "ClamAVが見つかりません。この拡張は /usr/bin/clamscan を使用します。",
-    "description": "ClamAVが見つかりません。この拡張は /usr/bin/clamscan を使用します。"
+    "message": "ClamAVが対応する導入先に見つかりません。設定の導入案内を確認してください。"
   },
   "clamavUnusable": {
     "message": "ClamAVを起動・確認できません。導入状態と実行権限を確認してください。",
@@ -2984,5 +2983,14 @@
         "content": "$1"
       }
     }
+  },
+  "directMacInstallHeading": {
+    "message": "ClamAVの導入方法（macOS）"
+  },
+  "directMacInstallInstructions": {
+    "message": "HomebrewでClamAVとPython 3.10以降を導入します。別の補助プログラムや常駐サービスは不要です。以下の操作はパッケージを追加し、公式ミラーから定義を取得します。"
+  },
+  "directMacDefinitions": {
+    "message": "設定ファイルが既にある場合、上の作成操作は上書きせず失敗します。その場合は既存の内容を確認してください。FreshClamの初回更新を完了させてから、接続を再確認します。定義は定期的に更新してください。3日より古い定義では検査が失敗します。python.org版のPythonも利用できます。macOS付属のPythonは使用しません。"
   }
 }

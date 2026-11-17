@@ -13,7 +13,7 @@ import { selectable, canDelete, canRetry, canForget, filterRecords, resultPage }
 import { FOLDER_STATES } from "./folder-scan.mjs";
 
 localizeDocument();
-configureDirectView();
+await configureDirectView();
 const DIRECT = directRuntime();
 
 const $ = id => document.getElementById(id);

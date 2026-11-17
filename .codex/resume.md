@@ -1,6 +1,7 @@
 # 再開メモ
 
 ## 現状
+- feature/macos：利用者がmacOS移植・必要なファイル変更・検証・ローカルコミットの続行を了承。0.20.0a6を実装中。Homebrew/python.orgの固定探索と検証、CPU別パス、Darwin監視、MIME資源制限とタイマー終了競合、日英導入UIへ対応。JS173・Python77（旧Linux GUI1件除外）通過。未導入相当と更新/通常終了の清掃を実Thunderbirdで確認。最終通し検証と削除・中止の実機確認、成果物・記録が残る。push/PR/公開は禁止（別途指示待ち）。詳細はwork-log最新項目。
 - GitHub公開済み：https://github.com/jidaikobo-shibata/thunderbird-clamav 。MIT、既定main。現在のローカル実験ブランチをHEAD:mainでpushし、ローカル旧mainは維持。今後もpush先を明示する。v0.20.0a5のprereleaseにXPIとSHA256SUMSを添付。READMEは現行の初回導入案内、旧全文はREADME-legacy.md。JS170/Python69・日英UI・ライセンス同梱を確認。普段のメール/設定は未変更。
 - 0.20.0a4：未導入時のフォルダー検査による失敗履歴増加を防止。開始/再開前に状態を再確認し、利用不能なら履歴と進捗を保持して導入案内へ移動。JS170件・日英模擬UI・未導入状態の独立Thunderbirdの合成メールUI操作・XPI一致を確認。成果物dist/clam-mail-check-direct-0.20.0a4.xpi。普段の環境は未変更。
 - 0.20.0a3：監査指摘の再検査失敗時の検出情報消失を修正。前回判定と今回の失敗を分離し、同一本文の検出/隔離を維持、本文変更時は旧判定を参考情報に限定。個別/一括/再試行/再起動を検証。JS167/Python69・旧方式/実験版の日英模擬UI通過、XPIソース一致。成果物dist/clam-mail-check-direct-0.20.0a3.xpi。実Thunderbird上の新版操作は未確認。

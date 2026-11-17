@@ -14,6 +14,7 @@ class DirectPackageTests(unittest.TestCase):
             manifest = json.loads(archive.read('manifest.json'))
             self.assertEqual(manifest['browser_specific_settings']['gecko']['id'], stable['browser_specific_settings']['gecko']['id'])
             self.assertEqual(manifest['browser_specific_settings']['gecko']['strict_max_version'], '153.*')
+            self.assertEqual(manifest['version'], '0.20.0a6')
             self.assertNotIn('nativeMessaging', manifest['permissions'])
             self.assertFalse(manifest.get('optional_permissions'))
             self.assertEqual(set(manifest['experiment_apis']), {'clamDirect'})
@@ -24,3 +25,4 @@ class DirectPackageTests(unittest.TestCase):
             self.assertFalse(any(name.startswith(('fixture/', 'setup/')) for name in archive.namelist()))
             self.assertEqual(archive.read('direct/host.py'), (root / 'native/host.py').read_bytes())
             self.assertEqual(archive.read('direct/guardian.py'), (root / 'experiments/direct-runtime/guardian.py').read_bytes())
+            self.assertEqual(archive.read('direct/api.js'), (root / 'experiments/direct-runtime/api.js').read_bytes())

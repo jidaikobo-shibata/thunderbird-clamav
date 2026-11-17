@@ -101,7 +101,7 @@ class ScannerTests(unittest.TestCase):
 
     def test_private_temporary_directory_fixed_flags_and_no_shell(self):
         def fake_run(args, **kwargs):
-            self.assertEqual(args[0], "/usr/bin/clamscan")
+            self.assertEqual(args[0], host.CLAMSCAN)
             self.assertNotIn("shell", kwargs)
             self.assertIn("--alert-exceeds-max=yes", args)
             self.assertIn("--alert-encrypted=yes", args)
@@ -327,9 +327,9 @@ class MimeIsolationTests(unittest.TestCase):
 
     def test_timeout_and_crashed_worker_fail_closed(self):
         for result in [subprocess.CompletedProcess([], 1, b"", b""), subprocess.CompletedProcess([], 0, b"unexpected", b"")]:
-            with patch.object(host.subprocess, "run", return_value=result):
+            with patch.object(host.sys, "platform", "linux"), patch.object(host.subprocess, "run", return_value=result):
                 self.assertEqual(host.mime_inspection(b"hello"), "limited")
-        with patch.object(host.subprocess, "run", side_effect=subprocess.TimeoutExpired([], 5)):
+        with patch.object(host.sys, "platform", "linux"), patch.object(host.subprocess, "run", side_effect=subprocess.TimeoutExpired([], 5)):
             self.assertEqual(host.mime_inspection(b"hello"), "limited")
 
     def test_failed_auxiliary_parser_preserves_malware_verdict(self):

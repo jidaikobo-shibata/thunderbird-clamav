@@ -1,4 +1,4 @@
-/* Experiment-only transport for the packaged, ephemeral scanner. Linux/153 ESR. */
+/* Packaged, ephemeral scanner transport for Linux and macOS / 153 ESR. */
 var clamDirect = (() => {
   Cu.importGlobalProperties(["TextEncoder", "TextDecoder"]);
   const { ExtensionCommon } = ChromeUtils.importESModule("resource://gre/modules/ExtensionCommon.sys.mjs");
@@ -8,10 +8,86 @@ var clamDirect = (() => {
   const { setTimeout, clearTimeout } = ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs");
   const MAX_FRAME = 128 * 1024;
   const OPERATIONS = new Set(["health", "begin", "chunk", "end", "abort"]);
+  const ENVIRONMENT = { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" };
   return class extends ExtensionCommon.ExtensionAPI {
     sessions = new Map();
     opening = 0;
     stopped = false;
+
+    async smallCommand(command, args) {
+      const process = await Subprocess.call({ command, arguments: args, environment: ENVIRONMENT, stderr: "pipe" });
+      const timer = setTimeout(() => { void process.kill(0); }, 5000);
+      try {
+        const read = async pipe => {
+          let text = "";
+          while (true) {
+            const chunk = await pipe.readString();
+            if (!chunk) return text;
+            text += chunk;
+            if (text.length > 8192) { await process.kill(0); throw new Error("Executable verification output too large"); }
+          }
+        };
+        const [output, errors, status] = await Promise.all([read(process.stdout), read(process.stderr), process.wait()]);
+        if (status.exitCode !== 0 || errors.trim()) throw new Error("Executable verification failed");
+        return output.trim();
+      } catch (error) {
+        await process.kill(0).catch(() => {});
+        throw error;
+      } finally { clearTimeout(timer); }
+    }
+
+    async python() {
+      if (Services.appinfo.OS === "Linux") {
+        if (!await IOUtils.exists("/usr/bin/python3")) throw new Error("Python3 is not available at /usr/bin/python3");
+        return "/usr/bin/python3";
+      }
+      if (Services.appinfo.OS !== "Darwin") throw new Error("Unsupported scanner operating system");
+      const uid = await this.smallCommand("/usr/bin/id", ["-u"]);
+      const silicon = /^(aarch64|arm64)/.test(Services.appinfo.XPCOMABI);
+      const prefixes = silicon ? ["/opt/homebrew", "/usr/local"] : ["/usr/local", "/opt/homebrew"];
+      const candidates = [...prefixes.map(prefix => prefix + "/bin/python3"),
+        "/Library/Frameworks/Python.framework/Versions/Current/bin/python3"];
+      for (const candidate of candidates) {
+        if (!await IOUtils.exists(candidate)) continue;
+        try {
+          // Inspect every directory and symlink target before executing Python.
+          // Homebrew's admin-group writable directories are intentional; other
+          // groups and world-writable paths are rejected. No PATH search occurs.
+          const paths = new Map();
+          const resolve = (path, depth = 0) => {
+            if (depth > 32 || !path.startsWith("/")) throw new Error("Invalid Python symlink");
+            const parts = path.split("/").filter(Boolean);
+            let current = "";
+            for (let index = 0; index < parts.length; index++) {
+              current += "/" + parts[index];
+              const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+              file.initWithPath(current); file.normalize(); current = file.path;
+              const link = file.isSymlink();
+              paths.set(file.path, link);
+              if (link) return resolve(file.target + "/" + parts.slice(index + 1).join("/"), depth + 1);
+              if (index === parts.length - 1 && (!file.isFile() || !file.isExecutable())) throw new Error("Python is not executable");
+            }
+            return current;
+          };
+          const command = resolve(candidate);
+          resolve(command); // Also inspect ancestors exposed by normalization.
+          if (!/^\/(?:opt\/homebrew|usr\/local)\/Cellar\/python(?:@3\.\d+|3)?\//.test(command) &&
+              !command.startsWith("/Library/Frameworks/Python.framework/Versions/")) throw new Error("Python target is outside trusted installations");
+          const entries = [...paths];
+          const lines = (await this.smallCommand("/usr/bin/stat", ["-f", "%u:%g:%Lp", ...entries.map(([path]) => path)])).split("\n");
+          if (lines.length !== entries.length) throw new Error("Incomplete Python verification");
+          lines.forEach((line, index) => {
+            if (!/^\d+:\d+:[0-7]+$/.test(line)) throw new Error("Invalid Python metadata");
+            const [owner, group, mode] = line.split(":");
+            if (owner !== "0" && owner !== uid) throw new Error("Untrusted Python owner");
+            if (!entries[index][1] && ((parseInt(mode, 8) & 0o002) || ((parseInt(mode, 8) & 0o020) && !["0", "80"].includes(group)))) throw new Error("Unsafe Python permissions");
+          });
+          const version = JSON.parse(await this.smallCommand(command, ["-I", "-B", "-c", "import json,sys; print(json.dumps(list(sys.version_info[:2])))"]));
+          if (version[0] === 3 && version[1] >= 10) return command;
+        } catch (error) { console.warn("Python candidate rejected:", candidate, String(error)); }
+      }
+      throw new Error("Python3 3.10+ is unavailable in trusted Homebrew or python.org locations");
+    }
 
     source(name) {
       return new Promise((resolve, reject) => {
@@ -36,13 +112,13 @@ var clamDirect = (() => {
       directory.initWithPath("/tmp"); directory.append("clam-mail-direct-" + Services.uuid.generateUUID().toString().replace(/[{}-]/g, "").slice(0, 16));
       let process, created = false;
       try {
-        if (!await IOUtils.exists("/usr/bin/python3")) throw new Error("Python3 is not available at /usr/bin/python3");
+        const python = await this.python();
         directory.createUnique(Ci.nsIFile.DIRECTORY_TYPE, 0o700); created = true;
         for (const name of ["host.py", "guardian.py"]) await IOUtils.write(PathUtils.join(directory.path, name), await this.source(name), { permissions: 0o600 });
         if (this.stopped) throw new Error("Scanner is shutting down");
-        process = await Subprocess.call({ command: "/usr/bin/python3",
+        process = await Subprocess.call({ command: python,
           arguments: ["-I", "-B", PathUtils.join(directory.path, "guardian.py"), String(Services.appinfo.processID)],
-          environment: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }, stderr: "pipe" });
+          environment: ENVIRONMENT, stderr: "pipe" });
         if (this.stopped) { await process.kill(1000); throw new Error("Scanner shut down during startup"); }
         const token = Services.uuid.generateUUID().toString();
         const session = { process, directory: directory.path, queue: Promise.resolve(), pending: 0 };
@@ -76,7 +152,7 @@ var clamDirect = (() => {
       const work = async () => {
         if (this.sessions.get(token) !== session) throw new Error("Scanner connection closed");
         let timer;
-        const expired = new Promise((_, reject) => { timer = setTimeout(() => { void this.close(token); reject(new Error("Scanner request timed out")); }, value.op === "end" ? 225000 : 15000); });
+        const expired = new Promise((_, reject) => { timer = setTimeout(() => { void this.close(token); reject(new Error("Scanner request timed out")); }, value.op === "end" ? (Services.appinfo.OS === "Darwin" ? 360000 : 225000) : 15000); });
         const transfer = async () => {
           await session.process.stdin.write(new Uint32Array([bytes.length]).buffer);
           await session.process.stdin.write(bytes.buffer);
