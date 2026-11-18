@@ -5,7 +5,7 @@ import { t } from "./i18n.mjs";
 export async function configureDirectView() {
   if (!directRuntime()) return;
   const $ = id => document.getElementById(id);
-  document.title = t("directAppTitle", "ClamAV メール検査（実験版）");
+  document.title = t("directAppTitle", "ClamAV メール検査");
   document.querySelector("header h1").textContent = document.title;
   const connection = $("connection-title").closest("section");
   $("settings-form").after(connection);

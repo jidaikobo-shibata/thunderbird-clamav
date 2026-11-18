@@ -843,7 +843,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
       case "helperInfo":
         return { ok: true, installation: await helperInfo(), health: lastHealth };
       case "helperPlan": {
-        if (DIRECT) throw new Error(t("directNoSetup", "この実験版では補助プログラムの別途導入・更新は不要です。"));
+        if (DIRECT) throw new Error(t("directNoSetup", "この拡張では補助プログラムの別途導入・更新は不要です。"));
         if (running || folderScan.active || batchProgress?.active || deleting.size) throw new Error(t("mail055", "検査・削除の処理が終了してから操作してください。フォルダー検査中は先に中止してください。"));
         maintenanceGeneration++;
         const client = new NativeClient(api.runtime);
@@ -892,7 +892,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         } finally { releaseMaintenance(); void drain().catch(report); }
       }
       case "helperMarkRemoved":
-        if (DIRECT) throw new Error(t("directNoSetup", "この実験版では補助プログラムの別途導入・更新は不要です。"));
+        if (DIRECT) throw new Error(t("directNoSetup", "この拡張では補助プログラムの別途導入・更新は不要です。"));
         if (request.acknowledged !== true || running || folderScan.active || batchProgress?.active || deleting.size) throw new Error(t("mail065", "処理を停止し、Terminalで補助プログラムの削除が完了したことを確認してください。"));
         helperRemoved = true;
         settings = { ...settings, enabled: false, accountIds: [] };

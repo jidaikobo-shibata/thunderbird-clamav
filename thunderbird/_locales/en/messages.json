@@ -2895,10 +2895,10 @@
     "message": "The integrated scanner could not start. Check its status in Settings."
   },
   "directNoSetup": {
-    "message": "This experimental version does not require a separately installed helper."
+    "message": "This extension does not require a separately installed helper."
   },
   "directTitle": {
-    "message": "ClamAV integration (experimental)"
+    "message": "ClamAV integration"
   },
   "directIntro": {
     "message": "The scanner is included in this extension; no separate helper installation or update is needed. ClamAV and Python3 are required. Any previously installed helper is left untouched and is not used."
@@ -2933,7 +2933,7 @@
     "message": "ClamAV and Python3 are required. Use Recheck connection to verify availability."
   },
   "directPermissionsHelp": {
-    "message": "This experimental version requests full access to Thunderbird and your computer. Confirmation dialogs before operations such as permanent deletion are retained."
+    "message": "This extension requests full access to Thunderbird and your computer. Confirmation dialogs before operations such as permanent deletion are retained."
   },
   "directLimitsHelp": {
     "message": "Configure scan limits in Settings. Encrypted or oversized content that cannot be fully scanned is reported as incomplete. Definitions older than three days cause scanning to fail."
@@ -2942,10 +2942,10 @@
     "message": "In Settings, choose additional phishing, OLE2 macro and PUA detection: off, results only, or notify on detection. Disabling notifications globally also disables these notifications. Advisory findings are separate from malware and do not automatically trigger quarantine. Regular malware scanning, encryption alerts and limit alerts stay enabled. Limits are 5–100 MiB for whole messages, 25–500 MiB expanded (at least the message limit), and 10–120 seconds for internal scanning. Changes apply to subsequent scans. Applied settings are stored under Detection names and scan information. The integrated scanner is updated with the extension."
   },
   "directExtensionDescription": {
-    "message": "Experimental ClamAV mail scanner with an integrated scanner and no separately installed helper."
+    "message": "Scan mail with ClamAV using an integrated scanner. No separately installed helper is required."
   },
   "directAppTitle": {
-    "message": "ClamAV Mail Check (Experimental)"
+    "message": "ClamAV Mail Check"
   },
   "directDefinitions": {
     "message": "Let FreshClam complete its initial virus definition update, then click Check connection again. This extension uses ClamAV and Python3 installed on your computer. No separate helper program needs to be installed."

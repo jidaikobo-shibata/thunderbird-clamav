@@ -249,6 +249,8 @@ try {
       await until("document.querySelectorAll('#results tr').length === 50 && document.getElementById('panel-settings').contains(document.getElementById('connection-title'))");
       assert.deepEqual(await evaluate("[...document.querySelectorAll('[role=tab]')].map(tab=>tab.id)"), ['tab-scan','tab-results','tab-settings','tab-help']);
       assert.equal(await evaluate("document.getElementById('panel-scan').hidden"), false);
+      assert.equal(await evaluate("document.title"), language === 'ja' ? 'ClamAV メール検査' : 'ClamAV Mail Check');
+      assert.equal(await evaluate("document.querySelector('header h1').textContent"), language === 'ja' ? 'ClamAV メール検査' : 'ClamAV Mail Check');
       assert.equal(await evaluate("document.getElementById('tab-setup')"), null);
       assert.equal(await evaluate("document.getElementById('panel-uninstall')"), null);
       assert.match(await evaluate("document.getElementById('clamav-install-guide').textContent"), process.argv.includes("--mac")

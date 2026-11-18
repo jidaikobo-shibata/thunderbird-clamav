@@ -1,18 +1,18 @@
 #!/usr/bin/python3
-"""Build the real-mail experimental XPI, without a native host installer."""
+"""Build the integrated scanner XPI, without a native host installer."""
 import json
 from pathlib import Path
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.20.0a7"
+VERSION = "0.20.0a8"
 
 
 def build():
     source = ROOT / "thunderbird"
     manifest = json.loads((source / "manifest.json").read_text())
     manifest["version"] = VERSION
-    manifest["name"] = "ClamAV Mail Check (Experimental)"
+    manifest["name"] = "ClamAV Mail Check"
     manifest["description"] = "__MSG_directExtensionDescription__"
     manifest["permissions"] = [value for value in manifest["permissions"] if value != "nativeMessaging"] + ["messagesDelete", "messagesMove"]
     manifest.pop("optional_permissions", None)

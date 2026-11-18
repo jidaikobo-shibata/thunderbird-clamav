@@ -1,14 +1,14 @@
 # ClamAV Mail Check / ClamAV メール検査
 
 Thunderbirdのメールを、コンピューターにインストールしたClamAVで検査する拡張機能です。
-このブランチは **0.20.0a7（macOS対応の試用版）** です。補助プログラムの別途インストールは不要です。
+このブランチは **0.20.0a8（試用版）** です。補助プログラムの別途インストールは不要です。
 公開済みの0.20.0a5はUbuntu向けです。このブランチのXPIは末尾のビルド手順で作成できます。GitHubにはまだ公開していません。
 
 [English installation guide](README.en.md)
 
 ## インストール
 
-1. このブランチから作成した`dist/clam-mail-check-direct-0.20.0a7.xpi`を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
+1. このブランチから作成した`dist/clam-mail-check-direct-0.20.0a8.xpi`を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
 2. Thunderbirdのアドオンマネージャーで、歯車メニューの「ファイルからアドオンをインストール」を選び、XPIを指定します。
 3. 表示される権限を確認してインストールします。Experiment APIを使用するため、Thunderbirdとコンピューターへの全面アクセス権限が必要です。
 4. ツールバーのアイコンから画面を開き、「設定」末尾の「ClamAVの状態」で「接続を再確認」を押します。ClamAVが未導入なら、表示される導入手順に従います。ウイルス定義の初回更新も完了させてください。
@@ -20,7 +20,9 @@ Thunderbirdのメールを、コンピューターにインストールしたCla
 - macOS 15.6.1、Apple Silicon（arm64）、Thunderbird 153.5.1esr。macOSでの最新の確認結果・未確認事項は[検証記録](experiments/direct-runtime/README.md)を参照してください。
 - Python 3.10以降。Ubuntuは`/usr/bin/python3`、macOSはHomebrew版またはpython.org版を使用します。macOS付属の古いPythonや開発ツール導入用の起動ファイルは使用しません。
 - ClamAVと更新済みの定義。Ubuntuは`/usr/bin/clamscan`・`/usr/sbin/clamd`、macOSはHomebrew版を使用します。
-- Intel Macは実機未検証です。Snap・Flatpak版、Windows、Thunderbirdの他のメジャーバージョンも未検証です。XPIの対応範囲は153系に限定しています。
+- 0.20.0a7は利用者からUbuntu・Apple Silicon Mac双方で動作良好との報告がありました。
+- Intel Macは実機未検証で、今後確認予定です。Windowsは現在未対応で、今後対応を進める予定です。
+- Snap・Flatpak版、Thunderbirdの他のメジャーバージョンは未検証です。XPIの対応範囲は153系に限定しています。
 
 ClamAVは別途必要です。Ubuntu / Debian向けの導入例は次のとおりです。OSのパッケージを変更する操作です。
 
@@ -96,7 +98,7 @@ ClamAVが検出しないメールの安全性を保証するものではあり�
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-成果物は`dist/clam-mail-check-direct-0.20.0a7.xpi`です。同じXPIにUbuntu/macOS用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
+成果物は`dist/clam-mail-check-direct-0.20.0a8.xpi`です。同じXPIにUbuntu/macOS用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
 
 ```bash
 for test_file in tests/*.test.mjs; do

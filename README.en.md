@@ -1,13 +1,15 @@
 # ClamAV Mail Check
 
-This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a7**, an experimental macOS port of the integrated Ubuntu scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a7 has not been published.
+This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a8**, a prerelease of the integrated Ubuntu/macOS scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a8 has not been published.
 
 ## Requirements
 
 - Thunderbird 153.x. Earlier Ubuntu validation used 153.7.0esr; this macOS work uses 153.5.1esr on macOS 15.6.1, Apple Silicon. See [validation results and limitations](experiments/direct-runtime/README.md).
 - Python 3.10+ and ClamAV with current definitions, installed separately.
 - macOS: standard Homebrew ClamAV, with either Homebrew Python or Python from python.org. Intel Mac paths are implemented but hardware validation remains outstanding.
-- Ubuntu: `/usr/bin/python3`, `/usr/bin/clamscan`, and optionally `/usr/sbin/clamd` for repeated scans. Snap/Flatpak and Windows are not validated.
+- Ubuntu: `/usr/bin/python3`, `/usr/bin/clamscan`, and optionally `/usr/sbin/clamd` for repeated scans. Snap/Flatpak is not validated. Windows is currently unsupported; a port is planned.
+
+Version 0.20.0a7 was reported working well by users on Ubuntu and Apple Silicon Mac. Intel Mac hardware validation is planned and remains outstanding. The app name no longer includes “Experimental”; distribution remains a prerelease.
 
 ## Install prerequisites
 
@@ -51,7 +53,7 @@ No additional Python or npm packages are needed:
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-Install `dist/clam-mail-check-direct-0.20.0a7.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
+Install `dist/clam-mail-check-direct-0.20.0a8.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
 
 Open Settings and choose Check connection again. Start with a small manual folder scan. Automatic scanning is disabled for a new installation; select accounts only after checking results.
 
