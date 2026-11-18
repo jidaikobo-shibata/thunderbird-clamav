@@ -113,10 +113,12 @@ function mail(id, accountId = "one") {
 }
 
 async function settle(h, predicate) {
-  for (let i = 0; i < 100; i++) {
+  // Crypto and storage finish on wall-clock time, not a fixed event-loop count.
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
     const state = await h.send("state");
     if (predicate(state)) return state;
-    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setTimeout(resolve, 1));
   }
   throw new Error("background did not settle");
 }
@@ -1821,4 +1823,20 @@ test("unavailable scanner blocks folder start before creating a job", async () =
   assert.equal(state.folderJob, null);
   assert.equal(state.records.length, 0);
   assert.equal(state.lastHealth.code, "direct_unavailable");
+});
+
+
+test("a ready response with an incompatible protocol cannot start a folder scan", async () => {
+  const h = await harness({ direct: true, mails: [mail(1)],
+    healthResult: { status: "ready", protocol: 2, engine: "synthetic incompatible engine" } });
+  const context = await h.send("folderContext");
+  const result = await h.send("folderStart", { token: context.token, includeSubfolders: false });
+  assert.equal(result.ok, false);
+  assert.equal(result.setupRequired, true);
+  const state = await h.send("state");
+  assert.equal(state.lastHealth.code, "protocol_incompatible");
+  assert.equal(state.installation.healthy, false);
+  assert.equal(state.folderJob, null);
+  assert.equal(state.records.length, 0);
+  assert.equal(h.rawReads.length, 0);
 });

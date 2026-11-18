@@ -1,3 +1,4 @@
+import { readScannerHealth, applyScannerHealth, scannerReady } from "./scanner-health.mjs";
 import { rememberResult, finishScanAttempt, scanFailed } from "./scan-history.mjs";
 import { directRuntime } from "./direct-transport.mjs";
 import { scanPolicy, defaultScanPolicy, advisoryNotifies } from "./scan-policy.mjs";
@@ -10,7 +11,7 @@ import {
   validateSettings, messagePages, sha256, needsAttention, pausedAutomatic, normalizeAutomaticSettings
 } from "./core.mjs";
 import { canDelete, canForget, canRetry } from "./results.mjs";
-import { FolderScan, FOLDER_STATES, realFolder, checkpointHint } from "./folder-scan.mjs";
+import { FolderScan, FOLDER_STATES, realFolder, checkpointHint, refreshScanFolders } from "./folder-scan.mjs";
 
 const api = messenger;
 const DIRECT = directRuntime(api.runtime);
@@ -69,21 +70,6 @@ function releaseMaintenance() {
   pendingMaintenance?.client.close();
   pendingMaintenance = null;
 }
-async function readHealth(client) {
-  try {
-    return { ...await client.request("health"), checkedAt: new Date().toISOString() };
-  } catch (error) {
-    if (DIRECT) return { status: "error", code: "direct_unavailable", checkedAt: new Date().toISOString(), detail: t("directUnavailable", "内蔵の検査処理を開始できません。設定で状態を確認してください。") + " " + String(error.message).slice(0, 300) };
-    return { status: "error", code: "helper_unavailable", checkedAt: new Date().toISOString(),
-      detail: t("helperClamavUnknown", "補助プログラムに接続できないため、ClamAVの有無はまだ確認できません。補助プログラムの導入・接続を確認してください。") };
-  }
-}
-function applyHealthToInstallation() {
-  if (!installation || installation.state === "removed") return;
-  if (DIRECT) { installation.state = "integrated"; installation.healthy = lastHealth.status === "ready"; installation.detail = lastHealth.detail; }
-  installation.clamavCode = lastHealth.status === "ready" ? "ready" : lastHealth.code || "unconfirmed";
-  if (lastHealth.code === "helper_unavailable") installation.state = "unavailable";
-}
 async function helperInfo() {
   if (maintenanceActive()) return installation;
   const generation = maintenanceGeneration;
@@ -91,7 +77,7 @@ async function helperInfo() {
   try {
     client = new NativeClient(api.runtime);
     if (DIRECT) {
-      lastHealth = await readHealth(client);
+      lastHealth = await readScannerHealth(client, DIRECT);
       installation = { state: "integrated", version: api.runtime.getManifest().version,
         healthy: lastHealth.status === "ready", detail: lastHealth.detail,
         clamavCode: lastHealth.status === "ready" ? "ready" : lastHealth.code || "direct_unavailable" };
@@ -101,11 +87,11 @@ async function helperInfo() {
     if (generation !== maintenanceGeneration) return installation;
     const candidate = { state: info.status === "managed" ? "managed" : "legacy",
       version: info.version || null, healthy: info.healthy, detail: info.detail || t("mail001", "連携用の更新が必要です。") };
-    const health = await readHealth(client);
+    const health = await readScannerHealth(client, DIRECT);
     if (generation !== maintenanceGeneration) return installation;
     installation = candidate;
     lastHealth = health;
-    applyHealthToInstallation();
+    applyScannerHealth(installation, lastHealth, DIRECT);
     if (installation.state === "managed" && helperRemoved && !maintenanceActive()) helperRemoved = false;
   } catch (error) {
     if (generation !== maintenanceGeneration) return installation;
@@ -121,13 +107,13 @@ async function helperInfo() {
 /** Check prerequisites before enumerating mail or reserving history slots. */
 async function requireFolderScanner() {
   const client = new NativeClient(api.runtime);
-  try { lastHealth = await readHealth(client); }
+  try { lastHealth = await readScannerHealth(client, DIRECT); }
   finally { client.close(); }
-  if (lastHealth.status === "ready" && lastHealth.protocol !== 1) {
+  if (lastHealth.status === "ready" && !scannerReady(lastHealth)) {
     lastHealth = { ...lastHealth, status: "error", code: "protocol_incompatible",
       detail: t("mail044", "補助プログラムのバージョンが対応していません。") };
   }
-  applyHealthToInstallation();
+  applyScannerHealth(installation, lastHealth, DIRECT);
   const unavailable = lastHealth.status !== "ready";
   if (unavailable) setupRequest = crypto.randomUUID();
   await save();
@@ -591,7 +577,7 @@ async function drain() {
         if (!client || client.closed) {
           client = new NativeClient(api.runtime);
           const health = await client.request("health");
-          if (health.status !== "ready" || health.protocol !== 1) {
+          if (!scannerReady(health)) {
             client.close();
             throw new Error(health.detail || t("mail044", "補助プログラムのバージョンが対応していません。"));
           }
@@ -945,8 +931,8 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         if (typeof request.includeSubfolders !== "boolean") throw new Error(t("mail069", "サブフォルダーの選択が不正です。"));
         const context = folderRequest, folders = context.folders || [context.folder];
         await requireFolderScanner();
-        const current = await Promise.all(folders.map(folder => folder.id ? api.folders.get(folder.id, false) : folder));
-        if (folderRequest !== context || current.some((folder, index) => !realFolder(folder) || folder.accountId !== folders[index].accountId || folder.path !== folders[index].path)) throw new Error(t("mail070", "フォルダーが見つからないか、場所が変わりました。選び直してください。"));
+        const current = await refreshScanFolders(api, folders);
+        if (folderRequest !== context || !current) throw new Error(t("mail070", "フォルダーが見つからないか、場所が変わりました。選び直してください。"));
         const job = await folderScan.start(current.map((folder, index) => ({ ...folder, displayNames: folders[index].displayNames })), request.includeSubfolders);
         folderRequest = null;
         void folderScan.collecting.catch(report);
@@ -956,8 +942,8 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         if (request.jobId !== folderScan.job?.id || !folderScan.resumable) throw new Error(t("mail071", "この検査は再開できません。画面を更新してください。"));
         const job = folderScan.job, folders = job.folders || [job.folder];
         await requireFolderScanner();
-        const current = await Promise.all(folders.map(folder => folder.id ? api.folders.get(folder.id, false) : folder));
-        if (folderScan.job !== job || current.some((folder, index) => !realFolder(folder) || folder.accountId !== folders[index].accountId || folder.path !== folders[index].path)) throw new Error(t("mail072", "元のフォルダーが見つからないか、場所が変わりました。"));
+        const current = await refreshScanFolders(api, folders);
+        if (folderScan.job !== job || !current) throw new Error(t("mail072", "元のフォルダーが見つからないか、場所が変わりました。"));
         await folderScan.resume(current);
         void folderScan.collecting.catch(report);
         return { ok: true };

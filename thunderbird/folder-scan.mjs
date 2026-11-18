@@ -12,6 +12,13 @@ export function realFolder(folder) {
   return Boolean(folder?.accountId && typeof folder.path === "string" && folder.path.length > 0 && folder.path !== "/" &&
     !folder.isRoot && !folder.isVirtual && !folder.isUnified && !folder.isTag);
 }
+/** Re-resolve session IDs and reject moved, replaced, or non-mail targets. */
+export async function refreshScanFolders(api, folders) {
+  const current = await Promise.all(folders.map(folder => folder.id ? api.folders.get(folder.id, false) : folder));
+  return current.some((folder, index) => !realFolder(folder) ||
+    folder.accountId !== folders[index].accountId || folder.path !== folders[index].path) ? null : current;
+}
+
 function targetOf(message) {
   return { id: message.id, author: message.author, subject: message.subject, date: message.date,
     headerMessageId: message.headerMessageId, folder: { id: message.folder.id,

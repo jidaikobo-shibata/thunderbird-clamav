@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { locator } from "../thunderbird/core.mjs";
-import { FolderScan, checkpointHint } from "../thunderbird/folder-scan.mjs";
+import { FolderScan, checkpointHint, refreshScanFolders } from "../thunderbird/folder-scan.mjs";
 
 const root = { id: "root", accountId: "one", path: "/Inbox", name: "受信トレイ" };
 const child = { id: "child", accountId: "one", path: "/Inbox/Child", name: "子" };
@@ -264,4 +264,17 @@ test("advisory counts remain separate and are compatible with old folder summari
   assert.equal(scan.job.counts.advisory, 1);
   assert.equal(scan.job.counts.detected, 0);
   assert.equal(scan.job.status, "completed");
+});
+
+
+test("refreshing scan targets rejects moved, cross-account, virtual and missing folders", async () => {
+  for (const replacement of [{ ...root, path: "/Moved" }, { ...root, accountId: "other" },
+    { ...root, isVirtual: true }, { ...root, isRoot: true }, null]) {
+    const api = { folders: { get: async () => replacement } };
+    assert.equal(await refreshScanFolders(api, [root]), null);
+  }
+  const renamed = { ...root, name: "New display name" };
+  assert.deepEqual(await refreshScanFolders({ folders: { get: async () => renamed } }, [root]), [renamed]);
+  const legacy = { ...root }; delete legacy.id;
+  assert.deepEqual(await refreshScanFolders({ folders: { get: async () => { throw new Error("no runtime ID"); } } }, [legacy]), [legacy]);
 });

@@ -1,6 +1,7 @@
 # 再開メモ
 
 ## 現状
+- 0.20.0a9：接続判定をscanner-health.mjsへ分離、フォルダー開始/再開の対象再確認を共通化。動作・保存・権限は維持。JS175/Python80中77成功・Darwin3除外、日英UIとUbuntu独立実機の全操作/清掃/未導入を確認。成果物dist/clam-mail-check-direct-0.20.0a9.xpi。macOS実機のa9は未確認、ローカル変更でpush/公開未実施。
 - 0.20.0a8：日英の画面/アドオン名/説明から実験版を除去、試用版扱いは維持。a7のUbuntu/Apple Silicon動作良好の利用者報告を反映。Intel実機確認とWindows対応は今後、Windows現状未対応。関連4テスト・日英3環境模擬UI・XPI一致を確認。成果物dist/clam-mail-check-direct-0.20.0a8.xpi。ローカル変更でpush/新規リリース公開は未実施。
 - 0.20.0a7：macOS対応2コミットを監査し、不在時の実行候補の扱いを強化。JS173/Python80中77成功・Darwin3件除外。Ubuntu独立実機の全操作/未導入/通常終了/削除/更新/異常終了清掃と日英3環境模擬UIを確認。検証後にorigin/mainへ反映する。a7のmacOS実機・Intel実機は未確認。成果物dist/clam-mail-check-direct-0.20.0a7.xpi、リリース公開は未実施。
 - feature/macos：macOS移植0.20.0a6の実装・検証完了。固定探索と検証、CPU別パス、Darwin監視、MIME制限、日英導入UIへ対応。JS173・Python78（旧Linux GUI1件除外）。専用Thunderbirdの合成4種、再検査/メモ、手動/自動隔離、完全削除、設定、中止、移行/更新/未導入、通常終了/削除/強制終了後のプロセスと一時ファイル清掃を確認。最初の実装コミットf3bcd72。試用XPIはdist/clam-mail-check-direct-0.20.0a6.xpi。Intel実機・新版Ubuntu実機等は未確認。push/PR/公開は別途指示まで行わない。詳細は実験READMEとwork-log。
