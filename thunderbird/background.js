@@ -1152,6 +1152,13 @@ function linkPendingMove(original, duplicate) {
   pendingMoveOrigin.set(duplicate, original);
 }
 
+function canSettlePendingMove(record) {
+  return record.source === "automatic" && !!record.sha256 && !record.lastAttempt &&
+    ["clean", "detected", "incomplete", "advisory"].includes(record.status) &&
+    !record.review && !record.reviewBeforeScan && !record.quarantine && !record.bulkRetryId &&
+    !record.folderJobId && !record.lastResult;
+}
+
 async function settlePendingMove(original) {
   const parent = pendingMoveOrigin.get(original);
   if (parent) {
@@ -1161,19 +1168,38 @@ async function settlePendingMove(original) {
     pendingMoveOrigin.delete(original);
   }
   const linked = pendingMoveDuplicates.get(original);
-  if (!linked?.size || !original.sha256 || original.lastAttempt || !["clean", "detected", "incomplete", "advisory"].includes(original.status) ||
-      original.review || original.reviewBeforeScan || original.quarantine || original.bulkRetryId || original.lastResult) return;
-  const expectedPosition = position({ id: original.messageId, folder: original.locator.folder });
-  const digest = original.sha256, revision = moveRevisions.get(original);
-  const candidates = [...linked].filter(duplicate => sameMoveWork(original, duplicate));
-  if (!candidates.length) return;
+  if (!linked?.size || !canSettlePendingMove(original)) return;
+  // This optional optimization must not hold notifications, quarantine or the
+  // scan queue indefinitely. Timed-out reads may finish, but cannot mutate work.
+  let timer, stopped = false;
+  const proof = async () => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (stopped || !canSettlePendingMove(original)) return null;
+      const expectedPosition = position({ id: original.messageId, folder: original.locator.folder });
+      const digest = original.sha256, revision = moveRevisions.get(original);
+      const candidates = [...linked].filter(duplicate => sameMoveWork(original, duplicate));
+      if (!candidates.length) return null;
+      const current = await api.messages.get(original.messageId);
+      if (stopped) return null;
+      const matches = position(current) === expectedPosition && sameEnvelope(current, original.locator) &&
+        await sha256(await rawBytes(current.id, scanPolicy(original.scanSettings).mailMiB * 1024 * 1024)) === digest;
+      // Explicit moves can arrive during the read. Verify the latest location
+      // within the same deadline, rather than using stale bytes or identities.
+      if (stopped) return null;
+      if (moveRevisions.get(original) !== revision) continue;
+      return matches ? { expectedPosition, digest, revision, candidates } : null;
+    }
+    return null;
+  };
+  let verified;
   try {
-    // The move linked identities while neither message had a digest. Only
-    // cancel pending work after checking the actual destination bytes now.
-    const current = await api.messages.get(original.messageId);
-    if (position(current) !== expectedPosition || !sameEnvelope(current, original.locator) ||
-        await sha256(await rawBytes(current.id, scanPolicy(original.scanSettings).mailMiB * 1024 * 1024)) !== digest) return;
-  } catch { return; } // Keep the independent scan when verification is unavailable.
+    verified = await Promise.race([
+      proof().catch(() => null),
+      new Promise(resolve => { timer = setTimeout(() => resolve(null), 1000); })
+    ]);
+  } finally { stopped = true; clearTimeout(timer); }
+  if (!verified) return; // Keep the independent scan when proof is unavailable.
+  const { expectedPosition, digest, revision, candidates } = verified;
   const work = async () => {
     if (original.sha256 !== digest || moveRevisions.get(original) !== revision || original.lastAttempt || original.lastResult ||
         original.review || original.reviewBeforeScan || original.quarantine || original.bulkRetryId ||
@@ -1227,7 +1253,7 @@ api.messages.onMoved?.addListener((originals, moved) => {
       const canonical = eligible.map(item => pendingMoveOrigin.get(item) || item);
       const primary = canonical[0];
       const linkedGroup = eligible.length > 1 && primary && eligible.includes(primary) && canonical.every(item => item === primary) &&
-        (pristineAutomaticPending(primary) || canRecoverMovedInput(primary)) &&
+        (pristineAutomaticPending(primary) || canRecoverMovedInput(primary) || canSettlePendingMove(primary)) &&
         eligible.every(item => item === primary || !deleting.has(item.key) && queuedMoveDuplicate(item));
       if (eligible.length !== 1 && !linkedGroup) continue;
       const record = linkedGroup ? primary : eligible[0];

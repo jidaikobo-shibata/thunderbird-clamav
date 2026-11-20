@@ -3102,3 +3102,92 @@ test("failed duplicate-removal persistence retains the pending scan", async () =
   assert.equal(h.directRequests.filter(request => request.op === "end").length, 2);
   assert.match((await h.send("state")).issue, /synthetic duplicate-removal save failure/);
 });
+
+async function blockedMoveProof(header = false, quarantine = false) {
+  const original = { ...mail(901), headerMessageId: header ? "proof@example.invalid" : "",
+    folder: { id: "inbox", accountId: "one", path: "/Inbox" } };
+  const middle = { ...original, id: 902, folder: { id: "middle", accountId: "one", path: "/Middle" } };
+  const final = { ...original, id: 903, folder: { id: "final", accountId: "one", path: "/Final" } }, fresh = mail(904);
+  const isolation = { id: "isolation", accountId: "one", path: "/Isolation" };
+  const h = await harness({ direct: true, mails: [original, middle, final, fresh],
+    folderRefs: [original.folder, middle.folder, final.folder, isolation],
+    scanResult: { status: "detected", signatures: ["Synthetic.Threat"] },
+    saved: { settings: { enabled: true, accountIds: ["one"], notifications: true,
+      ...(quarantine ? { quarantine: { one: { folderId: isolation.id, path: isolation.path, auto: true } } } : {}) } } });
+  const moves = [];
+  h.api.permissions.contains = async () => true;
+  h.api.folders.getFolderCapabilities = async () => ({ canAddMessages: true, canDeleteMessages: true });
+  h.api.messages.move = async ids => {
+    moves.push(...ids);
+    for (const id of ids) [original, middle, final, fresh].find(mail => mail.id === id).folder = isolation;
+  };
+  let releaseRaw, enterRaw, releaseProof, enterProof, middleReads = 0;
+  const rawGate = new Promise(resolve => { releaseRaw = resolve; });
+  const rawStarted = new Promise(resolve => { enterRaw = resolve; });
+  const proofGate = new Promise(resolve => { releaseProof = resolve; });
+  const proofStarted = new Promise(resolve => { enterProof = resolve; });
+  const raw = h.api.messages.getRaw;
+  h.api.messages.getRaw = async (id, options) => {
+    const file = await raw(id, options);
+    if (id === 901) { enterRaw(); await rawGate; }
+    if (id === 902 && ++middleReads === 2) { enterProof(); await proofGate; }
+    return file;
+  };
+  h.events.newMail.listeners[0](original.folder, { messages: [original] });
+  await rawStarted;
+  h.events.newMail.listeners[0](middle.folder, { messages: [middle] });
+  await settle(h, state => state.records.length === 2);
+  await h.events.moved.listeners[0]({ messages: [original] }, { messages: [middle] });
+  releaseRaw();
+  await proofStarted;
+  return { h, original, middle, final, fresh, releaseProof, moves };
+}
+
+for (const header of [false, true]) test(`a second move during final proof follows the latest location (header=${header})`, async () => {
+  const { h, middle, final, releaseProof } = await blockedMoveProof(header);
+  h.api.messages.get = async id => {
+    if (id !== final.id) throw new Error("old location gone");
+    return final;
+  };
+  h.api.messages.query = async () => ({ messages: [final] });
+  await h.events.moved.listeners[0]({ messages: [middle] }, { messages: [final] });
+  assert.ok((await h.send("state")).records.every(record => record.messageId === final.id));
+  releaseProof();
+  const state = await settle(h, state => state.records.length === 1 && state.records[0].status === "detected");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(state.records[0].locator.folder.path, final.folder.path);
+  assert.equal((await h.send("open", { key: state.records[0].key })).ok, true);
+  h.events.newMail.listeners[0](final.folder, { messages: [final] });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal((await h.send("state")).records.length, 1);
+  assert.equal(h.notifications.length, 1);
+  assert.equal(h.directRequests.filter(request => request.op === "end").length, 1);
+  assert.equal(h.stored().records.length, 1);
+  h.expireIdle();
+});
+
+test("slow optional proof times out so detection alerts and later scans proceed", async () => {
+  const { h, fresh, releaseProof } = await blockedMoveProof();
+  h.events.newMail.listeners[0](fresh.folder, { messages: [fresh] });
+  await settle(h, state => state.records.length === 3);
+  // Leave the additional body read unresolved: the deadline must release work.
+  await settle(h, state => state.records.length === 3 && state.records.every(record => record.status === "detected"));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.notifications.length, 3);
+  assert.equal(h.directRequests.filter(request => request.op === "end").length, 3);
+  const before = structuredClone(h.stored().records);
+  releaseProof();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(h.stored().records, before); // A late read cannot remove history.
+  assert.equal(h.notifications.length, 3);
+  h.expireIdle();
+});
+
+test("optional proof deadline also releases automatic quarantine", async () => {
+  const { h, middle, releaseProof, moves } = await blockedMoveProof(true, true);
+  await settle(h, state => state.records.some(record => record.quarantine?.status === "moved"));
+  assert.ok(moves.includes(middle.id)); // The proof read is still unresolved.
+  releaseProof();
+  await settle(h, state => state.records.every(record => !["queued", "scanning"].includes(record.status)));
+  h.expireIdle();
+});
