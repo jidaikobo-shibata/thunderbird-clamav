@@ -63,6 +63,7 @@ const batchTickets = new Map();
 let batchProgress = null, retryContext = null;
 const historyTickets = new Map();
 const movedScans = new WeakMap();
+const moveRevisions = new WeakMap();
 let folderRequest = null;
 let lastHealth = null, lastScan = null;
 let resultsRequest = null, resultsFilter = null, setupRequest = null;
@@ -622,6 +623,59 @@ async function resolveRecord(record) {
 const isDraftFolder = folder => Array.isArray(folder?.specialUse) && folder.specialUse.includes("drafts") &&
   folder.specialUse.every(use => use === "drafts");
 
+// Only an initial automatic failure with no verdict or human action may be
+// redirected without a digest. Existing verdicts still require body matching.
+function canRecoverMovedInput(record) {
+  return record.source === "automatic" && record.status === "error" && record.attempts === 1 && Boolean(record.nextRetry) &&
+    !record.sha256 && !record.lastResult && !record.lastAttempt && !record.review && !record.reviewBeforeScan &&
+    !record.quarantine && !record.bulkRetryId && !record.folderJobId;
+}
+
+function recoverMovedInput(record, expectedPosition) {
+  const work = async () => {
+    if (!records.includes(record) || deleting.has(record.key) || !canRecoverMovedInput(record) ||
+        position({ id: record.messageId, folder: record.locator.folder }) !== expectedPosition ||
+        maintenanceActive() || helperRemoved || !settings.enabled || !settings.accountIds.includes(record.locator.accountId)) return;
+    const duplicates = records.filter(other => other !== record && other.session === session && other.messageId === record.messageId &&
+      JSON.stringify(other.locator) === JSON.stringify(record.locator));
+    const duplicate = duplicates.length === 1 ? duplicates[0] : null;
+    const keepDestination = duplicate && duplicate.source === "automatic" && !deleting.has(duplicate.key) &&
+      !duplicate.review && !duplicate.reviewBeforeScan && !duplicate.quarantine && !duplicate.bulkRetryId &&
+      !duplicate.lastResult && !duplicate.lastAttempt && duplicate.status !== "deleted" &&
+      (["queued", "scanning"].includes(duplicate.status) || Boolean(duplicate.sha256));
+    await reserveRecords([record, ...(keepDestination ? [duplicate] : [])], async () => {
+      if (keepDestination) {
+        // There was no origin verdict to transfer. Keep the independently
+        // scanned/pending destination, never discard a human decision.
+        await persistState(records.filter(item => item !== record));
+        records = records.filter(item => item !== record);
+      } else {
+        const candidate = { ...record, status: "queued", nextRetry: null };
+        await persistState(records.map(item => item === record ? candidate : item));
+        Object.assign(record, candidate);
+      }
+    });
+    await updateBadge().catch(report);
+  };
+  recordChanges = recordChanges.catch(() => {}).then(work);
+  return recordChanges;
+}
+
+async function readScanInput(record, maxBytes) {
+  for (let retry = 0; ; retry++) {
+    const revision = moveRevisions.get(record) || 0;
+    try {
+      const message = await resolveRecord(record);
+      if (message.headersOnly) throw new Error(t("mail043", "ヘッダーのみ取得されたメールです。本文をダウンロードして再検査してください。"));
+      return { message, bytes: await rawBytes(message.id, maxBytes) };
+    } catch (error) {
+      // Retry retrieval, not a verdict: only when an explicit move changed the
+      // target during this read, and at most twice in one scan attempt.
+      if (error.incomplete || retry >= 2 || revision === (moveRevisions.get(record) || 0)) throw error;
+    }
+  }
+}
+
 // Admission shares the same commit gate as retries and history changes.
 // Overflow waits happen outside the gate so the scanner can free its slot.
 function stageMessage(message, source) {
@@ -797,11 +851,7 @@ async function drain() {
       await save();
       let currentDigest = null, scannerTouched = false;
       try {
-        const message = await resolveRecord(record);
-        if (message.headersOnly) {
-          throw new Error(t("mail043", "ヘッダーのみ取得されたメールです。本文をダウンロードして再検査してください。"));
-        }
-        const bytes = await rawBytes(message.id, policy.mailMiB * 1024 * 1024);
+        const { message, bytes } = await readScanInput(record, policy.mailMiB * 1024 * 1024);
         record.sha256 = await sha256(bytes);
         currentDigest = record.sha256;
         // A move event may have redirected this record while the original raw
@@ -1100,6 +1150,7 @@ api.messages.onMoved?.addListener((originals, moved) => {
       destinations.get(key).push(message);
     }
     let changed = false, examined = 0;
+    const recoveries = [];
     for (const old of oldMessages) {
       const key = JSON.stringify([accountOf(old), old.folder?.path, envelope(old)]);
       const possible = tracked.get(key) || [];
@@ -1112,7 +1163,7 @@ api.messages.onMoved?.addListener((originals, moved) => {
       const record = eligible[0];
       if (deleting.has(record.key) || record.status === "deleted") continue;
       const hash = record.sha256 || record.lastResult?.sha256;
-      if (!hash && !["queued", "scanning"].includes(record.status)) continue;
+      if (!hash && !["queued", "scanning"].includes(record.status) && !canRecoverMovedInput(record)) continue;
       const before = JSON.stringify([record.locator, record.messageId, record.session, record.quarantine?.status]);
       const candidates = destinations.get(envelope(record.locator)) || [];
       if (candidates.length > 20) continue;
@@ -1130,6 +1181,8 @@ api.messages.onMoved?.addListener((originals, moved) => {
           JSON.stringify([record.locator, record.messageId, record.session, record.quarantine?.status]) !== before) continue;
       refreshQuarantineLocation(record, matches[0]);
       record.session = session;
+      moveRevisions.set(record, (moveRevisions.get(record) || 0) + 1);
+      if (canRecoverMovedInput(record)) recoveries.push([record, position(matches[0])]);
       if (hash) {
         const duplicates = records.filter(item => item !== record && item.session === session &&
           item.messageId === record.messageId && JSON.stringify(item.locator) === JSON.stringify(record.locator));
@@ -1142,6 +1195,7 @@ api.messages.onMoved?.addListener((originals, moved) => {
       changed = true;
     }
     if (changed) await save();
+    for (const [record, expectedPosition] of recoveries) await recoverMovedInput(record, expectedPosition);
   };
   moves = moves.catch(() => {}).then(work).catch(report);
   return moves;

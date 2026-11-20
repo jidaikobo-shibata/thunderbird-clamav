@@ -2928,3 +2928,106 @@ test("draft messages remain available to explicit selection and folder scans", a
   assert.equal(state.folderJob.completed, 1);
   assert.deepEqual(h.rawReads, [630, 630]);
 });
+
+for (const header of [true, false]) for (const notice of ["before", "after", "none"]) test(`late move recovers an initial body failure without duplicate verdicts (header=${header}, notice=${notice})`, async () => {
+  const original = { ...mail(701), headerMessageId: header ? "late-move@example.invalid" : "", folder: { id: "inbox", accountId: "one", path: "/Inbox" } };
+  const moved = { ...original, id: 702, folder: { id: "child", accountId: "one", path: "/Filtered" } };
+  const h = await harness({ direct: true, mails: [original, moved], scanResult: { status: "detected", signatures: ["Synthetic.Threat"] }, saved: { settings: { enabled: true, accountIds: ["one"], notifications: true } } });
+  const raw = h.api.messages.getRaw;
+  h.api.messages.getRaw = async (id, options) => { if (id === 701) throw new Error("old body unavailable during move"); return raw(id, options); };
+  h.events.newMail.listeners[0](original.folder, { messages: [original] });
+  await settle(h, state => state.records[0]?.status === "error");
+  h.api.messages.get = async id => { if (id === 701) throw new Error("old id no longer exists"); return moved; };
+  h.api.messages.query = async () => ({ messages: [moved] });
+  if (notice === "before") {
+    h.events.newMail.listeners[0](moved.folder, { messages: [moved] });
+    await settle(h, state => state.records[1]?.status === "detected");
+  }
+  await h.events.moved.listeners[0]({ messages: [original] }, { messages: [moved] });
+  if (notice === "after") h.events.newMail.listeners[0](moved.folder, { messages: [moved] });
+  const state = await settle(h, state => state.records.length === 1 && state.records[0].status === "detected");
+  assert.equal(state.records[0].messageId, 702);
+  assert.equal(state.records[0].locator.folder.path, "/Filtered");
+  assert.deepEqual(h.rawReads, [702]);
+  assert.equal(h.directRequests.filter(request => request.op === "end").length, 1);
+  assert.equal(state.records[0].nextRetry, null);
+  await h.timers[0](); await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await h.send("state")).records.length, 1);
+});
+
+for (const moveCount of [1, 2]) test(`failed old-body read immediately follows ${moveCount} explicit moves within the same attempt`, async () => {
+  const mails = Array.from({ length: moveCount + 1 }, (_, i) => ({ ...mail(711), id: 711 + i, headerMessageId: "", folder: { id: "f" + i, accountId: "one", path: "/Stage" + i } }));
+  const h = await harness({ mails, saved: { settings: { enabled: true, accountIds: ["one"], notifications: true } } });
+  let fail, enter;
+  const gate = new Promise((resolve, reject) => { fail = reject; }), started = new Promise(resolve => { enter = resolve; });
+  const raw = h.api.messages.getRaw;
+  h.api.messages.getRaw = async (id, options) => { if (id === 711) { enter(); return gate; } return raw(id, options); };
+  h.events.newMail.listeners[0](mails[0].folder, { messages: [mails[0]] });
+  await started;
+  for (let i = 1; i < mails.length; i++) await h.events.moved.listeners[0]({ messages: [mails[i - 1]] }, { messages: [mails[i]] });
+  fail(new Error("old raw request aborted by move"));
+  const state = await settle(h, state => state.records[0]?.status === "clean");
+  assert.equal(state.records.length, 1); assert.equal(state.records[0].attempts, 1);
+  assert.equal(state.records[0].messageId, mails.at(-1).id);
+  assert.equal(state.records[0].nextRetry, null);
+  assert.deepEqual(h.rawReads, [mails.at(-1).id]);
+  assert.equal(h.notifications.length, 0);
+});
+
+test("continuous moves cannot trigger unbounded immediate body retries", async () => {
+  const mails = Array.from({ length: 4 }, (_, i) => ({ ...mail(721), id: 721 + i, folder: { id: "f" + i, accountId: "one", path: "/Stage" + i } }));
+  const h = await harness({ mails, saved: { settings: { enabled: true, accountIds: ["one"], notifications: false } } });
+  const reads = [];
+  h.api.messages.getRaw = async id => {
+    reads.push(id); const index = id - 721;
+    if (index >= 3) throw new Error("must not exceed retry bound");
+    await h.events.moved.listeners[0]({ messages: [mails[index]] }, { messages: [mails[index + 1]] });
+    throw new Error("body moved again");
+  };
+  h.events.newMail.listeners[0](mails[0].folder, { messages: [mails[0]] });
+  const state = await settle(h, state => state.records[0]?.status === "error");
+  assert.deepEqual(reads, [721, 722, 723]);
+  assert.equal(state.records[0].attempts, 1);
+  assert.ok(state.records[0].nextRetry > Date.now());
+});
+
+test("body failures without an explicit move retain the normal delayed retry", async () => {
+  const h = await harness({ mails: [mail(731)], saved: { settings: { enabled: true, accountIds: ["one"], notifications: true } } });
+  let reads = 0;
+  h.api.messages.getRaw = async () => { reads++; throw new Error("temporary IMAP body download failure"); };
+  h.events.newMail.listeners[0](mail(731).folder, { messages: [mail(731)] });
+  const state = await settle(h, state => state.records[0]?.status === "error");
+  assert.equal(reads, 1); assert.equal(state.records[0].attempts, 1);
+  assert.ok(state.records[0].nextRetry > Date.now()); assert.equal(h.notifications.length, 0);
+});
+
+test("late unscanned move recovery does not discard an independently reviewed destination", async () => {
+  const original = { ...mail(741), folder: { id: "inbox", accountId: "one", path: "/Inbox" } };
+  const moved = { ...original, id: 742, folder: { id: "child", accountId: "one", path: "/Filtered" } };
+  const h = await harness({ mails: [original, moved], scanResult: { status: "incomplete", detail: "encrypted" }, saved: { settings: { enabled: true, accountIds: ["one"], notifications: false } } });
+  const raw = h.api.messages.getRaw;
+  h.api.messages.getRaw = async (id, options) => { if (id === 741) throw new Error("old body unavailable"); return raw(id, options); };
+  h.events.newMail.listeners[0](original.folder, { messages: [original] });
+  await settle(h, state => state.records[0]?.status === "error");
+  h.api.messages.get = async id => { if (id === 741) throw new Error("gone"); return moved; };
+  h.api.messages.query = async () => ({ messages: [moved] });
+  h.events.newMail.listeners[0](moved.folder, { messages: [moved] });
+  const scanned = await settle(h, state => state.records[1]?.status === "incomplete");
+  await new Promise(resolve => setImmediate(resolve));
+  const target = scanned.records[1], { reviewStamp } = await import("../thunderbird/review.mjs");
+  assert.equal((await h.send("reviewMany", { keys: [target.key], reviewed: true, note: "preserved prior judgment", stamps: { [target.key]: reviewStamp(target) } })).ok, true);
+  await h.events.moved.listeners[0]({ messages: [original] }, { messages: [moved] });
+  const state = await settle(h, state => state.records.every(record => record.status === "incomplete"));
+  assert.equal(state.records.length, 2);
+  assert.equal(state.records.find(record => record.key === target.key).review.note, "preserved prior judgment");
+});
+
+test("ambiguous late move destinations cannot redirect an unscanned failure", async () => {
+  const original = mail(751), moved = { ...original, id: 752, folder: { id: "child", accountId: "one", path: "/Filtered" } };
+  const h = await harness({ mails: [original, moved], saved: { settings: { enabled: true, accountIds: ["one"], notifications: false } } });
+  h.api.messages.getRaw = async () => { throw new Error("old body unavailable"); };
+  h.events.newMail.listeners[0](original.folder, { messages: [original] });
+  const before = structuredClone((await settle(h, state => state.records[0]?.status === "error")).records[0]);
+  await h.events.moved.listeners[0]({ messages: [original] }, { messages: [moved, { ...moved, id: 753 }] });
+  assert.deepEqual((await h.send("state")).records[0], before);
+});

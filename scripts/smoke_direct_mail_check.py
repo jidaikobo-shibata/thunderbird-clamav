@@ -75,6 +75,24 @@ def fixture_xpi(target, original, version, scenario="full"):
         payload["background.js"] = payload["background.js"].replace(b"const api = messenger;", b"""
         const api = messenger;
         const testStorageSet = api.storage.local.set.bind(api.storage.local);
+        const testRaw = api.messages.getRaw.bind(api.messages);
+        let failedEarlyInput = false, failedLateInput = false;
+        api.messages.getRaw = async (id, options) => {
+          const header = await api.messages.get(id);
+          if (!failedEarlyInput && header.subject === 'Synthetic early raw move') {
+            failedEarlyInput = true;
+            await testStorageSet({fixtureRawGateStarted:true});
+            for (let attempt = 0; attempt < 400; attempt++) {
+              if ((await api.storage.local.get('fixtureReleaseRawGate')).fixtureReleaseRawGate) throw new Error('synthetic old-body move failure');
+              await new Promise(resolve => setTimeout(resolve,25));
+            }
+            throw new Error('synthetic raw gate timed out');
+          }
+          if (!failedLateInput && header.subject === 'Synthetic late raw move') {
+            failedLateInput = true; throw new Error('synthetic late-body move failure');
+          }
+          return testRaw(id,options);
+        };
         let failedReceipt = false;
         api.storage.local.set = async value => {
           if (!failedReceipt && Object.entries(value).some(([key, page]) => key.startsWith('historyPage:') && Array.isArray(page) &&
