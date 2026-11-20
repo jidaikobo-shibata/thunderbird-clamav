@@ -2644,3 +2644,77 @@ test("automatic retry timer cannot change a history entry while removal is savin
   await h.send("health");
   assert.deepEqual(h.stored().records, before);
 });
+
+for (const reviewed of [true, false]) for (const fail of [true, false]) test(`review commit cannot leak through concurrent health save (reviewed=${reviewed}, failure=${fail})`, async () => {
+  const { reviewStamp, reviewReason } = await import("../thunderbird/review.mjs");
+  const record = { key: "review-gate", status: "incomplete", detail: "encrypted", sha256: "digest", locator: locator(mail(1)) };
+  if (!reviewed) record.review = { note: "existing human note", reason: reviewReason(record), resultHash: record.sha256, fingerprint: "sha256:digest" };
+  const h = await harness({ saved: { records: [record] } });
+  const before = structuredClone((await h.send("state")).records);
+  const original = h.api.storage.local.set;
+  let release, entered, held = false;
+  const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+  h.api.storage.local.set = async value => {
+    if (!held) { held = true; entered(); await gate; if (fail) throw new Error("synthetic review save failure"); }
+    return original(value);
+  };
+  const change = h.send("reviewMany", { keys: [record.key], reviewed, note: "new human note", stamps: { [record.key]: reviewStamp(before[0]) } });
+  await started;
+  const health = h.send("health");
+  await h.timers[0]();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(h.stored().records, before);
+  release();
+  assert.equal((await change).ok, !fail);
+  assert.equal((await health).ok, true);
+  const after = (await h.send("state")).records;
+  if (fail) assert.deepEqual(after, before);
+  else assert.equal(Boolean(after[0].review), reviewed);
+  assert.deepEqual(h.stored().records, after);
+  const next = await harness({ saved: h.rawStored() });
+  assert.deepEqual((await next.send("state")).records, after);
+  assert.equal(h.rawReads.length, 0);
+});
+
+for (const kind of ["new", "existing", "eviction", "overflow"]) for (const fail of [true, false]) test(`manual scan starts only after reservation commit (${kind}, failure=${fail})`, async () => {
+  const saved = ["eviction", "overflow"].includes(kind) ? { records: Array.from({ length: 1000 }, (_, i) => ({ key: "old-" + i,
+    status: kind === "eviction" ? "clean" : "detected", locator: { subject: "old " + i } })) } : {};
+  const h = await harness({ saved, mails: [mail(1)], scanResult: { status: "incomplete", detail: "encrypted" } });
+  if (kind === "existing") {
+    await h.send("scanSelection");
+    const state = await settle(h, state => state.records[0]?.status === "incomplete");
+    const { reviewStamp } = await import("../thunderbird/review.mjs");
+    assert.equal((await h.send("reviewMany", { keys: [state.records[0].key], reviewed: true, note: "prior decision", stamps: { [state.records[0].key]: reviewStamp(state.records[0]) } })).ok, true);
+  }
+  const before = structuredClone((await h.send("state")).records), readsBefore = h.rawReads.length;
+  const original = h.api.storage.local.set;
+  let release, entered, held = false;
+  const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+  h.api.storage.local.set = async value => {
+    if (!held) { held = true; entered(); await gate; if (fail) throw new Error("synthetic manual reservation failure"); }
+    return original(value);
+  };
+  const scan = h.send("scanSelection");
+  await started;
+  const health = h.send("health");
+  await h.timers[0]();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual((await h.send("state")).records, before);
+  assert.deepEqual(h.stored().records, before);
+  assert.equal(h.rawReads.length, readsBefore);
+  release();
+  assert.equal((await scan).ok, !fail);
+  assert.equal((await health).ok, true);
+  if (fail) {
+    assert.deepEqual((await h.send("state")).records, before);
+    assert.deepEqual(h.stored().records, before);
+    assert.equal(h.stored().overflowPending, null);
+    assert.equal(h.rawReads.length, readsBefore);
+    const next = await harness({ saved: h.rawStored(), mails: [mail(1)] });
+    assert.equal(next.rawReads.length, 0);
+    assert.deepEqual((await next.send("state")).records, before.map(record => ({ ...record, session: null, messageId: null })));
+  } else {
+    await settle(h, state => kind === "overflow" ? state.overflowReport?.total === 1 : state.records.some(record => record.locator.headerMessageId === mail(1).headerMessageId && record.status === "incomplete"));
+    assert.equal(h.rawReads.length, readsBefore + 1);
+  }
+});

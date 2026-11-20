@@ -383,10 +383,10 @@ function save() {
   return persistState();
 }
 
-function persistState(history = records) {
+function persistState(history = records, overflow = overflowPending) {
   // Take a snapshot now, then serialize storage writes so an older snapshot
   // cannot overwrite a later scan result.
-  const snapshot = stateStorage.snapshot({ directMigrationBackup, incrementalMigrationBackup, overflowPending, overflowReport, issue, lastHealth, lastScan, helperRemoved, installation,
+  const snapshot = stateStorage.snapshot({ directMigrationBackup, incrementalMigrationBackup, overflowPending: overflow, overflowReport, issue, lastHealth, lastScan, helperRemoved, installation,
     folderJob: folderScan.snapshot() }, history, folderScan.checkpoints.snapshot(folderScan.job?.id));
   writes = writes.catch(() => {}).then(() => stateStorage.write(snapshot, settings));
   void updateBadge().catch(() => {});
@@ -624,11 +624,54 @@ async function resolveRecord(record) {
   return matches[0];
 }
 
+// Manual selection shares the same commit gate as retries and history changes.
+// Overflow waits happen outside the gate so the scanner can free its slot.
+function stageManual(message) {
+  const work = async () => {
+    if (maintenanceActive() || helperRemoved) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
+    if (batchProgress?.active) throw new Error(t("bulkBusy", "一括操作の処理中です。"));
+    const existing = records.find(record => record.session === session && record.messageId === message.id);
+    if (existing && (deleting.has(existing.key) || ["deleted", "queued", "scanning"].includes(existing.status))) return {};
+    const evicted = !existing && records.length >= MAX_RECORDS ? records.find(record =>
+      ["clean", "deleted"].includes(record.status) && !deleting.has(record.key)) : null;
+    const overflow = !existing && records.length >= MAX_RECORDS && !evicted;
+    if (overflow && overflowPending) return { retry: true, wait: new Promise(resolve => overflowWaiters.add(resolve)) };
+    const candidate = existing ? { ...existing } : { key: crypto.randomUUID(), createdAt: new Date().toISOString() };
+    rememberResult(candidate);
+    Object.assign(candidate, { messageId: message.id, session, locator: locator(message), source: "manual", quarantineIntent: null,
+      unscannedReason: null, status: "queued", detail: t("mail038", "検査を待っています。"), signatures: [],
+      sha256: null, engine: null, attempts: 0, nextRetry: null, folderJobId: null, updatedAt: new Date().toISOString() });
+    let wait;
+    await reserveRecords([existing, evicted].filter(Boolean), async () => {
+      const history = existing ? records.map(record => record === existing ? candidate : record) :
+        overflow ? records : [...records.filter(record => record !== evicted), candidate];
+      await persistState(history, overflow ? candidate : overflowPending);
+      if (existing) Object.assign(existing, candidate);
+      else if (overflow) {
+        overflowPending = candidate;
+        wait = new Promise(resolve => overflowWaiters.add(resolve));
+      } else {
+        if (evicted) records = records.filter(record => record !== evicted);
+        records.push(candidate);
+      }
+    });
+    await updateBadge().catch(report);
+    return { wait };
+  };
+  recordChanges = recordChanges.catch(() => {}).then(work);
+  return recordChanges;
+}
+
 function enqueue(first, source) {
   const work = async () => {
     for await (const message of messagePages(api.messages, first)) {
       if (source === "manual" && helperRemoved) throw new Error(t("mail037", "補助プログラムの導入を確認してから検査してください。"));
       if (message.external || !message.folder) continue;
+      if (source === "manual") {
+        let outcome;
+        do { outcome = await stageManual(message); if (outcome.wait) await outcome.wait; } while (outcome.retry);
+        continue;
+      }
       if (source === "automatic" && await inQuarantine(message, settings, [...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : [])], { session, digestOf: async message => sha256(await rawBytes(message.id)) })) continue;
       if (source === "automatic" && (!settings.enabled ||
           !settings.accountIds.includes(accountOf(message)))) continue;
@@ -655,6 +698,12 @@ function enqueue(first, source) {
         if (keep) records.push(record);
         else await queueOverflow(record);
       }
+    }
+    if (source === "manual") {
+      // Reservations are already durable; failure of this trailing refresh must
+      // not report them as rejected. Let in-flight state writes settle as before.
+      await save().catch(report);
+      return;
     }
     await save();
     await updateBadge();
@@ -1244,20 +1293,24 @@ api.runtime.onMessage.addListener(async (request, sender) => {
           for (const record of targets) {
             if (progress.stopRequested) break;
             if (request.stamps[record.key] !== reviewStamp(record)) throw new Error(t("reviewChanged", "検査結果が変わりました。選び直してください。"));
-            deleting.add(record.key);
-            try {
+            const change = async () => reserveRecords([record], async () => {
+              if (request.stamps[record.key] !== reviewStamp(record)) throw new Error(t("reviewChanged", "検査結果が変わりました。選び直してください。"));
               let fingerprint = record.sha256 ? "sha256:" + record.sha256 : null;
               if (request.reviewed && !fingerprint) {
                 try { fingerprint = (await verified(record)).fingerprint; } catch { /* Acknowledge the result, but do not carry it through a rescan. */ }
               }
               if (request.stamps[record.key] !== reviewStamp(record)) throw new Error(t("reviewChanged", "検査結果が変わりました。選び直してください。"));
-              const previous = record.review;
-              if (request.reviewed) record.review = { at: new Date().toISOString(), note: request.note.trim(),
+              const candidate = { ...record };
+              if (request.reviewed) candidate.review = { at: new Date().toISOString(), note: request.note.trim(),
                 resultHash: record.sha256 || null, reason: reviewReason(record), fingerprint };
+              else delete candidate.review;
+              await persistState(records.map(item => item === record ? candidate : item));
+              if (candidate.review) record.review = candidate.review;
               else delete record.review;
-              try { await save(); }
-              catch (error) { if (previous) record.review = previous; else delete record.review; throw error; }
-            } finally { deleting.delete(record.key); }
+              await updateBadge().catch(report);
+            });
+            recordChanges = recordChanges.catch(() => {}).then(change);
+            await recordChanges;
             progress.completed++;
             await yieldBatch();
           }

@@ -1,6 +1,7 @@
 # 再開メモ
 
 ## 現状
+- fix/audit-followupsの0.20.0a18：確認情報と右クリックの選択メール検査にも共通の保存確定保護を適用。確認情報は成功後だけ反映し、手動検査は新規/既存/入れ替え/一時枠の予約確定後に開始する。JS257/Python80中77成功・Darwin3除外、日英UI、Ubuntu独立実機の確認変更/再検査/通常全操作/更新/清掃、最終XPI一致を確認。手動予約失敗は単体テストで確認。成果物dist/clam-mail-check-direct-0.20.0a18.xpi。普段の環境とmacOS/Windows実機は未確認、Windows未統合、push/公開未実施。
 - fix/audit-followupsの0.20.0a17：履歴消去を保存成功後に反映し、失敗時の元履歴と並行追加結果を保護。フォルダー検査の履歴入れ替えと自動再試行タイマーも操作ロックを尊重する。JS245/Python80中77成功・Darwin3除外、日英UI、Ubuntu独立実機の履歴消去/更新後の維持/他メール・確認メモ保持/通常全操作/清掃、XPI一致を確認。成果物dist/clam-mail-check-direct-0.20.0a17.xpi。普段の環境とmacOS/Windows実機は未確認、Windows未統合、push/公開未実施。
 - fix/audit-followupsの0.20.0a16：一括再検査の予約保存前の実行/別保存への混入を防止し、保存失敗時の復元と予約中の中止に対応。事前確認失敗では正常な接続を保持。JS240/Python80中77成功・Darwin3除外、日英UI、Ubuntu独立実機のサイズ超過を挟む一括検査の起動1回/確認情報保持/通常全操作/更新/清掃、XPI一致を確認。成果物dist/clam-mail-check-direct-0.20.0a16.xpi。普段の環境とmacOS/Windows実機は未確認、Windows未統合、push/公開未実施。
 - fix/audit-followupsの0.20.0a15：保存枠不足の新着優先、個別再検査の保存失敗時の復元と未確定予約の実行/保存防止、正常な内蔵検査接続の5秒間再利用を実装。異常/待機終了時の解放、Windowタイマーの束縛・古いコールバックの無効化・異常時の即時解放を確認。JS234/Python80中77成功・Darwin3除外。日英UI、Ubuntu独立実機で実PID再利用/待機後清掃/通常全操作/更新/背景待機接続を含むアドオン削除後の清掃、XPI一致を確認。成果物dist/clam-mail-check-direct-0.20.0a15.xpi。普段の操作負荷とmacOS/Windows実機は未確認、Windows未統合、push/公開未実施。
