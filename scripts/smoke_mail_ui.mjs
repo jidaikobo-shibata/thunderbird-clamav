@@ -106,6 +106,9 @@ try {
         makeRecord("r2", "clean"), makeRecord("r3", "incomplete", "other"),
         makeRecord("r4", "queued"), makeRecord("r5", "deleted"),
         ...Array.from({ length: 55 }, (_, i) => makeRecord("r" + (i + 6), "clean"))] };
+    if (sessionStorage.getItem('fixture-open-attention')) {
+      testState.resultsRequest = 'initial-toolbar-attention'; testState.resultsFilter = 'attention';
+    }
     function fixtureHealth() {
       const code = testState.installation.state === "unavailable" ? "helper_unavailable" : sessionStorage.getItem("fixture-health");
       if (code) return { status: "error", code, checkedAt: new Date().toISOString(), detail: getMessage(code === "clamav_missing" ? "clamavMissing" : code === "clamav_unusable" ? "clamavUnusable" : "helperClamavUnknown") };
@@ -348,11 +351,24 @@ try {
       assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 0);
       await evaluate("window.fixtureFolderOverride=null;document.getElementById('reload-folders').click()");
       await until("!document.getElementById('reload-folders').disabled");
-      await evaluate("document.getElementById('search').value='';document.getElementById('search').dispatchEvent(new Event('input',{bubbles:true}));document.getElementById('tab-help').click()");
+      await evaluate("document.getElementById('search').value='';document.getElementById('reset-filters').click();document.getElementById('select-page').checked=true;document.getElementById('select-page').dispatchEvent(new Event('change',{bubbles:true}));document.getElementById('filter').value='clean';document.getElementById('account-filter').value='other';document.getElementById('search').value='stale search';document.getElementById('folder-only').checked=true;document.getElementById('folder-only').dispatchEvent(new Event('change',{bubbles:true}));document.getElementById('tab-scan').click();testState.resultsFilter='attention';testState.resultsRequest='toolbar-'+" + JSON.stringify(language));
+      await until("document.getElementById('filter').value==='attention'&&!document.getElementById('panel-results').hidden");
+      assert.deepEqual(await evaluate("[document.getElementById('account-filter').value,document.getElementById('search').value,document.getElementById('folder-only').checked,document.getElementById('select-page').checked]"), ['all','',false,false]);
+      assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 3);
+      await evaluate("document.getElementById('filter').value='all';document.getElementById('filter').dispatchEvent(new Event('change',{bubbles:true}))");
+      await new Promise(resolve => setTimeout(resolve,2200));
+      assert.equal(await evaluate("document.getElementById('filter').value"),'all');
+      await evaluate("testState.resultsRequest='toolbar-again-'+" + JSON.stringify(language));
+      await until("document.getElementById('filter').value==='attention'");
+      await evaluate("document.getElementById('reset-filters').click();document.getElementById('tab-help').click()");
       assert.doesNotMatch(await evaluate("document.getElementById('panel-help').innerText"), /Terminal/);
       assert.match(await evaluate("document.getElementById('panel-help').innerText"), language === 'ja' ? /アドオンマネージャー/ : /Add-ons Manager/);
       assert.equal(await evaluate("testCalls.some(call=>call.type==='helperPlan'||call.type==='uninstallSelf')"), false);
     }
+    await evaluate("sessionStorage.setItem('fixture-open-attention','yes')");
+    await call("Page.reload");
+    await until("document.getElementById('filter').value==='attention'&&!document.getElementById('panel-results').hidden&&document.querySelectorAll('#results tr').length===3");
+    await evaluate("sessionStorage.removeItem('fixture-open-attention')");
     console.log("Direct UI: passed (Japanese/English, four tabs, settings connection status and alerts, keyboard navigation, no backup path, desktop/mobile, required permissions, deletion confirmation, concise help)");
   } else {
   await until("document.querySelectorAll('#results tr').length === 50");

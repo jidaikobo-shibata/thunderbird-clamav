@@ -532,6 +532,14 @@ async function refresh() {
     }
     if (latest.resultsRequest && latest.resultsRequest !== seenResultsRequest && !blocked()) {
       seenResultsRequest = latest.resultsRequest;
+      if (latest.resultsFilter === "attention") {
+        $("filter").value = "attention";
+        $("account-filter").value = "all";
+        $("search").value = "";
+        folderFilterId = null;
+        $("folder-only").checked = false;
+        resetSelection();
+      }
       activateTab("results");
     }
     if (latest.folderRequest && latest.folderRequest.token !== seenFolderRequest && !blocked() &&

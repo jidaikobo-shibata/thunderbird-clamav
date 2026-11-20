@@ -2877,3 +2877,17 @@ test("receipt recovery clears only its own warning and preserves unrelated failu
   const after = await settle(h, state => state.records.length === 2 && state.records.every(record => record.status === "incomplete"));
   assert.equal(after.issue, before.issue);
 });
+
+test("toolbar result requests select attention without leaking the default into notification requests", async () => {
+  const h = await harness({ direct: true, saved: { records: [{ key: "threat", status: "detected", sha256: "digest", locator: locator(mail(1)) }] } });
+  h.api.browserAction.onClicked.listeners[0]();
+  const first = await settle(h, state => Boolean(state.resultsRequest));
+  assert.equal(first.resultsFilter, "attention");
+  h.api.notifications.onClicked.listeners[0]();
+  const notification = await h.send("state");
+  assert.notEqual(notification.resultsRequest, first.resultsRequest);
+  assert.equal(notification.resultsFilter, null);
+  h.api.browserAction.onClicked.listeners[0]();
+  const again = await settle(h, state => state.resultsRequest !== notification.resultsRequest);
+  assert.equal(again.resultsFilter, "attention");
+});

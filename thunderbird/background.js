@@ -65,7 +65,7 @@ const historyTickets = new Map();
 const movedScans = new WeakMap();
 let folderRequest = null;
 let lastHealth = null, lastScan = null;
-let resultsRequest = null, setupRequest = null;
+let resultsRequest = null, resultsFilter = null, setupRequest = null;
 let installation = null, helperRemoved = false, pendingMaintenance = null, maintenanceGeneration = 0;
 const maintenanceActive = () => Boolean(pendingMaintenance);
 function releaseMaintenance() {
@@ -1151,16 +1151,16 @@ api.menus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== "scan") return;
   if (tab?.id !== undefined) lastMailTab = tab.id;
   void ready.then(() => info.selectedMessages ? enqueue(info.selectedMessages, "manual") : scanSelection())
-    .then(() => { resultsRequest = crypto.randomUUID(); return openDashboard(); }).catch(report);
+    .then(() => { resultsFilter = null; resultsRequest = crypto.randomUUID(); return openDashboard(); }).catch(report);
 });
 api.browserAction.onClicked.addListener(() => {
   void ready.then(async () => {
     if (toolbarState().setup) setupRequest = crypto.randomUUID();
-    else if (records.some(needsAttention) || overflowReport?.total || issue) resultsRequest = crypto.randomUUID();
+    else if (records.some(needsAttention) || overflowReport?.total || issue) { resultsFilter = "attention"; resultsRequest = crypto.randomUUID(); }
     await openDashboard();
   }).catch(report);
 });
-api.notifications.onClicked.addListener(() => { resultsRequest = crypto.randomUUID(); void openDashboard().catch(report); });
+api.notifications.onClicked.addListener(() => { resultsFilter = null; resultsRequest = crypto.randomUUID(); void openDashboard().catch(report); });
 api.runtime.onInstalled.addListener(() => { void openDashboard().catch(report); });
 
 api.runtime.onMessage.addListener(async (request, sender) => {
@@ -1179,7 +1179,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
     if (batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation) && !["state", "cancelBatch", "helperInfo", "health"].includes(request.type)) throw new Error(t("qBusy", "このメールは処理中です。"));
     switch (request.type) {
       case "state":
-        return { ok: true, directMigrationBackup, settings, records, overflowPending, overflowReport, issue, lastHealth, lastScan, resultsRequest, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
+        return { ok: true, directMigrationBackup, settings, records, overflowPending, overflowReport, issue, lastHealth, lastScan, resultsRequest, resultsFilter, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
           folderJob: folderScan.snapshot(), accounts: (await api.accounts.list())
           .filter(account => ["imap", "pop3", "none"].includes(account.type))
           .map(account => ({ id: account.id, name: account.name, type: account.type })) };
