@@ -30,6 +30,15 @@ export function finishScanAttempt(record, digest) {
   }
 }
 
+/** Merge an independently known detection into a newer, unfinished attempt. */
+export function retainKnownDetection(record, known, digest) {
+  if (!["error", "incomplete"].includes(record.status) || known.status !== "detected" ||
+      !digest || record.sha256 !== digest || known.sha256 !== digest) return false;
+  record.lastResult = snapshot(known);
+  finishScanAttempt(record, digest);
+  return true;
+}
+
 export const scanFailed = record => !["queued", "scanning", "deleted"].includes(record.status) &&
   (record.status === "error" || record.lastAttempt?.status === "error");
 

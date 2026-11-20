@@ -94,3 +94,22 @@ test("checkpoint deletion keeps page indexes valid without mutating prior snapsh
   assert.deepEqual(before.pages, [[["a", 1], ["b", 2]]]);
   assert.deepEqual(map.snapshot("job").pages, [[["b", 2]]]);
 });
+
+
+test("unknown formats, invalid types, missing indexes and duplicate history keys are rejected",async()=>{
+  for(const records of [{format:99},{format:"2"},{},true,0,""]){
+    assert.throws(()=>readStoredState({records}),/Unsupported history/);
+  }
+  for(const folderCheckpoint of [{version:99,id:"job"},{version:"2",id:"job"},[],42,{version:1,id:"job",entries:null},{version:1,entries:[]}]){
+    assert.throws(()=>readStoredState({folderCheckpoint}),/checkpoint/);
+  }
+  assert.throws(()=>readStoredState({"historyPage:0":[]}),/Missing history/);
+  assert.throws(()=>readStoredState({records:[],"historyPage:0":[]}),/Missing history/);
+  assert.throws(()=>readStoredState({folderCheckpoint:{version:1,id:"job",entries:[]},"checkpointPage:0":[]}),/Missing checkpoint/);
+  assert.throws(()=>readStoredState({folderCheckpoint:null,"checkpointPage:0":[]}),/Missing checkpoint/);
+  assert.deepEqual(readStoredState({}),{});
+  assert.deepEqual(readStoredState({records:null,folderCheckpoint:null}),{records:null,folderCheckpoint:null});
+  const h=fixture();await h.store.write(h.snapshot(),{});
+  const raw=h.raw();raw.records.keys.push(raw.records.keys[0]);
+  assert.throws(()=>readStoredState(raw),/Invalid history/);
+});

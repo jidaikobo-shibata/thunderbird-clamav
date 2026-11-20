@@ -33,6 +33,22 @@ export class CheckpointMap extends Map {
 
 /** Read both the original arrays and the incremental representation. */
 export function readStoredState(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Invalid stored state");
+  const hasPage = prefix => Object.entries(raw).some(([key, value]) => key.startsWith(prefix) && value != null);
+  if (raw.records == null || Array.isArray(raw.records)) {
+    if (hasPage("historyPage:")) throw new Error("Missing history storage index");
+  } else if (!Array.isArray(raw.records) &&
+      (typeof raw.records !== "object" || raw.records.format !== 2)) {
+    throw new Error("Unsupported history storage format");
+  }
+  if (raw.folderCheckpoint == null || raw.folderCheckpoint?.version === 1) {
+    if (hasPage("checkpointPage:")) throw new Error("Missing checkpoint storage index");
+  } else if (typeof raw.folderCheckpoint !== "object" || Array.isArray(raw.folderCheckpoint) ||
+      ![1, 2].includes(raw.folderCheckpoint.version)) {
+    throw new Error("Unsupported checkpoint storage format");
+  }
+  if (raw.folderCheckpoint && (typeof raw.folderCheckpoint.id !== "string" || !raw.folderCheckpoint.id ||
+      raw.folderCheckpoint.version === 1 && !Array.isArray(raw.folderCheckpoint.entries))) throw new Error("Invalid checkpoint storage index");
   const data = { ...raw };
   if (raw.records?.format === 2) {
     if (raw.records.shards !== HISTORY_SHARDS || !Array.isArray(raw.records.keys)) throw new Error("Invalid history storage index");
@@ -42,8 +58,10 @@ export function readStoredState(raw) {
       if (!Array.isArray(page)) throw new Error("Missing history storage page");
       data.records.push(...page);
     }
+    if (raw.records.keys.some(key => typeof key !== "string" || !key) ||
+        data.records.some(record => !record || typeof record !== "object" || typeof record.key !== "string")) throw new Error("Invalid history storage order");
     const order = new Map(raw.records.keys.map((key, index) => [key, index]));
-    if (order.size !== data.records.length || new Set(data.records.map(record => record.key)).size !== order.size ||
+    if (order.size !== raw.records.keys.length || order.size !== data.records.length || new Set(data.records.map(record => record.key)).size !== order.size ||
         data.records.some(record => !order.has(record.key))) throw new Error("Invalid history storage order");
     data.records.sort((a, b) => order.get(a.key) - order.get(b.key));
   }

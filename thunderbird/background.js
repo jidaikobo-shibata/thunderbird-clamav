@@ -1,6 +1,6 @@
 import { StateStorage, readStoredState } from "./state-storage.mjs";
 import { readScannerHealth, applyScannerHealth, scannerReady } from "./scanner-health.mjs";
-import { rememberResult, finishScanAttempt, scanFailed } from "./scan-history.mjs";
+import { rememberResult, finishScanAttempt, retainKnownDetection, scanFailed } from "./scan-history.mjs";
 import { directRuntime } from "./direct-transport.mjs";
 import { scanPolicy, defaultScanPolicy, advisoryNotifies } from "./scan-policy.mjs";
 import { canReview, canUnreview, reviewReason, reviewStamp, reconcileReview } from "./review.mjs";
@@ -729,7 +729,7 @@ async function initialize() {
   directMigrationBackup = data.directMigrationBackup || null;
   incrementalMigrationBackup = stored.incrementalMigrationBackup || null;
   if (DIRECT && !directMigrationBackup) {
-    directMigrationBackup = data.settings || data.records?.length ? await api.clamDirect.backup(JSON.stringify(data)) : { notNeeded: true };
+    directMigrationBackup = data.settings || data.records?.length ? await api.clamDirect.backup(JSON.stringify(stored)) : { notNeeded: true };
     incrementalMigrationBackup ||= directMigrationBackup;
     await api.storage.local.set({ directMigrationBackup, incrementalMigrationBackup });
   }
@@ -830,6 +830,11 @@ function coalesceMovedScan(original, duplicate, hash) {
   // A rescan can finish while move verification awaits I/O. An older
   // destination result must not retract that newer verdict.
   const originalTime = Date.parse(original.updatedAt), duplicateTime = Date.parse(duplicate.updatedAt);
+  if (originalTime >= duplicateTime && retainKnownDetection(original, duplicate, hash)) {
+    reconcileReview(original, review, "sha256:" + hash);
+    records.splice(records.indexOf(duplicate), 1);
+    return original;
+  }
   if (originalTime > duplicateTime || originalTime === duplicateTime && original.status === "detected" && duplicate.status !== "detected") {
     records.splice(records.indexOf(duplicate), 1);
     return original;

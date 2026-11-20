@@ -109,7 +109,12 @@ async function harness({ failReads = [], failWrites = [], direct = false, backup
     events.message.listeners[0]({ type, ...values }, sender);
   await send("state");
   nativePorts.length = 0; // Startup installation check is separate from scan connections.
-  return { api, send, events, notifications, opened, rawReads, timers, deleted, nativePorts, directRequests, migrationBackups, storageCounts, stored: () => readStoredState(structuredClone(stored)), rawStored: () => structuredClone(stored) };
+  return { api, send, events, notifications, opened, rawReads, timers, deleted, nativePorts, directRequests, migrationBackups, storageCounts, stored: () => {
+    const data=readStoredState(structuredClone(stored));
+    // Legacy fixtures contain logical arrays, never incremental page keys.
+    for(const key of Object.keys(data)) if(/^(history|checkpoint)Page:/.test(key)) delete data[key];
+    return data;
+  }, rawStored: () => structuredClone(stored) };
 }
 
 function mail(id, accountId = "one") {
@@ -2296,4 +2301,79 @@ test("ambiguous bulk move candidates are read once per event and remain unmerged
   const state=await h.send("state");
   assert.equal(state.records.length,2);
   assert.deepEqual(state.records.map(record=>record.locator.folder.path),["/Inbox","/Other"]);
+});
+
+
+async function rescanResultDuringMove(status) {
+  const original=mail(1),moved={...original,id:2,folder:{id:"child",accountId:"one",path:"/Inbox/Child"}};
+  let scans=0,releaseScan;
+  const scanGate=new Promise(resolve=>{releaseScan=resolve;});
+  const h=await harness({direct:true,mails:[original,moved],saved:{settings:{enabled:true,accountIds:["one"],notifications:false}},
+    scanGate:()=>{scans++;return scans===3?scanGate:undefined;},
+    scanResult:()=>scans===1?{status:"incomplete"}:scans===3?{status,detail:"synthetic retry result"}:{status:"detected",signatures:["Synthetic.PreviousVerdict"]}});
+  h.events.newMail.listeners[0](original.folder,{messages:[original]});
+  let state=await settle(h,s=>s.records[0]?.status==="incomplete");
+  const key=state.records[0].key;
+  h.events.newMail.listeners[0](moved.folder,{messages:[moved]});
+  await settle(h,s=>s.records[1]?.status==="detected");
+  await h.send("retry",{key});
+  await settle(h,s=>s.records[0].status==="scanning"&&scans===3);
+  const raw=h.api.messages.getRaw;
+  let releaseMove,entered;
+  const moveGate=new Promise(resolve=>{releaseMove=resolve;}),started=new Promise(resolve=>{entered=resolve;});
+  h.api.messages.getRaw=async(id,options)=>{if(id===2){entered();await moveGate;}return raw(id,options);};
+  const moving=h.events.moved.listeners[0]({messages:[original]},{messages:[moved]});
+  await started;
+  releaseScan();
+  await settle(h,s=>s.records[0].status===status);
+  releaseMove();await moving;
+  state=await h.send("state");
+  assert.equal(state.records.length,1);
+  assert.equal(state.records[0].key,key);
+  const expected=status==="clean"?"clean":"detected";
+  assert.equal(state.records[0].status,expected);
+  assert.deepEqual(state.records[0].signatures,status==="clean"?[]:["Synthetic.PreviousVerdict"]);
+  const {canReview}=await import("../thunderbird/review.mjs");
+  assert.equal(canReview(state.records[0]),false);
+  if(status!=="clean"){
+    assert.equal(state.records[0].lastResult.status,"detected");
+    assert.equal(state.records[0].lastAttempt.status,status);
+    assert.equal(state.records[0].lastAttempt.detail,"synthetic retry result");
+  }
+  const restarted=await harness({direct:true,saved:h.rawStored(),mails:[original,moved]});
+  const restored=(await restarted.send("state")).records[0];
+  assert.equal(restored.status,expected);
+  if(status!=="clean")assert.equal(restored.lastAttempt.status,status);
+}
+
+test("move reconciliation preserves known detections unless the newer error rescan is conclusive",async()=>{await rescanResultDuringMove("error");});
+
+test("move reconciliation preserves known detections unless the newer incomplete rescan is conclusive",async()=>{await rescanResultDuringMove("incomplete");});
+
+test("move reconciliation preserves known detections unless the newer clean rescan is conclusive",async()=>{await rescanResultDuringMove("clean");});
+
+
+test("invalid or unsupported storage stops before any write and recovers only from valid restored data",async()=>{
+  const seed=await harness({direct:true,saved:{records:[{key:"human",status:"clean",locator:{accountId:"one"},review:{note:"preserve latest decision"}}]}});
+  const valid=seed.rawStored();
+  const changes=[
+    raw=>{raw.records.format=99;},raw=>{raw.records.format="2";},raw=>{raw.records=false;},
+    raw=>{raw.records=null;},raw=>{raw.records=[];},raw=>{delete raw.records;},
+    raw=>{raw.folderCheckpoint={version:99,id:"job",entries:[]};},
+    raw=>{raw.folderCheckpoint={version:1,id:"job",entries:null};},
+    raw=>{raw["checkpointPage:0"]=[["synthetic",1]];}
+  ];
+  for(const change of changes){
+    const invalid=structuredClone(valid);change(invalid);
+    const h=await harness({direct:true,saved:invalid});
+    assert.equal((await h.send("state")).startupFailed,true);
+    assert.equal((await h.send("health")).startupFailed,true);
+    assert.deepEqual(h.rawStored(),invalid);
+    assert.equal(h.storageCounts.writes,0);
+    assert.equal(h.migrationBackups.length,0);
+    assert.equal(h.rawReads.length,0);
+    h.api.storage.local.get=async()=>structuredClone(valid);
+    assert.equal((await h.send("health")).ok,true);
+    assert.equal((await h.send("state")).records[0].review.note,"preserve latest decision");
+  }
 });

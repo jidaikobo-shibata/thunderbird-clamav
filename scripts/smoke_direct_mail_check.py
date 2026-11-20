@@ -70,6 +70,13 @@ def fixture_xpi(target, original, version, scenario="full"):
         payload["direct/host.py"] += b'\nCLAMSCAN = "/nonexistent-clam-mail-test/clamscan"\nCLAMD = "/nonexistent-clam-mail-test/clamd"\nCLAMAV_TRUST_ERROR = False\n'
     for name in ["api.js", "seed.js", "driver.js"]:
         payload["fixture/" + name] = (FIXTURE / name).read_bytes()
+    if scenario == "invalid-storage":
+        payload["fixture/seed.js"] = payload["fixture/seed.js"].replace(
+            b"await messenger.testFixture.update();", b"""
+            const valid = await messenger.storage.local.get(null);
+            await messenger.storage.local.set({fixtureValidStorage:valid, records:{format:99, keys:['preserved-review']}});
+            await messenger.testFixture.update();
+            """)
     if scenario == "recovery":
         # Faults exist only in instrumented, disposable-profile XPIs.
         payload["fixture/seed.js"] = payload["fixture/seed.js"].replace(
@@ -159,7 +166,7 @@ def descendants(pid):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--scenario", choices=["full", "missing", "quit", "uninstall", "recovery"], default="full")
+    parser.add_argument("--scenario", choices=["full", "missing", "quit", "uninstall", "recovery", "invalid-storage"], default="full")
     options = parser.parse_args()
     xpi = build()
     output = ROOT / ("dist/direct-mail-integration" + ("-" + options.scenario if options.scenario != "full" else ""))
@@ -209,7 +216,7 @@ def main():
                 deadline = time.monotonic() + 1200
                 while time.monotonic() < deadline:
                     results = []
-                    versions = ["0.20.0a1"] if options.scenario in ("missing", "recovery") else ["0.20.0a1", "0.20.0a2"]
+                    versions = ["0.20.0a1"] if options.scenario in ("missing", "recovery", "invalid-storage") else ["0.20.0a1", "0.20.0a2"]
                     for version in versions:
                         path = profile / f"direct-result-{version}.json"
                         if path.exists():
@@ -225,8 +232,8 @@ def main():
                             closed = [*result.get("completedSessions", []), *result.get("rescanCleanup", []), *result.get("cancelledSessions", [])]
                             assert all(not Path(value["directory"]).exists() and not alive(value["pid"]) for value in closed), "Completed/cancelled scan left resources"
                         children = [pid for session in active["sessions"] for pid in descendants(session["pid"])]
-                        assert len(children) >= (2 if options.scenario in ("missing", "recovery") else 3), "Expected supervised scanner descendants"
-                        if options.scenario in ("full", "missing", "recovery"):
+                        assert len(children) >= (2 if options.scenario in ("missing", "recovery", "invalid-storage") else 3), "Expected supervised scanner descendants"
+                        if options.scenario in ("full", "missing", "recovery", "invalid-storage"):
                             os.kill(active["parent"], signal.SIGKILL)
                         else:
                             (profile / "direct-action-ready").touch()

@@ -47,10 +47,35 @@ async function recoveryScenario() {
   await messenger.testFixture.report(JSON.stringify(report));
 }
 
+async function invalidStorageScenario() {
+  const before = await messenger.storage.local.get(null);
+  const failure = await messenger.runtime.sendMessage({type:"state"});
+  check(!failure.ok && failure.startupFailed, "Unsupported storage stops initialization");
+  const retry = await messenger.runtime.sendMessage({type:"health"});
+  check(!retry.ok && retry.startupFailed, "Connection retry cannot silently reset invalid storage");
+  check(JSON.stringify(await messenger.storage.local.get(null)) === JSON.stringify(before), "Invalid storage is preserved without writes");
+  for(let i=0;i<100 && !document.getElementById("notifications").disabled;i++) await wait(100);
+  check(document.getElementById("notifications").disabled, "Editing remains locked while storage is invalid");
+  check(!document.getElementById("health").disabled, "Explicit recovery remains available");
+  await messenger.storage.local.set(before.fixtureValidStorage);
+  await messenger.storage.local.remove("fixtureValidStorage");
+  document.getElementById("health").click();
+  const state = await settled(state=>state.records.some(record=>record.key==="preserved-review"));
+  check(state.records[0].review.note === "Synthetic human decision", "Restoring valid storage preserves human notes");
+  check((await messenger.storage.local.get("records")).records.format === 2, "Valid restored history migrates successfully");
+  const held = new NativeClient(messenger.runtime);
+  await held.request("health");
+  report.unsupportedStorageProtected = true;
+  report.runtime = await messenger.testFixture.runtime();
+  report.ok = true;
+  await messenger.testFixture.report(JSON.stringify(report));
+}
+
 const report = { ok: false, version: messenger.runtime.getManifest().version };
 try {
   const options = await (await fetch(messenger.runtime.getURL("fixture/options.json"))).json();
-  if (options.scenario === "recovery") { await recoveryScenario(); } else {
+  if (options.scenario === "invalid-storage") { await invalidStorageScenario(); }
+  else if (options.scenario === "recovery") { await recoveryScenario(); } else {
   let state = await request("state");
   const fixture = await messenger.testFixture.prepare();
   check(state.installation.state === "integrated", "Integrated scanner state");
