@@ -106,6 +106,7 @@ function updateControls() {
     entry.open.disabled = locked || !record.sha256 || ["queued", "scanning", "deleted"].includes(record.status);
     entry.retry.disabled = locked || !canRetry(record);
     entry.remove.disabled = locked || !canDelete(record);
+    entry.forget.disabled = locked || !canForget(record);
     entry.review.disabled = locked || !["incomplete", "advisory"].includes(record.status);
   }
   $("previous-page").disabled = navigationLocked || page === 0;
@@ -391,11 +392,15 @@ function makeRow(record) {
     const current = latest.records.find(item => item.key === record.key);
     if (["incomplete", "advisory"].includes(current?.status)) changeReview([current], !isReviewed(current));
   });
+  const forget = cells[4].appendChild(document.createElement("button"));
+  forget.textContent = t("forgetTitle", "履歴だけ消去");
+  forget.className = "forget-action";
+  forget.addEventListener("click", () => { void action(() => forgetHistory([record.key])); });
   const remove = cells[4].appendChild(document.createElement("button"));
   remove.textContent = t("mail136", "完全削除");
   remove.className = "danger";
   remove.addEventListener("click", () => { void action(() => deleteOne(record.key)); });
-  return { row, parts, checkbox, open, retry, review, remove };
+  return { row, parts, checkbox, open, retry, review, forget, remove };
 }
 
 $("overflow-clear").addEventListener("click", () => {
@@ -463,11 +468,12 @@ function renderRecords() {
     setText(entry.parts.engine, record.engine || "");
     setText(entry.parts.scanPolicy, record.scanSettings ? policyDescription(record.scanSettings) : "");
     entry.remove.hidden = !canDelete(record);
+    entry.forget.hidden = !canForget(record);
     entry.review.hidden = !["incomplete", "advisory"].includes(record.status);
     const reviewLabel = isReviewed(record) ? t("unreviewRowAction", "未確認に") : t("reviewRowAction", "確認済み");
     setText(entry.review, reviewLabel);
     entry.review.setAttribute("aria-label", t("namedDetail", "$1：$2", [record.locator.subject || t("mail022", "件名なし"), reviewLabel]));
-    for (const [button, label] of [[entry.checkbox, t("mail138", "一括操作の対象に選択")], [entry.remove, t("mail139", "ごみ箱を経由せず完全削除")], [entry.open, t("mail131", "開く")], [entry.retry, t("mail134", "再検査")]]) {
+    for (const [button, label] of [[entry.checkbox, t("mail138", "一括操作の対象に選択")], [entry.remove, t("mail139", "ごみ箱を経由せず完全削除")], [entry.forget, t("forgetTitle", "履歴だけ消去")], [entry.open, t("mail131", "開く")], [entry.retry, t("mail134", "再検査")]]) {
       button.setAttribute("aria-label", t("namedDetail", "$1：$2", [record.locator.subject || t("mail022", "件名なし"), label]));
     }
     const at = $("results").children[index];
@@ -606,20 +612,22 @@ $("delete-selected").addEventListener("click", () => {
     return t("bulkDeleteResult", "完全削除$1通 ／ 失敗$2通 ／ 未着手$3通", [response.results.length - failed.length, failed.length, response.cancelled || 0]);
   });
 });
+async function forgetHistory(keys) {
+  $("batch-report").replaceChildren(); $("batch-report").hidden = true;
+  const prepared = await request("prepareForget", { keys });
+  if (!await confirmDeletion(prepared.targets, true)) {
+    await request("cancelForget", { token: prepared.token });
+    return t("forgetCancelled", "履歴の消去をキャンセルしました。");
+  }
+  const response = await request("forgetMany", { token: prepared.token });
+  for (const key of response.keys) selected.delete(key);
+  return response.skipped ? t("forgetResult", "履歴$1件を消去しました。状態が変わった$2件は残しました。メール本体は削除していません。", [response.count, response.skipped]) : t("forgetSuccess", "履歴$1件を消去しました。メール本体は残っています。", [response.count]);
+}
 $("forget-selected").addEventListener("click", () => {
   const keys = selection().filter(canForget).map(record => record.key);
-  void action(async () => {
-    $("batch-report").replaceChildren(); $("batch-report").hidden = true;
-    const prepared = await request("prepareForget", { keys });
-    if (!await confirmDeletion(prepared.targets, true)) {
-      await request("cancelForget", { token: prepared.token });
-      return t("forgetCancelled", "履歴の消去をキャンセルしました。");
-    }
-    const response = await request("forgetMany", { token: prepared.token });
-    for (const key of response.keys) selected.delete(key);
-    return response.skipped ? t("forgetResult", "履歴$1件を消去しました。状態が変わった$2件は残しました。メール本体は削除していません。", [response.count, response.skipped]) : t("forgetSuccess", "履歴$1件を消去しました。メール本体は残っています。", [response.count]);
-  });
+  void action(() => forgetHistory(keys));
 });
+
 function syncSettings(settings, forceScan = false) {
   settings = normalizeAutomaticSettings(settings);
   $("notifications").checked = settings.notifications;

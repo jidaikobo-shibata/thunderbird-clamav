@@ -37,6 +37,7 @@ td:nth-child(3) { min-width: 180px; max-width: 380px; }
 td:nth-child(4) { min-width: 170px; max-width: 360px; }
 td:last-child { min-width: 110px; }
 td button { display: block; margin-bottom: 8px; width: 100%; }
+.forget-action { white-space: nowrap; }
 .state { font-weight: bold; }
 [data-status="detected"] .state, [data-status="error"] .state { text-decoration: underline double; }
 [data-selected="true"] { outline: 2px solid Highlight; outline-offset: -2px; }
