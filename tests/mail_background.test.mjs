@@ -2779,4 +2779,101 @@ for (const overflow of [false, true]) test(`incoming admission preserves shared 
   assert.equal((await h.send("scanSelection")).ok, true);
   await settle(h, state => overflow ? state.overflowReport?.total === 1 : state.records[0]?.status === "clean");
   assert.deepEqual(h.rawReads, [1]);
+  await h.timers[0]();
+  await settle(h, state => !state.issue);
+  assert.deepEqual(h.rawReads, [1]); // Manual acceptance also retires the failed delivery.
+});
+
+for (const overflow of [false, true]) for (const duplicate of [false, true]) test(`failed incoming page resumes without loss or duplicates (overflow=${overflow}, duplicate=${duplicate})`, async () => {
+  const mails = [mail(101), mail(102), mail(103), mail(104)];
+  const records = overflow ? Array.from({ length: 1000 }, (_, i) => ({ key: "held-" + i, status: "detected", locator: { subject: "held " + i } })) : [];
+  const h = await harness({ mails, saved: { records, settings: { enabled: true, accountIds: ["one"], notifications: false } } });
+  const before = structuredClone((await h.send("state")).records), original = h.api.storage.local.set;
+  let failed = false, continued = 0, aborted = 0;
+  h.api.messages.continueList = async id => { assert.equal(id, "pending-page"); continued++; return { messages: mails.slice(1, 3) }; };
+  h.api.messages.abortList = async () => { aborted++; };
+  h.api.storage.local.set = async value => { if (!failed) { failed = true; throw new Error("synthetic incoming page save failure"); } return original(value); };
+  h.events.newMail.listeners[0](mails[0].folder, { id: "pending-page", messages: [mails[0]] });
+  await settle(h, state => state.issue.includes("synthetic incoming page save failure"));
+  assert.equal(continued, 0); assert.equal(aborted, 0); assert.equal(h.rawReads.length, 0);
+  h.events.newMail.listeners[0](mails[3].folder, { messages: duplicate ? [mails[3], mails[0]] : [mails[3]] });
+  await settle(h, state => overflow ? state.overflowReport?.total === (duplicate ? 2 : 1) : state.records.filter(record => record.status === "clean").length === (duplicate ? 2 : 1));
+  await h.timers[0]();
+  const state = await settle(h, state => !state.issue && (overflow ? state.overflowReport?.total === 4 : state.records.length === 4 && state.records.every(record => record.status === "clean")));
+  assert.deepEqual(h.rawReads, [104, 101, 102, 103]);
+  assert.equal(continued, 1); assert.equal(aborted, 0);
+  if (overflow) assert.deepEqual(state.records, before);
+  await h.timers[0](); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.rawReads.length, 4);
+});
+
+test("persistent admission failures retry once per tick and rotate fairly without blocking new mail", async () => {
+  const mails = [mail(201), mail(202), mail(203)];
+  const h = await harness({ mails, saved: { settings: { enabled: true, accountIds: ["one"], notifications: false } } });
+  const original = h.api.storage.local.set; let failures = 0;
+  h.api.storage.local.set = async () => { failures++; throw new Error("persistent synthetic receipt failure " + failures); };
+  h.events.newMail.listeners[0](mails[0].folder, { messages: [mails[0]] });
+  h.events.newMail.listeners[0](mails[1].folder, { messages: [mails[1]] });
+  await settle(h, state => state.issue.includes("failure 2"));
+  for (const count of [3, 4]) {
+    await h.timers[0]();
+    // Each tick schedules one retained receipt, rotating after a failure.
+    await settle(h, state => state.issue.includes("failure " + count));
+    assert.equal(failures, count);
+  }
+  assert.equal(h.rawReads.length, 0);
+  h.api.storage.local.set = original;
+  h.events.newMail.listeners[0](mails[2].folder, { messages: [mails[2]] });
+  await settle(h, state => state.records.some(record => record.messageId === 203 && record.status === "clean"));
+  await h.timers[0]();
+  await settle(h, state => state.records.some(record => record.messageId === 201 && record.status === "clean"));
+  await h.timers[0]();
+  await settle(h, state => !state.issue && state.records.length === 3 && state.records.every(record => record.status === "clean"));
+  assert.deepEqual(h.rawReads, [203, 201, 202]);
+});
+
+test("disabled accounts retire retained incoming pages without inspecting their mail", async () => {
+  const mails = [mail(301), mail(302)];
+  const h = await harness({ mails, saved: { settings: { enabled: true, accountIds: ["one"], notifications: false } } });
+  const original = h.api.storage.local.set; let failed = false;
+  h.api.storage.local.set = async value => { if (!failed) { failed = true; throw new Error("synthetic paused receipt failure"); } return original(value); };
+  h.events.newMail.listeners[0](mails[0].folder, { messages: mails });
+  await settle(h, state => state.issue.includes("synthetic paused receipt failure"));
+  assert.equal((await h.send("settings", { settings: { enabled: false, accountIds: [], notifications: false } })).ok, true);
+  await h.timers[0]();
+  await settle(h, state => !state.issue);
+  assert.deepEqual(h.rawReads, []); assert.deepEqual(h.stored().records, []);
+});
+
+test("repeated ticks cannot duplicate a retained receipt while its retry is saving", async () => {
+  const message = mail(401), h = await harness({ mails: [message], saved: { settings: { enabled: true, accountIds: ["one"], notifications: false } } });
+  const original = h.api.storage.local.set; let failed = false;
+  h.api.storage.local.set = async value => { if (!failed) { failed = true; throw new Error("synthetic initial receipt failure"); } return original(value); };
+  h.events.newMail.listeners[0](message.folder, { messages: [message] });
+  await settle(h, state => state.issue.includes("synthetic initial receipt failure"));
+  let release, entered, writes = 0;
+  const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+  h.api.storage.local.set = async value => { if (++writes === 1) { entered(); await gate; } return original(value); };
+  await h.timers[0](); await started;
+  await h.timers[0](); await h.timers[0]();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(writes, 1); assert.equal(h.rawReads.length, 0);
+  release();
+  await settle(h, state => !state.issue && state.records[0]?.status === "clean");
+  assert.deepEqual(h.rawReads, [401]);
+});
+
+test("receipt recovery clears only its own warning and preserves unrelated failures", async () => {
+  const mails = [mail(501), mail(502)];
+  const h = await harness({ mails, scanResult: { status: "incomplete", detail: "encrypted" }, saved: { settings: { enabled: true, accountIds: ["one"], notifications: true } } });
+  const original = h.api.storage.local.set; let failed = false;
+  h.api.storage.local.set = async value => { if (!failed) { failed = true; throw new Error("synthetic warning preservation failure"); } return original(value); };
+  h.events.newMail.listeners[0](mails[0].folder, { messages: [mails[0]] });
+  await settle(h, state => state.issue.includes("synthetic warning preservation failure"));
+  h.api.notifications.create = async () => { throw new Error("notification unavailable"); };
+  h.events.newMail.listeners[0](mails[1].folder, { messages: [mails[1]] });
+  const before = await settle(h, state => state.issue.includes("デスクトップ通知を表示できません"));
+  await h.timers[0]();
+  const after = await settle(h, state => state.records.length === 2 && state.records.every(record => record.status === "incomplete"));
+  assert.equal(after.issue, before.issue);
 });

@@ -1,14 +1,14 @@
 # ClamAV Mail Check / ClamAV メール検査
 
 Thunderbirdのメールを、コンピューターにインストールしたClamAVで検査する拡張機能です。
-このブランチは **0.20.0a19（試用版）** です。補助プログラムの別途インストールは不要です。
+このブランチは **0.20.0a20（試用版）** です。補助プログラムの別途インストールは不要です。
 公開済みの0.20.0a5はUbuntu向けです。このブランチのXPIは末尾のビルド手順で作成できます。GitHubにはまだ公開していません。
 
 [English installation guide](README.en.md)
 
 ## インストール
 
-1. このブランチから作成した`dist/clam-mail-check-direct-0.20.0a19.xpi`を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
+1. このブランチから作成した`dist/clam-mail-check-direct-0.20.0a20.xpi`を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
 2. Thunderbirdのアドオンマネージャーで、歯車メニューの「ファイルからアドオンをインストール」を選び、XPIを指定します。
 3. 表示される権限を確認してインストールします。Experiment APIを使用するため、Thunderbirdとコンピューターへの全面アクセス権限が必要です。
 4. ツールバーのアイコンから画面を開き、「設定」末尾の「ClamAVの状態」で「接続を再確認」を押します。ClamAVが未導入なら、表示される導入手順に従います。ウイルス定義の初回更新も完了させてください。
@@ -90,6 +90,8 @@ ClamAVが検出しないメールの安全性を保証するものではあり�
 
 初期化に失敗した場合は、保存先の空き容量やアクセス状態を確認してから、設定末尾の「接続を再確認」で再試行できます。復旧するまで検査と設定変更は行いません。新しいフォルダー検査の開始状態を保存できなかった場合も、以前の検査の進捗と再開情報を保持します。
 
+新着の受付を保存できなかった場合は、失敗したメールと未受付分をメモリ上に保持し、10秒ごとに再試行します。後続の新着や手動検査は続行できます。保留中の案内が解消するまでThunderbirdを終了しないでください。保存の復旧前に終了した場合、未保存の受付は復元できません。
+
 ## データの扱い
 
 内蔵の検査接続は、短い間隔の新着などで再利用するため、通常5秒間待機してから閉じます。待機中はClamAVの定義などのメモリと一時ディレクトリを保持します。
@@ -112,7 +114,7 @@ ClamAVが検出しないメールの安全性を保証するものではあり�
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-成果物は`dist/clam-mail-check-direct-0.20.0a19.xpi`です。同じXPIにUbuntu/macOS用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
+成果物は`dist/clam-mail-check-direct-0.20.0a20.xpi`です。同じXPIにUbuntu/macOS用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
 
 ```bash
 for test_file in tests/*.test.mjs; do

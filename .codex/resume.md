@@ -1,6 +1,7 @@
 # 再開メモ
 
 ## 現状
+- fix/audit-followupsの0.20.0a20：新着予約保存失敗時は当該メールと未受付ページをメモリ保持し、10秒ごとに保留受付1件を再試行。後続新着/手動は継続し、重複予約・タイマー重複・失敗による他受付の飢餓を防ぐ。復旧前の終了では復元不可の日英案内を追加。一覧取得自体の失敗は対象外。JS270/Python80中77成功・Darwin3除外、日英UI、Ubuntu独立実機の保存故障注入/後続新着/実タイマー復旧/通常全操作/更新/清掃、最終XPI一致を確認。成果物dist/clam-mail-check-direct-0.20.0a20.xpi。普段の環境とmacOS/Windows実機は未確認、Windows未統合、push/公開未実施。
 - fix/audit-followupsの0.20.0a19：新着と手動の受付を分離し、履歴上限時の空き待ちでも新着を優先。両方の予約は共通の保存確定保護を使い、失敗/対象除外で優先権を解放。一時枠1通・履歴1000件は維持。JS262/Python80中77成功・Darwin3除外、日英UI、Ubuntu独立実機の新着検査/自動隔離/通常全操作/更新/清掃、最終XPI一致を確認。優先順位は合成単体テストで確認。成果物dist/clam-mail-check-direct-0.20.0a19.xpi。普段の環境とmacOS/Windows実機は未確認、Windows未統合、push/公開未実施。
 - fix/audit-followupsの0.20.0a18：確認情報と右クリックの選択メール検査にも共通の保存確定保護を適用。確認情報は成功後だけ反映し、手動検査は新規/既存/入れ替え/一時枠の予約確定後に開始する。JS257/Python80中77成功・Darwin3除外、日英UI、Ubuntu独立実機の確認変更/再検査/通常全操作/更新/清掃、最終XPI一致を確認。手動予約失敗は単体テストで確認。成果物dist/clam-mail-check-direct-0.20.0a18.xpi。普段の環境とmacOS/Windows実機は未確認、Windows未統合、push/公開未実施。
 - fix/audit-followupsの0.20.0a17：履歴消去を保存成功後に反映し、失敗時の元履歴と並行追加結果を保護。フォルダー検査の履歴入れ替えと自動再試行タイマーも操作ロックを尊重する。JS245/Python80中77成功・Darwin3除外、日英UI、Ubuntu独立実機の履歴消去/更新後の維持/他メール・確認メモ保持/通常全操作/清掃、XPI一致を確認。成果物dist/clam-mail-check-direct-0.20.0a17.xpi。普段の環境とmacOS/Windows実機は未確認、Windows未統合、push/公開未実施。

@@ -206,6 +206,18 @@ try {
     await messenger.testFixture.inject(incoming.id);
     state = await settled(state => state.records.some(record => record.source === "automatic" && record.locator.subject === "Synthetic incoming attachment" && record.quarantine?.status === "moved"));
     report.automaticQuarantine = true;
+    report.stage = "receipt-recovery";
+    const receiptRaw = fixture.mails.plain.replace(/Subject: [^\r\n]+/, "Subject: Synthetic receipt recovery").replace(/Message-ID: [^\r\n]+/i, "Message-ID: <receipt-recovery@example.invalid>");
+    const receiptMail = await messenger.messages.import(new File([receiptRaw], "receipt.eml", {type:"message/rfc822"}), fixture.source.id, {read:true,new:false});
+    await messenger.testFixture.inject(receiptMail.id);
+    await settled(state => state.issue.includes("synthetic incoming receipt failure"));
+    const laterRaw = receiptRaw.replace(/Synthetic receipt recovery/, "Synthetic later receipt").replace(/receipt-recovery@example.invalid/, "later-receipt@example.invalid");
+    const laterMail = await messenger.messages.import(new File([laterRaw], "later.eml", {type:"message/rfc822"}), fixture.source.id, {read:true,new:false});
+    await messenger.testFixture.inject(laterMail.id);
+    await settled(state => state.records.some(record => record.messageId === laterMail.id && record.status === "clean"));
+    state = await settled(state => !state.issue && state.records.some(record => record.messageId === receiptMail.id && record.status === "clean"));
+    check(state.records.filter(record => record.messageId === receiptMail.id).length === 1, "Retried reception has no duplicate history");
+    report.receiptRecovery = true;
     report.reviewAndDeletion = true;
     await request("settings", { settings: { ...state.settings, scanSettings: { phishing: "display", macros: "notify", pua: "display", mailMiB: 50, expandedMiB: 200, seconds: 90 } } });
     const client = new NativeClient(messenger.runtime);

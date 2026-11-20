@@ -2995,5 +2995,8 @@
   },
   "startupRecovery": {
     "message": "Initialization failed. Check that storage is available, then click Check connection again to retry."
+  },
+  "incomingReceiptPending": {
+    "message": "Incoming mail reception is paused and will resume after storage recovers. Keep Thunderbird open until recovery because this pending reception is not saved. $1"
   }
 }

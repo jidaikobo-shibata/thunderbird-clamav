@@ -54,6 +54,8 @@ let settingsChanges = Promise.resolve();
 let recordChanges = Promise.resolve(), recordStaging = null;
 let mutations = Promise.resolve(), manualMutations = Promise.resolve();
 let automaticReceipts = 0;
+const pendingReceipts = new Set();
+let receiptIssue = null;
 let moves = Promise.resolve();
 const deletionTickets = new Map();
 const deleting = new Set();
@@ -666,36 +668,74 @@ function stageMessage(message, source) {
       }
     });
     await updateBadge().catch(report);
+    for (const receipt of pendingReceipts) {
+      if (receipt.current?.id === message.id) receipt.current = null;
+    }
     return { wait };
   };
   recordChanges = recordChanges.catch(() => {}).then(work);
   return recordChanges;
 }
 
-function enqueue(first, source) {
-  if (source === "automatic") automaticReceipts++;
+function enqueueReceipt(receipt) {
+  receipt.retryQueued = true;
+  automaticReceipts++;
   const work = async () => {
     try {
-      for await (const message of messagePages(api.messages, first)) {
-        if (message.external || !message.folder) continue;
-        let outcome;
-        do { outcome = await stageMessage(message, source); if (outcome.wait) await outcome.wait; } while (outcome.retry);
+      while (true) {
+        if (!receipt.current) {
+          const next = await receipt.iterator.next();
+          if (next.done) break;
+          receipt.current = next.value;
+        }
+        const message = receipt.current;
+        if (!message.external && message.folder) {
+          try {
+            let outcome;
+            do { outcome = await stageMessage(message, "automatic"); if (outcome.wait) await outcome.wait; } while (outcome.retry);
+          } catch (error) {
+            // Keep this message AND the still-open iterator. Breaking a
+            // for-await loop here would abort Thunderbird's remaining pages.
+            pendingReceipts.delete(receipt);
+            pendingReceipts.add(receipt);
+            receiptIssue = t("incomingReceiptPending", "新着メールの受付を保留しています。保存の復旧後に再開します。未保存の受付を保持するため、復旧するまでThunderbirdを終了しないでください。 $1", [String(error.message || error)]);
+            report(receiptIssue);
+            return;
+          }
+        }
+        receipt.current = null;
       }
-      // Reservations are already durable; failure of this trailing refresh must
-      // not report them as rejected. Let in-flight state writes settle as before.
+      pendingReceipts.delete(receipt);
+      if (!pendingReceipts.size && receiptIssue) {
+        if (issue === receiptIssue) issue = "";
+        receiptIssue = null;
+      }
       await save().catch(report);
     } finally {
-      if (source === "automatic") { automaticReceipts--; wakeOverflow(); }
+      receipt.retryQueued = false;
+      automaticReceipts--;
+      wakeOverflow();
     }
   };
-  // Waiting for a manual overflow slot never blocks reception of fresh mail.
-  // Both lanes still share recordChanges for atomic reservation and persistence.
-  if (source === "manual") {
-    manualMutations = manualMutations.catch(() => {}).then(work);
-    return manualMutations;
-  }
   mutations = mutations.catch(() => {}).then(work);
   return mutations;
+}
+
+function enqueue(first, source) {
+  if (source === "automatic") return enqueueReceipt({ iterator: messagePages(api.messages, first)[Symbol.asyncIterator](), current: null });
+  const work = async () => {
+    for await (const message of messagePages(api.messages, first)) {
+      if (message.external || !message.folder) continue;
+      let outcome;
+      do { outcome = await stageMessage(message, source); if (outcome.wait) await outcome.wait; } while (outcome.retry);
+    }
+    // Reservations are already durable; a trailing refresh failure is not a
+    // rejection of the accepted selection.
+    await save().catch(report);
+  };
+  // A retained failed receipt does not hold priority until its next attempt.
+  manualMutations = manualMutations.catch(() => {}).then(work);
+  return manualMutations;
 }
 
 async function drain() {
@@ -1474,6 +1514,10 @@ setInterval(() => {
   void ready.then(async () => {
     if (pendingMaintenance && !pendingMaintenance.applying && Date.now() > pendingMaintenance.expires) releaseMaintenance();
     if (maintenanceActive() || helperRemoved) return;
+    // At most one retained receipt is scheduled per tick; new deliveries keep
+    // their independent queue and repeated ticks cannot enqueue duplicates.
+    const receipt = [...pendingReceipts].find(item => !item.retryQueued);
+    if (receipt) void enqueueReceipt(receipt).catch(report);
     for (const record of records) {
       if (!deleting.has(record.key) && scanFailed(record) && record.nextRetry && record.nextRetry <= Date.now() &&
           (record.source === "manual" || (settings.enabled && settings.accountIds.includes(record.locator.accountId)))) {

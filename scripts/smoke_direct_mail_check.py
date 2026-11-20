@@ -70,6 +70,20 @@ def fixture_xpi(target, original, version, scenario="full"):
         payload["direct/host.py"] += b'\nCLAMSCAN = "/nonexistent-clam-mail-test/clamscan"\nCLAMD = "/nonexistent-clam-mail-test/clamd"\nCLAMAV_TRUST_ERROR = False\n'
     for name in ["api.js", "seed.js", "driver.js"]:
         payload["fixture/" + name] = (FIXTURE / name).read_bytes()
+    if scenario in ("full", "quit", "uninstall"):
+        # A one-off admission fault exercises the real receipt retry timer.
+        payload["background.js"] = payload["background.js"].replace(b"const api = messenger;", b"""
+        const api = messenger;
+        const testStorageSet = api.storage.local.set.bind(api.storage.local);
+        let failedReceipt = false;
+        api.storage.local.set = async value => {
+          if (!failedReceipt && Object.entries(value).some(([key, page]) => key.startsWith('historyPage:') && Array.isArray(page) &&
+              page.some(record => record.source === 'automatic' && record.status === 'queued' && record.locator?.subject === 'Synthetic receipt recovery'))) {
+            failedReceipt = true; throw new Error('synthetic incoming receipt failure');
+          }
+          return testStorageSet(value);
+        };
+        """)
     if scenario == "invalid-storage":
         payload["fixture/seed.js"] = payload["fixture/seed.js"].replace(
             b"await messenger.testFixture.update();", b"""
