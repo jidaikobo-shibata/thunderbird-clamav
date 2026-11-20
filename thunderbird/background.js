@@ -618,11 +618,16 @@ async function resolveRecord(record) {
   return matches[0];
 }
 
+// Mixed special-use folders may also receive real mail; keep scanning those.
+const isDraftFolder = folder => Array.isArray(folder?.specialUse) && folder.specialUse.includes("drafts") &&
+  folder.specialUse.every(use => use === "drafts");
+
 // Admission shares the same commit gate as retries and history changes.
 // Overflow waits happen outside the gate so the scanner can free its slot.
 function stageMessage(message, source) {
   const work = async () => {
     if (source === "automatic") {
+      if (isDraftFolder(message.folder)) return {};
       if (!settings.enabled || !settings.accountIds.includes(accountOf(message))) return {};
       if (await inQuarantine(message, settings, [...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : [])],
         { session, digestOf: async message => sha256(await rawBytes(message.id)) })) return {};
@@ -1023,6 +1028,12 @@ function beginInitialization() {
 let ready = beginInitialization();
 
 api.messages.onNewMailReceived.addListener((folder, list) => {
+  if (isDraftFolder(folder)) {
+    // No enumeration/body retrieval for draft autosaves. Release a paged list
+    // even when header folders omit the special-use metadata.
+    if (list.id && api.messages.abortList) void api.messages.abortList(list.id).catch(() => {});
+    return;
+  }
   void ready.then(() => enqueue(list, "automatic")).catch(report);
 }, true);
 // Only an explicit, content-verified move can establish this relationship.

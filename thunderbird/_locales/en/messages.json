@@ -2998,5 +2998,8 @@
   },
   "incomingReceiptPending": {
     "message": "Incoming mail reception is paused and will resume after storage recovers. Keep Thunderbird open until recovery because this pending reception is not saved. $1"
+  },
+  "draftAutoScanHelp": {
+    "message": "Drafts are excluded from automatic scanning of new mail. You can still scan them manually by selecting messages or scanning their folder."
   }
 }

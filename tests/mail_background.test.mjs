@@ -2891,3 +2891,40 @@ test("toolbar result requests select attention without leaking the default into 
   const again = await settle(h, state => state.resultsRequest !== notification.resultsRequest);
   assert.equal(again.resultsFilter, "attention");
 });
+
+test("draft new-mail events are ignored by special-use metadata and release paged lists", async () => {
+  const draft = { id: "drafts", accountId: "one", path: "/Entwuerfe", name: "下書き", specialUse: ["drafts"] };
+  const message = { ...mail(601), folder: { ...draft, specialUse: undefined } };
+  const h = await harness({ mails: [message], saved: { settings: { enabled: true, accountIds: ["one"], notifications: true } } });
+  const aborted = []; let continued = 0;
+  h.api.messages.abortList = async id => { aborted.push(id); };
+  h.api.messages.continueList = async () => { continued++; throw new Error("must not enumerate ignored drafts"); };
+  h.events.newMail.listeners[0](draft, { id: "draft-list", messages: [message] });
+  await new Promise(resolve => setImmediate(resolve));
+  await h.timers[0]();
+  assert.deepEqual((await h.send("state")).records, []);
+  assert.deepEqual(aborted, ["draft-list"]); assert.equal(continued, 0);
+  assert.equal(h.rawReads.length, 0); assert.equal(h.nativePorts.length, 0); assert.equal(h.notifications.length, 0);
+});
+
+test("automatic admission skips draft headers but still scans ordinary folders named Drafts and other special folders", async () => {
+  const uses = ["drafts", null, "sent", "outbox", "templates", "junk", "trash", "archives", ["drafts", "inbox"]];
+  const mails = uses.map((use, i) => ({ ...mail(610 + i), folder: { id: "f" + i, accountId: "one", path: "/Drafts" + i, name: "Drafts", specialUse: Array.isArray(use) ? use : use ? [use] : [] } }));
+  const h = await harness({ mails, saved: { settings: { enabled: true, accountIds: ["one"], notifications: false } } });
+  h.events.newMail.listeners[0](mail(1).folder, { messages: mails });
+  const state = await settle(h, state => state.records.length === mails.length - 1 && state.records.every(record => record.status === "clean"));
+  assert.deepEqual(h.rawReads, mails.slice(1).map(message => message.id));
+  assert.equal(state.records.some(record => record.messageId === mails[0].id), false);
+});
+
+test("draft messages remain available to explicit selection and folder scans", async () => {
+  const draft = { id: "drafts", accountId: "one", path: "/Entwuerfe", name: "下書き", specialUse: ["drafts"] };
+  const message = { ...mail(630), folder: draft };
+  const h = await harness({ mails: [message], folderRefs: [draft] });
+  assert.equal((await h.send("scanSelection")).ok, true);
+  await settle(h, state => state.records[0]?.status === "clean");
+  await startFolder(h);
+  const state = await settledFolder(h, "completed");
+  assert.equal(state.folderJob.completed, 1);
+  assert.deepEqual(h.rawReads, [630, 630]);
+});

@@ -14,7 +14,7 @@ class DirectPackageTests(unittest.TestCase):
             manifest = json.loads(archive.read('manifest.json'))
             self.assertEqual(manifest['browser_specific_settings']['gecko']['id'], stable['browser_specific_settings']['gecko']['id'])
             self.assertEqual(manifest['browser_specific_settings']['gecko']['strict_max_version'], '153.*')
-            self.assertEqual(manifest['version'], '0.20.0a22')
+            self.assertEqual(manifest['version'], '0.20.0a23')
             self.assertEqual(manifest['name'], 'ClamAV Mail Check')
             self.assertNotIn('nativeMessaging', manifest['permissions'])
             self.assertFalse(manifest.get('optional_permissions'))

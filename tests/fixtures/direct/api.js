@@ -24,11 +24,12 @@ var testFixture = (() => {
           await guard();
           try { server(); } catch { MailServices.accounts.createLocalMailAccount(); }
           const root = server().rootFolder;
-          for (const name of ["DirectSource", "DirectHistory", "DirectQuarantine"]) {
+          for (const name of ["DirectSource", "DirectHistory", "DirectQuarantine", "DirectDrafts"]) {
             if (!root.containsChildNamed(name)) root.createSubfolder(name, null);
           }
+          folder("DirectDrafts").setFlag(Ci.nsMsgFolderFlags.Drafts);
           await new Promise(resolve => setTimeout(resolve, 100));
-          return { mails: await rawMessages(), accountId: [...MailServices.accounts.accounts].find(account => account.incomingServer.key === server().key).key,
+          return { drafts: context.extension.folderManager.convert(folder("DirectDrafts")), mails: await rawMessages(), accountId: [...MailServices.accounts.accounts].find(account => account.incomingServer.key === server().key).key,
             source: context.extension.folderManager.convert(folder("DirectSource")),
             history: context.extension.folderManager.convert(folder("DirectHistory")),
             quarantine: context.extension.folderManager.convert(folder("DirectQuarantine")) };
@@ -36,7 +37,7 @@ var testFixture = (() => {
         inject: async id => {
           await guard();
           const message = context.extension.messageManager.get(id);
-          if (!message || message.folder.URI !== folder("DirectSource").URI) throw new Error("Synthetic folder only");
+          if (!message || ![folder("DirectSource").URI, folder("DirectDrafts").URI].includes(message.folder.URI)) throw new Error("Synthetic folder only");
           // messageManager may return a CachedMsgHeader rather than nsIMsgDBHdr.
           const header = message.folder.GetMessageHeader(message.messageKey);
           header.flags |= Ci.nsMsgMessageFlags.New;
