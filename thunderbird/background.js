@@ -573,7 +573,18 @@ async function drain() {
         const bytes = await rawBytes(message.id, policy.mailMiB * 1024 * 1024);
         record.sha256 = await sha256(bytes);
         currentDigest = record.sha256;
-        refreshQuarantineLocation(record, message);
+        // A move event may have redirected this record while the original raw
+        // bytes were being fetched. Never overwrite the new locator with stale
+        // headers, or attach that verdict to different destination contents.
+        let current = message;
+        for (let attempt = 0; position(current) !== position({ id: record.messageId, folder: record.locator.folder }); attempt++) {
+          if (attempt >= 3) throw new Error(t("mail036", "対象メールが存在しないか、複数候補があり特定できません。選択して再検査してください。"));
+          current = await api.messages.get(record.messageId);
+          if (!sameEnvelope(current, record.locator) || await sha256(await rawBytes(current.id, policy.mailMiB * 1024 * 1024)) !== currentDigest) {
+            throw new Error(t("mail036", "対象メールが存在しないか、複数候補があり特定できません。選択して再検査してください。"));
+          }
+        }
+        refreshQuarantineLocation(record, current);
         if (!client || client.closed) {
           client = new NativeClient(api.runtime);
           const health = await client.request("health");
@@ -769,19 +780,27 @@ api.messages.onMoved?.addListener((originals, moved) => {
     for await (const message of messagePages(api.messages, moved)) newMessages.push(message);
     let changed = false;
     for (const old of oldMessages) {
-      const eligible = records.filter(record => record.quarantine && ["moved", "outside"].includes(record.quarantine.status) &&
-        (record.session === session && Number.isInteger(record.messageId) ? record.messageId === old.id :
-          sameEnvelope(old, record.locator) && old.folder?.path === record.locator.folder?.path));
+      const tracked = [...new Set([...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : [])])];
+      const eligible = tracked.filter(record => sameEnvelope(old, record.locator) &&
+        old.folder?.path === record.locator.folder?.path &&
+        (record.session !== session || !Number.isInteger(record.messageId) || record.messageId === old.id));
       if (eligible.length !== 1) continue;
       const record = eligible[0];
-      if (deleting.has(record.key) || ["queued", "scanning", "deleted"].includes(record.status)) continue;
-      const hash = record.sha256, before = JSON.stringify([record.locator, record.messageId, record.session, record.quarantine.status]);
-      const candidates = newMessages.filter(message => sameEnvelope(message, { ...record.locator, accountId: accountOf(message) }));
+      if (deleting.has(record.key) || record.status === "deleted") continue;
+      const hash = record.sha256 || record.lastResult?.sha256;
+      if (!hash && !["queued", "scanning"].includes(record.status)) continue;
+      const before = JSON.stringify([record.locator, record.messageId, record.session, record.quarantine?.status]);
+      const candidates = newMessages.filter(message => realFolder(message.folder) && !message.external && sameEnvelope(message, { ...record.locator, accountId: accountOf(message) }));
       if (candidates.length > 20) continue;
-      const matches = [];
-      for (const candidate of candidates) if (await sha256(await rawBytes(candidate.id)) === hash) matches.push(candidate);
-      if (matches.length !== 1 || record.sha256 !== hash || deleting.has(record.key) || ["queued", "scanning", "deleted"].includes(record.status) ||
-          JSON.stringify([record.locator, record.messageId, record.session, record.quarantine.status]) !== before) continue;
+      // Pending work with no prior digest has no verdict to transfer. A unique
+      // move-event target can redirect it; drain still reads/verifies its bytes.
+      const matches = !hash && candidates.length === 1 ? [...candidates] : [];
+      if (hash) for (const candidate of candidates) {
+        try { if (await sha256(await rawBytes(candidate.id)) === hash) matches.push(candidate); }
+        catch { /* An unreadable move cannot transfer a prior verdict. */ }
+      }
+      if (matches.length !== 1 || (record.sha256 || record.lastResult?.sha256) !== hash || deleting.has(record.key) || record.status === "deleted" ||
+          JSON.stringify([record.locator, record.messageId, record.session, record.quarantine?.status]) !== before) continue;
       refreshQuarantineLocation(record, matches[0]);
       record.session = session;
       changed = true;

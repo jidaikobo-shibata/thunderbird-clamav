@@ -1,14 +1,14 @@
 # ClamAV Mail Check / ClamAV メール検査
 
 Thunderbirdのメールを、コンピューターにインストールしたClamAVで検査する拡張機能です。
-このブランチは **0.20.0a10（試用版）** です。補助プログラムの別途インストールは不要です。
+このブランチは **0.20.0a11（試用版）** です。補助プログラムの別途インストールは不要です。
 公開済みの0.20.0a5はUbuntu向けです。このブランチのXPIは末尾のビルド手順で作成できます。GitHubにはまだ公開していません。
 
 [English installation guide](README.en.md)
 
 ## インストール
 
-1. このブランチから作成した`dist/clam-mail-check-direct-0.20.0a10.xpi`を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
+1. このブランチから作成した`dist/clam-mail-check-direct-0.20.0a11.xpi`を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
 2. Thunderbirdのアドオンマネージャーで、歯車メニューの「ファイルからアドオンをインストール」を選び、XPIを指定します。
 3. 表示される権限を確認してインストールします。Experiment APIを使用するため、Thunderbirdとコンピューターへの全面アクセス権限が必要です。
 4. ツールバーのアイコンから画面を開き、「設定」末尾の「ClamAVの状態」で「接続を再確認」を押します。ClamAVが未導入なら、表示される導入手順に従います。ウイルス定義の初回更新も完了させてください。
@@ -78,6 +78,12 @@ ClamAVが検出しないメールの安全性を保証するものではあり�
 
 削除はThunderbirdのアドオンマネージャーから行います。メールとClamAV・Python3は残ります。アドオンの通常の設定と履歴は失われる可能性があります。
 
+## メールを移動した場合
+
+通常のフォルダー移動でも、移動イベントと本文の照合によって既存の履歴の場所を更新します。検査結果と確認メモは保持し、移動先で再び新着扱いの通知を受けても、更新済みの同じメールを別の履歴として追加しません。検査中の移動では古い場所の情報で上書きしないようにします。本文を確認できない場合や候補が複数ある場合は、自動では引き継ぎません。コピーしたメールは別件として扱います。
+
+以前の版で既にできた重複履歴は、自動削除・統合しません。
+
 ## 起動時の保存エラーからの復旧
 
 初期化に失敗した場合は、保存先の空き容量やアクセス状態を確認してから、設定末尾の「接続を再確認」で再試行できます。復旧するまで検査と設定変更は行いません。新しいフォルダー検査の開始状態を保存できなかった場合も、以前の検査の進捗と再開情報を保持します。
@@ -102,7 +108,7 @@ ClamAVが検出しないメールの安全性を保証するものではあり�
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-成果物は`dist/clam-mail-check-direct-0.20.0a10.xpi`です。同じXPIにUbuntu/macOS用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
+成果物は`dist/clam-mail-check-direct-0.20.0a11.xpi`です。同じXPIにUbuntu/macOS用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
 
 ```bash
 for test_file in tests/*.test.mjs; do

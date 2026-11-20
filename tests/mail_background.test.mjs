@@ -1904,3 +1904,110 @@ test("an initial storage read failure can be retried without overwriting unread 
   assert.equal((await h.send("health")).ok,true);
   assert.equal((await h.send("state")).records[0].key,"unread");
 });
+
+
+async function moveFixture({changed = false, ambiguous = false, reviewed = false} = {}) {
+  const original=mail(1); original.folder.id="inbox";
+  const moved={...original,id:2,folder:{id:"child",accountId:"one",path:"/Inbox/Child"},...(changed?{raw:"different contents"}:{})};
+  const digest=await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello"));
+  const record={key:"ordinary",status:"incomplete",detail:"synthetic encrypted part",sha256:digest,locator:locator(original),source:"automatic",signatures:[]};
+  if(reviewed){const {reviewReason}=await import("../thunderbird/review.mjs");record.review={note:"keep human judgment",reason:reviewReason(record),resultHash:digest,fingerprint:"sha256:"+digest};}
+  const h=await harness({direct:true,mails:[original,moved],saved:{records:[record],settings:{enabled:true,accountIds:["one"],notifications:false}}});
+  const destinations=ambiguous?[moved,{...moved,id:3}]:[moved];
+  if(ambiguous){const raw=h.api.messages.getRaw;h.api.messages.getRaw=(id,options)=>raw(id===3?2:id,options);}
+  return {h,original,moved,destinations};
+}
+
+test("ordinary moves refresh one history and preserve its review before repeated incoming notification", async () => {
+  const {h,original,moved}=await moveFixture({reviewed:true});
+  h.events.moved.listeners[0]({messages:[original]},{messages:[moved]});
+  let state=await settle(h,s=>s.records[0].messageId===2);
+  assert.equal(state.records[0].locator.folder.path,moved.folder.path);
+  assert.equal(state.records[0].review.note,"keep human judgment");
+  const {isReviewed}=await import("../thunderbird/review.mjs");
+  assert.equal(isReviewed(state.records[0]),true);
+  const before=h.storageCounts.writes;
+  h.events.newMail.listeners[0](moved.folder,{messages:[moved]});
+  state=await settle(h,()=>h.storageCounts.writes>before);
+  assert.equal(state.records.length,1);
+  assert.equal(state.records[0].key,"ordinary");
+  assert.equal(h.directRequests.some(request=>request.op==="end"),false);
+});
+
+test("changed or ambiguous move targets cannot inherit a previous verdict", async () => {
+  for(const options of [{changed:true},{ambiguous:true}]){
+    const {h,original,destinations}=await moveFixture(options);
+    const before=h.storageCounts.writes;
+    h.events.moved.listeners[0]({messages:[original]},{messages:destinations});
+    // An empty incoming list queues a save after move reconciliation, without
+    // inspecting or changing a mail record.
+    h.events.newMail.listeners[0](original.folder,{messages:[]});
+    const state=await settle(h,()=>h.storageCounts.writes>before);
+    assert.equal(state.records.find(record=>record.key==="ordinary").locator.folder.path,"/Inbox");
+  }
+});
+
+test("copies remain separate messages when no move event links them", async () => {
+  const {h,moved}=await moveFixture();
+  h.events.newMail.listeners[0](moved.folder,{messages:[moved]});
+  const state=await settle(h,s=>s.records.length===2&&s.records[1].status==="clean");
+  assert.equal(state.records[0].key,"ordinary");
+  assert.equal(state.records[0].locator.folder.path,"/Inbox");
+  assert.equal(state.records[1].locator.folder.path,moved.folder.path);
+});
+
+async function moveDuringScan(rawPhase, {sameId = false, changed = false} = {}) {
+  const original=mail(1);original.folder.id="inbox";
+  const moved={...original,id:sameId?1:2,folder:{id:"child",accountId:"one",path:"/Inbox/Child"},...(changed?{raw:"changed destination contents"}:{})};
+  let release,enter;
+  const gate=new Promise(resolve=>{release=resolve;});
+  const entered=new Promise(resolve=>{enter=resolve;});
+  const h=await harness({direct:true,mails:sameId?[original]:[original,moved],saved:{settings:{enabled:true,accountIds:["one"],notifications:false}},
+    scanGate:rawPhase?null:async()=>{enter();await gate;}});
+  if(rawPhase){const raw=h.api.messages.getRaw;h.api.messages.getRaw=async(id,options)=>{const file=await raw(id,options);if(id===1){enter();await gate;}return file;};}
+  h.events.newMail.listeners[0](original.folder,{messages:[original]});
+  await entered;
+  try{
+    if(sameId){const get=h.api.messages.get;h.api.messages.get=async id=>id===1?moved:get(id);}
+    h.events.moved.listeners[0]({messages:[original]},{messages:[moved]});
+    await settle(h,s=>s.records[0].locator.folder.path===moved.folder.path);
+    h.events.newMail.listeners[0](moved.folder,{messages:[moved]});
+  }finally{release();}
+  const state=await settle(h,s=>s.records[0].status===(changed?"error":"clean"));
+  await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal((await h.send("state")).records.length,1);
+  assert.equal(state.records[0].locator.folder.path,moved.folder.path);
+  assert.equal(state.records[0].messageId,moved.id);
+  if(changed)assert.equal(h.directRequests.some(request=>request.op==="end"),false);
+}
+
+test("a move during raw retrieval redirects pending work without stale-location overwrite",async()=>{await moveDuringScan(true);});
+test("a move during engine scanning keeps the in-flight record and avoids a duplicate",async()=>{await moveDuringScan(false);});
+
+
+test("a move that preserves the numeric ID cannot overwrite the new folder with stale headers",async()=>{await moveDuringScan(true,{sameId:true});});
+test("a changed destination during raw retrieval cannot receive the old bytes' verdict",async()=>{await moveDuringScan(true,{changed:true});});
+
+test("verified cross-account moves retain one history in the destination account",async()=>{
+  const {h,original,moved}=await moveFixture();
+  moved.folder.accountId="two";
+  h.events.moved.listeners[0]({messages:[original]},{messages:[moved]});
+  const state=await settle(h,s=>s.records[0].locator.accountId==="two");
+  assert.equal(state.records.length,1);
+  assert.equal(state.records[0].messageId,2);
+});
+
+test("an unreadable message in a bulk move does not prevent other verified location updates",async()=>{
+  const first=mail(1),second=mail(3);first.folder.id="inbox";second.folder.id="inbox";
+  const folder={id:"child",accountId:"one",path:"/Inbox/Child"};
+  const movedFirst={...first,id:2,folder},movedSecond={...second,id:4,folder};
+  const digest=await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello"));
+  const records=[first,second].map(message=>({key:"old-"+message.id,status:"incomplete",sha256:digest,locator:locator(message),signatures:[]}));
+  const h=await harness({direct:true,mails:[first,second,movedFirst,movedSecond],saved:{records}});
+  const raw=h.api.messages.getRaw;
+  h.api.messages.getRaw=(id,options)=>{if(id===2)throw new Error("synthetic offline body");return raw(id,options);};
+  h.events.moved.listeners[0]({messages:[first,second]},{messages:[movedFirst,movedSecond]});
+  const state=await settle(h,s=>s.records.find(record=>record.key==="old-3").messageId===4);
+  assert.equal(state.records.find(record=>record.key==="old-1").locator.folder.path,"/Inbox");
+  assert.equal(state.records.find(record=>record.key==="old-3").locator.folder.path,folder.path);
+});
