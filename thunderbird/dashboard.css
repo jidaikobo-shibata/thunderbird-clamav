@@ -103,7 +103,6 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid GrayText
 #quarantine-settings > div { margin-block: 16px; }
 #quarantine-settings select { margin-block: 4px 8px; }
 
-#review-note { width: 100%; box-sizing: border-box; font: inherit; }
 
 #results tr[data-attention="true"] { background-color: color-mix(in srgb, #d49600 16%, Canvas); }
 

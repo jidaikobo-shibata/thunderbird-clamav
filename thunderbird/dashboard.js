@@ -727,20 +727,19 @@ function changeReview(targets, reviewed) {
   void action(async () => {
     const title = reviewed ? t("reviewAction", "確認済みにする") : t("unreviewAction", "未確認に戻す");
     setText($("review-title"), title); setText($("review-confirm"), title);
-    setText($("review-description"), reviewed ? t("reviewDescription", "未検査や注意情報の結果と理由を残し、「確認が必要」の件数から除外します。安全性を検査で確認したという意味ではありません。再検査で本文や検出理由が変わった場合、本文を照合できない場合は未確認に戻ります。") : t("unreviewDescription", "確認済みの印と判断メモを取り消し、再び「確認が必要」に含めます。検査結果は変えません。"));
+    setText($("review-description"), reviewed ? t("reviewDescription", "未検査や注意情報の結果と理由を残し、「確認が必要」の件数から除外します。安全性を検査で確認したという意味ではありません。再検査で本文や検出理由が変わった場合、本文を照合できない場合は未確認に戻ります。") : t("unreviewDescription", "確認済みの印を取り消し、再び「確認が必要」に含めます。検査結果は変えません。以前の判断メモがある場合は、そのメモも取り消します。"));
     setText($("review-count"), t("reviewTargetsCount", "対象：$1通（画面外の選択を含む）", [targets.length]));
     $("review-targets").replaceChildren(...targets.map(record => {
       const item = document.createElement("li");
       item.textContent = [record.locator.author, record.locator.subject, localizeDetail(record)].filter(Boolean).join(" ／ "); return item;
     }));
-    $("review-note").value = ""; $("review-note").disabled = !reviewed;
     $("review-dialog").returnValue = "cancel";
     const confirmed = await new Promise(resolve => {
       $("review-dialog").onclose = () => resolve($("review-dialog").returnValue === "apply");
       $("review-dialog").showModal(); $("review-cancel").focus();
     });
     if (!confirmed) return t("reviewCancelled", "確認状態の変更を中止しました。");
-    const result = await request("reviewMany", { keys: targets.map(record => record.key), reviewed, note: $("review-note").value, stamps });
+    const result = await request("reviewMany", { keys: targets.map(record => record.key), reviewed, note: "", stamps });
     return t("reviewCompleted", "$1通の確認状態を変更しました。", [result.count]);
   });
 }

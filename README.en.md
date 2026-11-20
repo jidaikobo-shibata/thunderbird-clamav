@@ -1,6 +1,6 @@
 # ClamAV Mail Check
 
-This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a24**, a prerelease of the integrated Ubuntu/macOS scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a24 has not been published.
+This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a25**, a prerelease of the integrated Ubuntu/macOS scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a25 has not been published.
 
 ## Requirements
 
@@ -53,7 +53,7 @@ No additional Python or npm packages are needed:
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-Install `dist/clam-mail-check-direct-0.20.0a24.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
+Install `dist/clam-mail-check-direct-0.20.0a25.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
 
 Open Settings and choose Check connection again. Start with a small manual folder scan. Automatic scanning is disabled for a new installation; select accounts only after checking results.
 
@@ -71,7 +71,7 @@ Remove the extension through Thunderbird's Add-ons Manager. Normal extension set
 
 Encrypted content, scan limits, missing software and communication failures are reported as incomplete or failed, never as a clean scan. A previous malware detection is retained when a rescan fails. A clean result does not guarantee safety.
 
-Message bodies and attachments are passed only to local scanner processes and are not stored in history. Temporary scan files are cleaned at scanner shutdown. Sender, subject, detection names and review notes are stored in Thunderbird's local extension storage. The extension sends no messages, results or usage telemetry to an external service. FreshClam's separate definition downloads require network access.
+Message bodies and attachments are passed only to local scanner processes and are not stored in history. Temporary scan files are cleaned at scanner shutdown. Sender, subject, detection names, review dates and previously entered review notes are stored in Thunderbird's local extension storage. The extension sends no messages, results or usage telemetry to an external service. FreshClam's separate definition downloads require network access.
 
 ## Tests
 

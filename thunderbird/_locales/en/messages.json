@@ -2669,10 +2669,7 @@
     "message": "Keep the incomplete or advisory result and its reason, and exclude it from the needs-attention count. This does not mean the scanner verified its safety. A rescan clears the review if the contents or finding reason change, or the contents cannot be verified."
   },
   "unreviewDescription": {
-    "message": "Remove the review mark and decision note, and include the result in needs attention again. The scan result is unchanged."
-  },
-  "reviewNote": {
-    "message": "Decision note (optional, up to 1000 characters)"
+    "message": "Remove the reviewed mark and include the result in needs-attention counts again. The scan result is unchanged. Any decision note from an earlier version will also be removed."
   },
   "reviewCountAction": {
     "message": "Mark as reviewed ($ARG1$ messages)",
@@ -2724,7 +2721,7 @@
     }
   },
   "reviewHelp": {
-    "message": "Select incomplete or advisory results and choose Mark as reviewed, with an optional decision note. The scan verdict and incomplete reason remain, while the result is excluded from attention counts and notifications. Filter by Reviewed to find them; Mark as unreviewed removes the mark and note. A rescan retains the mark only after verifying identical contents and incomplete reasons. Changes, unverifiable contents, threats and scan failures clear it. Reviewed does not guarantee safety. Review dates and notes are stored locally with scan history."
+    "message": "Select incomplete or advisory results and choose Mark as reviewed. The scan verdict and incomplete reason remain, while the result is excluded from attention counts and notifications. Filter by Reviewed to find them; Mark as unreviewed removes the mark. A rescan retains the mark only after verifying identical contents and incomplete reasons. Changes, unverifiable contents, threats and scan failures clear it. Reviewed does not guarantee safety. Review dates are stored locally with scan history. Decision notes saved in earlier versions remain visible and are removed when marking the result as unreviewed."
   },
   "reviewRowAction": {
     "message": "Mark reviewed"

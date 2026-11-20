@@ -290,6 +290,7 @@ try {
         assert.match(guide, /set -C/);
         assert.doesNotMatch(guide, /sudo apt|brew services|xattr|spctl/);
       }
+      assert.equal(await evaluate("document.getElementById('review-note')"), null);
       assert.equal(await evaluate("document.getElementById('helper-task')"), null);
       assert.equal(await evaluate("document.getElementById('direct-backup')"), null);
       assert.equal(await evaluate("document.getElementById('setup-dot').parentElement.id"), 'tab-settings');
@@ -912,9 +913,12 @@ try {
     assert.equal(await evaluate("testCalls.some(call => call.type === 'reviewMany')"), false);
     await evaluate("document.getElementById('review-selected').click()");
     await until("document.getElementById('review-dialog').open");
-    await evaluate("document.getElementById('review-note').value = 'Known source <img src=x>'; document.getElementById('review-confirm').click()");
+    assert.equal(await evaluate("document.getElementById('review-note')"), null);
+    await evaluate("document.getElementById('review-confirm').click()");
     await until("testState.records.find(record => record.key === 'r3').review && document.getElementById('tab-results').textContent.includes('2')");
-    assert.match(await evaluate("document.querySelector('#results .detail').textContent"), /Known source/);
+    assert.equal(await evaluate("testState.records.find(record=>record.key==='r3').review.note"), '');
+    await evaluate("testState.records.find(record=>record.key==='r3').review.note='Known source <img src=x>'");
+    await until("document.querySelector('#results .detail').textContent.includes('Known source')");
     assert.equal(await evaluate("document.querySelectorAll('#results img').length"), 0);
     await change("filter", "attention");
     assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 2);
@@ -929,7 +933,7 @@ try {
     }
     await evaluate("document.getElementById('select-page').click(); document.getElementById('unreview-selected').click()");
     await until("document.getElementById('review-dialog').open");
-    assert.equal(await evaluate("document.getElementById('review-note').disabled"), true);
+    assert.equal(await evaluate("document.getElementById('review-note')"), null);
     await evaluate("document.getElementById('review-confirm').click()");
     await until("!testState.records.find(record => record.key === 'r3').review && document.getElementById('tab-results').textContent.includes('3')");
     assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 0);
