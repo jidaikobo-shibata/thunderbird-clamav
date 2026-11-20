@@ -222,9 +222,19 @@ try {
     state = await settled(value => value.folderJob?.status === "stopped");
     report.cancelledSessions = await messenger.testFixture.idle();
     report.cancellation = true;
+    report.stage = "forget-history";
+    const historyBeforeForget = state.records.length;
+    const forget = await request("prepareForget", {keys:[largeKey]});
+    check((await request("forgetMany", {token:forget.token})).count === 1, "Selected history removal commits");
+    state = await request("state");
+    check(state.records.length === historyBeforeForget - 1 && !state.records.some(record => record.key === largeKey), "Only selected history removed");
+    check((await messenger.messages.get(incomplete.messageId)).id === incomplete.messageId, "History removal preserves other mail");
+    check(state.records.find(record => record.key === incomplete.key).review?.note === "Synthetic reviewed encryption", "History removal preserves human review");
+    report.historyRemoval = true;
   } else {
     check(state.settings.scanSettings.mailMiB === 50 && state.settings.quarantine[fixture.accountId].auto, "Updated settings retained");
     check(state.records.some(record => record.status === "deleted") && state.records.some(record => record.quarantine?.status === "moved"), "Updated result history retained");
+    check(!state.records.some(record => record.locator.subject === "Synthetic size preflight"), "Committed history removal survives update");
     report.experimentalUpdate = true;
   }
   // Leave one actual clamd alive so the launcher can verify update/crash cleanup.

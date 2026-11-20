@@ -60,7 +60,7 @@ let running = false;
 let lastMailTab;
 let writes = Promise.resolve();
 let settingsChanges = Promise.resolve();
-let retryChanges = Promise.resolve(), retryStaging = null;
+let recordChanges = Promise.resolve(), recordStaging = null;
 let mutations = Promise.resolve();
 let moves = Promise.resolve();
 const deletionTickets = new Map();
@@ -378,16 +378,16 @@ function report(error) {
 }
 
 function save() {
-  // Do not persist a retry reservation until its own write has succeeded.
-  if (retryStaging) return retryStaging.then(() => save());
+  // Capture other saves after a record reservation or removal has settled.
+  if (recordStaging) return recordStaging.then(() => save());
   return persistState();
 }
 
-function persistState() {
+function persistState(history = records) {
   // Take a snapshot now, then serialize storage writes so an older snapshot
   // cannot overwrite a later scan result.
   const snapshot = stateStorage.snapshot({ directMigrationBackup, incrementalMigrationBackup, overflowPending, overflowReport, issue, lastHealth, lastScan, helperRemoved, installation,
-    folderJob: folderScan.snapshot() }, records, folderScan.checkpoints.snapshot(folderScan.job?.id));
+    folderJob: folderScan.snapshot() }, history, folderScan.checkpoints.snapshot(folderScan.job?.id));
   writes = writes.catch(() => {}).then(() => stateStorage.write(snapshot, settings));
   void updateBadge().catch(() => {});
   return writes;
@@ -429,14 +429,14 @@ function restoreRetryState(record, before) {
   Object.assign(record, before);
 }
 
-async function reserveRetries(targets, operation) {
+async function reserveRecords(targets, operation) {
   let release;
-  retryStaging = new Promise(resolve => { release = resolve; });
+  recordStaging = new Promise(resolve => { release = resolve; });
   for (const record of targets) deleting.add(record.key);
   try { return await operation(); }
   finally {
     for (const record of targets) deleting.delete(record.key);
-    retryStaging = null;
+    recordStaging = null;
     release();
     void drain().catch(report);
   }
@@ -449,7 +449,7 @@ function retryRecord(key) {
     const record = records.find(item => item.key === key);
     if (!record || deleting.has(record.key) || ["scanning", "queued", "deleted"].includes(record.status)) throw new Error(t("mail074", "この結果は再検査できません。"));
     const before = { ...record };
-    await reserveRetries([record], async () => {
+    await reserveRecords([record], async () => {
       try {
         rememberResult(record);
         Object.assign(record, { status: "queued", source: "manual", attempts: 0, nextRetry: null, folderJobId: null });
@@ -463,8 +463,8 @@ function retryRecord(key) {
     });
     return { ok: true };
   };
-  retryChanges = retryChanges.catch(() => {}).then(work);
-  return retryChanges;
+  recordChanges = recordChanges.catch(() => {}).then(work);
+  return recordChanges;
 }
 
 function retryMany(keys) {
@@ -477,7 +477,7 @@ function retryMany(keys) {
     const progress = startBatch("retry", targets.length, "prepare");
     const before = new Map(targets.map(record => [record, { ...record }]));
     retryContext = { id: progress.id, staging: true, entries: new Map(targets.map(record => [record.key, record])) };
-    await reserveRetries(targets, async () => {
+    await reserveRecords(targets, async () => {
       let committed = false;
       try {
         for (const record of targets) {
@@ -509,8 +509,34 @@ function retryMany(keys) {
     });
     return { ok: true, count: progress.stopRequested ? 0 : targets.length, ...(progress.stopRequested ? { cancelled: true } : {}) };
   };
-  retryChanges = retryChanges.catch(() => {}).then(work);
-  return retryChanges;
+  recordChanges = recordChanges.catch(() => {}).then(work);
+  return recordChanges;
+}
+
+function forgetRecords(token) {
+  const work = async () => {
+    if (maintenanceActive() || helperRemoved) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
+    if (batchProgress?.active) throw new Error(t("bulkBusy", "一括操作の処理中です。"));
+    const ticket = historyTickets.get(token); historyTickets.delete(token);
+    if (!ticket || ticket.expires < Date.now()) throw new Error(t("mail076", "削除確認が期限切れです。選び直してください。"));
+    const targets = ticket.entries.flatMap(entry => {
+      const record = records.find(record => record.key === entry.key);
+      return record && canForget(record) && !deleting.has(record.key) && JSON.stringify(record) === entry.fingerprint ? [record] : [];
+    });
+    const keys = new Set(targets.map(record => record.key)), previousBatch = batchProgress;
+    await reserveRecords(targets, async () => {
+      // Keep the visible history until the candidate snapshot is committed.
+      // Deferred saves then capture either the unchanged history on failure,
+      // or the removal plus any concurrently added results on success.
+      await persistState(records.filter(record => !keys.has(record.key)));
+      records = records.filter(record => !keys.has(record.key));
+      if (batchProgress === previousBatch) batchProgress = null;
+    });
+    await updateBadge().catch(report);
+    return { ok: true, keys: [...keys], count: keys.size, skipped: ticket.entries.length - keys.size };
+  };
+  recordChanges = recordChanges.catch(() => {}).then(work);
+  return recordChanges;
 }
 
 function toolbarState() {
@@ -639,12 +665,12 @@ function enqueue(first, source) {
 }
 
 async function drain() {
-  if (running || retryStaging || maintenanceActive() || helperRemoved || batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation)) return;
+  if (running || recordStaging || maintenanceActive() || helperRemoved || batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation)) return;
   running = true;
   let client, connection, engine, configurable = false, completed = false;
   try {
     while (true) {
-      if (retryStaging) break;
+      if (recordStaging) break;
       if (overflowPending && !["queued", "scanning"].includes(overflowPending.status)) {
         await notify(overflowPending);
         await finishOverflow(overflowPending);
@@ -658,12 +684,10 @@ async function drain() {
         (overflowPending?.status === "queued" && overflowPending.source === "manual" ? overflowPending : null);
       if (!record && folderScan.available()) {
         if (records.length >= MAX_RECORDS) {
-          const index = records.findIndex(item => ["clean", "deleted"].includes(item.status));
-          if (index === -1) {
+          if (!reserveHistory()) {
             await folderScan.finish("blocked", t("mail040", "検出・未検査・失敗などの履歴で上限1000件に達したため停止しました。履歴を確認・整理し、改めて開始してください。"));
             continue;
           }
-          records.splice(index, 1);
         }
         const message = folderScan.take();
         if (message) {
@@ -1293,17 +1317,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
       }
       case "cancelForget": historyTickets.delete(request.token); return { ok: true };
       case "forgetMany": {
-        if (batchProgress?.active) throw new Error(t("bulkBusy", "一括操作の処理中です。"));
-        const ticket = historyTickets.get(request.token); historyTickets.delete(request.token);
-        if (!ticket || ticket.expires < Date.now()) throw new Error(t("mail076", "削除確認が期限切れです。選び直してください。"));
-        const keys = new Set(ticket.entries.filter(entry => {
-          const record = records.find(record => record.key === entry.key);
-          return record && canForget(record) && !deleting.has(record.key) && JSON.stringify(record) === entry.fingerprint;
-        }).map(entry => entry.key));
-        records = records.filter(record => !keys.has(record.key));
-        batchProgress = null;
-        await save();
-        return { ok: true, keys: [...keys], count: keys.size, skipped: ticket.entries.length - keys.size };
+        return await forgetRecords(request.token);
       }
       case "prepareDeleteBatch":
         return await prepareBatch(request.keys);
@@ -1423,7 +1437,7 @@ setInterval(() => {
     if (pendingMaintenance && !pendingMaintenance.applying && Date.now() > pendingMaintenance.expires) releaseMaintenance();
     if (maintenanceActive() || helperRemoved) return;
     for (const record of records) {
-      if (scanFailed(record) && record.nextRetry && record.nextRetry <= Date.now() &&
+      if (!deleting.has(record.key) && scanFailed(record) && record.nextRetry && record.nextRetry <= Date.now() &&
           (record.source === "manual" || (settings.enabled && settings.accountIds.includes(record.locator.accountId)))) {
         record.status = "queued";
         record.nextRetry = null;

@@ -2561,3 +2561,86 @@ for(const reason of ["size","headers","read"]) test(`mail preflight ${reason} fa
   assert.equal(h.directRequests.filter(request=>request.op==="end").length,2);
   h.expireIdle();
 });
+
+for (const fail of [false, true]) test(`history removal publishes only after saving, preserves concurrent additions (failure=${fail})`, async () => {
+  const target = { key: "forget", status: "incomplete", detail: "original", locator: locator(mail(1)), review: { note: "human judgment" } };
+  const h = await harness({ saved: { records: [target] } });
+  const before = structuredClone((await h.send("state")).records);
+  const ticket = await h.send("prepareForget", { keys: [target.key] });
+  const original = h.api.storage.local.set;
+  let release, entered, held = false;
+  const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+  h.api.storage.local.set = async value => {
+    if (!held) { held = true; entered(); await gate; if (fail) throw new Error("synthetic history save failure"); }
+    return original(value);
+  };
+  const removal = h.send("forgetMany", { token: ticket.token });
+  await started;
+  assert.deepEqual((await h.send("state")).records, before);
+  assert.deepEqual(h.stored().records, before);
+  // Simulate another operation appending a result while its save is deferred.
+  const added = { key: "new-result", status: "error", locator: locator(mail(2)) };
+  (await h.send("state")).records.push(added);
+  const concurrentSave = h.send("health");
+  await new Promise(resolve => setImmediate(resolve));
+  release();
+  assert.equal((await removal).ok, !fail);
+  assert.equal((await concurrentSave).ok, true);
+  const expected = fail ? [...before, added] : [added];
+  assert.deepEqual((await h.send("state")).records, expected);
+  assert.deepEqual(h.stored().records, expected);
+  const next = await harness({ saved: h.rawStored() });
+  assert.deepEqual((await next.send("state")).records, expected.map(record => ({ ...record, session: null, messageId: null })));
+  assert.equal(h.deleted.length, 0);
+});
+
+for (const onlyLockedSlot of [false, true]) test(`folder rotation protects deletion locks (only locked slot=${onlyLockedSlot})`, async () => {
+  const message = mail(1), hash = await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello"));
+  const records = Array.from({ length: 1000 }, (_, i) => ({ key: i ? "other" + i : "target", status: i && onlyLockedSlot ? "detected" : "clean", source: "manual", attempts: 1,
+    locator: i ? { ...locator(message), headerMessageId: "other" + i } : locator(message), sha256: hash }));
+  const h = await harness({ saved: { records }, mails: [message], deleteAllowed: true });
+  const ticket = await h.send("prepareDelete", { key: "target" });
+  assert.equal(ticket.ok, true);
+  let release, entered, held = false;
+  const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+  const original = h.api.messages.getRaw;
+  h.api.messages.getRaw = async (...args) => { if (!held) { held = true; entered(); await gate; } return original(...args); };
+  const removal = h.send("deletePermanently", { key: "target", token: ticket.token });
+  await started;
+  await startFolder(h);
+  const state = await settledFolder(h, onlyLockedSlot ? "blocked" : "completed");
+  assert.equal(state.records.length, 1000);
+  assert.equal(state.folderJob.completed, onlyLockedSlot ? 0 : 1);
+  assert.equal(state.records.some(record => record.key === "target"), true);
+  assert.equal(state.records.some(record => record.key === "other1"), onlyLockedSlot);
+  release();
+  assert.equal((await removal).ok, true);
+  assert.deepEqual(h.deleted.map(entry => entry.ids), [[1]]);
+  assert.equal(h.stored().records.find(record => record.key === "target").status, "deleted");
+});
+
+test("automatic retry timer cannot change a history entry while removal is saving", async () => {
+  const record = { key: "retry-due", source: "manual", status: "error", attempts: 1, nextRetry: Date.now() + 60000, locator: locator(mail(1)) };
+  const h = await harness({ saved: { records: [record] }, mails: [mail(1)] });
+  const ticket = await h.send("prepareForget", { keys: [record.key] });
+  const before = structuredClone((await h.send("state")).records);
+  const original = h.api.storage.local.set;
+  let release, entered, held = false;
+  const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+  h.api.storage.local.set = async value => {
+    if (!held) { held = true; entered(); await gate; throw new Error("synthetic history save failure"); }
+    return original(value);
+  };
+  const removal = h.send("forgetMany", { token: ticket.token });
+  await started;
+  const now = Date.now;
+  Date.now = () => now() + 120000;
+  try { await h.timers[0](); await new Promise(resolve => setImmediate(resolve)); }
+  finally { Date.now = now; }
+  assert.deepEqual((await h.send("state")).records, before);
+  assert.equal(h.rawReads.length, 0);
+  release();
+  assert.equal((await removal).ok, false);
+  await h.send("health");
+  assert.deepEqual(h.stored().records, before);
+});
