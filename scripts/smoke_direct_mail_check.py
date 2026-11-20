@@ -76,11 +76,39 @@ def fixture_xpi(target, original, version, scenario="full"):
         const api = messenger;
         const testStorageSet = api.storage.local.set.bind(api.storage.local);
         const testRaw = api.messages.getRaw.bind(api.messages);
-        let failedEarlyInput = false, failedLateInput = false;
+        let failedEarlyInput = false, failedLateInput = false, holdEarlyMove = false;
+        const testAddNew = api.messages.onNewMailReceived.addListener.bind(api.messages.onNewMailReceived);
+        let testNewListener;
+        api.messages.onNewMailReceived.addListener = (listener, ...args) => {
+          testNewListener = listener; return testAddNew(listener,...args);
+        };
+        const testAddMoved = api.messages.onMoved.addListener.bind(api.messages.onMoved);
+        api.messages.onMoved.addListener = listener => testAddMoved((before,after) => {
+          void (async () => {
+            if (holdEarlyMove) {
+              holdEarlyMove = false;
+              const target = after.messages.find(message => message.subject === 'Synthetic early raw move');
+              if (!target) throw new Error('Missing synthetic moved header');
+              // Replay the real destination header before forwarding its move.
+              // Local folders do not always emit a second new-mail event.
+              testNewListener(target.folder,{messages:[target]});
+              const distinctIds = before.messages[0].id !== target.id;
+              for (let attempt = 0; attempt < 200; attempt++) {
+                if (!distinctIds || records.filter(record => record.locator.subject === target.subject).length === 2) break;
+                await new Promise(resolve => setTimeout(resolve,10));
+              }
+              await testStorageSet({fixturePendingMoveStaged:distinctIds && records.filter(record => record.locator.subject === target.subject).length === 2});
+              await listener(before,after);
+              await testStorageSet({fixtureMoveForwarded:true});
+              return;
+            }
+            await listener(before,after);
+          })().catch(console.error);
+        });
         api.messages.getRaw = async (id, options) => {
           const header = await api.messages.get(id);
           if (!failedEarlyInput && header.subject === 'Synthetic early raw move') {
-            failedEarlyInput = true;
+            failedEarlyInput = true; holdEarlyMove = true;
             await testStorageSet({fixtureRawGateStarted:true});
             for (let attempt = 0; attempt < 400; attempt++) {
               if ((await api.storage.local.get('fixtureReleaseRawGate')).fixtureReleaseRawGate) throw new Error('synthetic old-body move failure');

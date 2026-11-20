@@ -3031,3 +3031,74 @@ test("ambiguous late move destinations cannot redirect an unscanned failure", as
   await h.events.moved.listeners[0]({ messages: [original] }, { messages: [moved, { ...moved, id: 753 }] });
   assert.deepEqual((await h.send("state")).records[0], before);
 });
+
+async function pendingMoveCase({ rawFails = false, header = true, hops = 1, changed = false, noMove = false, verificationFails = false, saveFails = false } = {}) {
+  const mails = Array.from({ length: hops + 1 }, (_, i) => ({ ...mail(801), id: 801 + i,
+    headerMessageId: header ? "pending-move@example.invalid" : "", folder: { id: "stage" + i, accountId: "one", path: "/Stage" + i },
+    ...(changed && i ? { raw: "Subject: changed\r\n\r\ndifferent content" } : {}) }));
+  const h = await harness({ direct: true, mails, scanResult: { status: "detected", signatures: ["Synthetic.Threat"] }, saved: { settings: { enabled: true, accountIds: ["one"], notifications: true } } });
+  let release, enter;
+  const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { enter = resolve; });
+  const raw = h.api.messages.getRaw; let destinationReads = 0;
+  h.api.messages.getRaw = async (id, options) => {
+    if (id === 801) { const file = await raw(id, options); enter(); await gate; if (rawFails) throw new Error("old body moved before retrieval finished"); return file; }
+    if (id === mails.at(-1).id && verificationFails && ++destinationReads === 2) throw new Error("destination unavailable during verification");
+    return raw(id, options);
+  };
+  h.events.newMail.listeners[0](mails[0].folder, { messages: [mails[0]] });
+  await started;
+  for (let i = 1; i < mails.length; i++) {
+    h.events.newMail.listeners[0](mails[i].folder, { messages: [mails[i]] });
+    await settle(h, state => state.records.length === i + 1 && state.records.at(-1).status === "queued");
+    if (!noMove) await h.events.moved.listeners[0]({ messages: [mails[i - 1]] }, { messages: [mails[i]] });
+  }
+  if (saveFails) {
+    const original = h.api.storage.local.set; let failed = false;
+    h.api.storage.local.set = async value => {
+      if (!failed && value.records?.format === 2 && value.records.keys.length === 1) { failed = true; throw new Error("synthetic duplicate-removal save failure"); }
+      return original(value);
+    };
+  }
+  release();
+  const state = await settle(h, state => state.records.every(record => !["queued", "scanning"].includes(record.status)));
+  await new Promise(resolve => setImmediate(resolve));
+  h.expireIdle();
+  return { h, state, mails };
+}
+
+for (const rawFails of [false, true]) for (const header of [false, true]) for (const hops of [1, 2]) test(`in-flight move merges pending destination work after body verification (rawFailure=${rawFails}, header=${header}, hops=${hops})`, async () => {
+  const { h, state, mails } = await pendingMoveCase({ rawFails, header, hops });
+  assert.equal(state.records.length, 1);
+  assert.equal(state.records[0].messageId, mails.at(-1).id);
+  assert.equal(state.records[0].status, "detected");
+  assert.equal(h.directRequests.filter(request => request.op === "end").length, 1);
+  assert.equal(h.notifications.length, 1);
+  assert.equal(h.stored().records.length, 1);
+});
+
+test("pending notifications without an explicit move remain separate copies", async () => {
+  const { h, state } = await pendingMoveCase({ noMove: true });
+  assert.equal(state.records.length, 2);
+  assert.equal(h.directRequests.filter(request => request.op === "end").length, 2);
+});
+
+test("different destination bytes cannot cancel its independent pending scan", async () => {
+  const { h, state, mails } = await pendingMoveCase({ changed: true });
+  assert.equal(state.records.length, 2);
+  assert.equal(state.records.find(record => record.messageId === mails.at(-1).id && record.status === "detected").sha256,
+    await sha256(new TextEncoder().encode(mails.at(-1).raw)));
+  assert.equal(h.directRequests.filter(request => request.op === "end").length, 1); // Only the actual changed destination is scanned.
+});
+
+test("unavailable final body verification retains the pending scan", async () => {
+  const { h, state } = await pendingMoveCase({ rawFails: true, verificationFails: true });
+  assert.equal(state.records.length, 2);
+  assert.equal(h.directRequests.filter(request => request.op === "end").length, 2);
+});
+
+test("failed duplicate-removal persistence retains the pending scan", async () => {
+  const { h, state } = await pendingMoveCase({ saveFails: true });
+  assert.equal(state.records.length, 2);
+  assert.equal(h.directRequests.filter(request => request.op === "end").length, 2);
+  assert.match((await h.send("state")).issue, /synthetic duplicate-removal save failure/);
+});

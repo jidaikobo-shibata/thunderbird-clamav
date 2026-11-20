@@ -64,6 +64,7 @@ let batchProgress = null, retryContext = null;
 const historyTickets = new Map();
 const movedScans = new WeakMap();
 const moveRevisions = new WeakMap();
+const pendingMoveDuplicates = new WeakMap(), pendingMoveOrigin = new WeakMap();
 let folderRequest = null;
 let lastHealth = null, lastScan = null;
 let resultsRequest = null, resultsFilter = null, setupRequest = null;
@@ -917,6 +918,7 @@ async function drain() {
         movedScans.delete(record);
         record = coalesceMovedScan(movedScan.original, record, movedScan.hash);
       }
+      if (pendingMoveDuplicates.has(record) || pendingMoveOrigin.has(record)) await settlePendingMove(record);
       const quarantineConfig = settings.quarantine?.[record.locator.accountId];
       if (record.status === "detected" && !record.lastAttempt && record.source === "automatic" && quarantineConfig?.auto && record.quarantineIntent &&
           record.quarantineIntent.folderId === quarantineConfig.folderId && record.quarantineIntent.path === quarantineConfig.path &&
@@ -1127,6 +1129,69 @@ function coalesceMovedScan(original, duplicate, hash) {
   return original;
 }
 
+function pristineAutomaticPending(record) {
+  return record.source === "automatic" && ["queued", "scanning"].includes(record.status) &&
+    !record.review && !record.reviewBeforeScan && !record.quarantine && !record.lastResult && !record.lastAttempt &&
+    !record.bulkRetryId && !record.folderJobId;
+}
+function queuedMoveDuplicate(record) {
+  return pristineAutomaticPending(record) && record.status === "queued" && !record.sha256;
+}
+function sameMoveWork(original, duplicate) {
+  return original !== duplicate && records.includes(original) && records.includes(duplicate) &&
+    !deleting.has(original.key) && !deleting.has(duplicate.key) && queuedMoveDuplicate(duplicate) &&
+    original.session === session && duplicate.session === session && original.messageId === duplicate.messageId &&
+    JSON.stringify(original.locator) === JSON.stringify(duplicate.locator) &&
+    JSON.stringify(original.quarantineIntent || null) === JSON.stringify(duplicate.quarantineIntent || null);
+}
+function linkPendingMove(original, duplicate) {
+  if (!pristineAutomaticPending(original) || !sameMoveWork(original, duplicate) || pendingMoveOrigin.has(original) ||
+      pendingMoveDuplicates.has(duplicate) || pendingMoveOrigin.has(duplicate) && pendingMoveOrigin.get(duplicate) !== original) return;
+  if (!pendingMoveDuplicates.has(original)) pendingMoveDuplicates.set(original, new Set());
+  pendingMoveDuplicates.get(original).add(duplicate);
+  pendingMoveOrigin.set(duplicate, original);
+}
+
+async function settlePendingMove(original) {
+  const parent = pendingMoveOrigin.get(original);
+  if (parent) {
+    const siblings = pendingMoveDuplicates.get(parent);
+    siblings?.delete(original);
+    if (!siblings?.size) pendingMoveDuplicates.delete(parent);
+    pendingMoveOrigin.delete(original);
+  }
+  const linked = pendingMoveDuplicates.get(original);
+  if (!linked?.size || !original.sha256 || original.lastAttempt || !["clean", "detected", "incomplete", "advisory"].includes(original.status) ||
+      original.review || original.reviewBeforeScan || original.quarantine || original.bulkRetryId || original.lastResult) return;
+  const expectedPosition = position({ id: original.messageId, folder: original.locator.folder });
+  const digest = original.sha256, revision = moveRevisions.get(original);
+  const candidates = [...linked].filter(duplicate => sameMoveWork(original, duplicate));
+  if (!candidates.length) return;
+  try {
+    // The move linked identities while neither message had a digest. Only
+    // cancel pending work after checking the actual destination bytes now.
+    const current = await api.messages.get(original.messageId);
+    if (position(current) !== expectedPosition || !sameEnvelope(current, original.locator) ||
+        await sha256(await rawBytes(current.id, scanPolicy(original.scanSettings).mailMiB * 1024 * 1024)) !== digest) return;
+  } catch { return; } // Keep the independent scan when verification is unavailable.
+  const work = async () => {
+    if (original.sha256 !== digest || moveRevisions.get(original) !== revision || original.lastAttempt || original.lastResult ||
+        original.review || original.reviewBeforeScan || original.quarantine || original.bulkRetryId ||
+        position({ id: original.messageId, folder: original.locator.folder }) !== expectedPosition) return;
+    const redundant = candidates.filter(duplicate => sameMoveWork(original, duplicate));
+    if (!redundant.length) return;
+    await reserveRecords([original, ...redundant], async () => {
+      const removed = new Set(redundant);
+      await persistState(records.filter(record => !removed.has(record)));
+      records = records.filter(record => !removed.has(record));
+      for (const duplicate of redundant) { linked.delete(duplicate); pendingMoveOrigin.delete(duplicate); }
+      if (!linked.size) pendingMoveDuplicates.delete(original);
+    });
+  };
+  recordChanges = recordChanges.catch(() => {}).then(work);
+  await recordChanges.catch(report); // A failed save must retain the queued scan.
+}
+
 // External moves (including Undo) update the display only after content
 // verification. Our own quarantine/deletion operations retain their own locks.
 api.messages.onMoved?.addListener((originals, moved) => {
@@ -1159,8 +1224,13 @@ api.messages.onMoved?.addListener((originals, moved) => {
       const eligible = possible.filter(record => sameEnvelope(old, record.locator) &&
         old.folder?.path === record.locator.folder?.path &&
         (record.session !== session || !Number.isInteger(record.messageId) || record.messageId === old.id));
-      if (eligible.length !== 1) continue;
-      const record = eligible[0];
+      const canonical = eligible.map(item => pendingMoveOrigin.get(item) || item);
+      const primary = canonical[0];
+      const linkedGroup = eligible.length > 1 && primary && eligible.includes(primary) && canonical.every(item => item === primary) &&
+        (pristineAutomaticPending(primary) || canRecoverMovedInput(primary)) &&
+        eligible.every(item => item === primary || !deleting.has(item.key) && queuedMoveDuplicate(item));
+      if (eligible.length !== 1 && !linkedGroup) continue;
+      const record = linkedGroup ? primary : eligible[0];
       if (deleting.has(record.key) || record.status === "deleted") continue;
       const hash = record.sha256 || record.lastResult?.sha256;
       if (!hash && !["queued", "scanning"].includes(record.status) && !canRecoverMovedInput(record)) continue;
@@ -1182,6 +1252,15 @@ api.messages.onMoved?.addListener((originals, moved) => {
       refreshQuarantineLocation(record, matches[0]);
       record.session = session;
       moveRevisions.set(record, (moveRevisions.get(record) || 0) + 1);
+      if (linkedGroup) for (const duplicate of eligible) {
+        if (duplicate !== record) { refreshQuarantineLocation(duplicate, matches[0]); duplicate.session = session; }
+      }
+      if ((!hash && pristineAutomaticPending(record)) || pendingMoveDuplicates.has(record)) {
+        const pending = records.filter(item => item !== record && item.session === session && item.messageId === record.messageId &&
+          JSON.stringify(item.locator) === JSON.stringify(record.locator));
+        if (pending.length === 1) linkPendingMove(record, pending[0]);
+        else if (linkedGroup) for (const duplicate of pending) linkPendingMove(record, duplicate);
+      }
       if (canRecoverMovedInput(record)) recoveries.push([record, position(matches[0])]);
       if (hash) {
         const duplicates = records.filter(item => item !== record && item.session === session &&

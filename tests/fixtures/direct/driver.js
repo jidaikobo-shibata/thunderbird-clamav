@@ -232,6 +232,7 @@ try {
     check(state.records.filter(record => record.messageId === receiptMail.id).length === 1, "Retried reception has no duplicate history");
     report.receiptRecovery = true;
     report.stage = "raw-move-recovery";
+    await messenger.testFixture.report(JSON.stringify({...report,running:true}));
     for (const mode of ["early", "late"]) {
       const raw = fixture.mails.plain.replace(/Subject: [^\r\n]+/, "Subject: Synthetic " + mode + " raw move").replace(/Message-ID: [^\r\n]+/i, "Message-ID: <" + mode + "-raw-move@example.invalid>");
       const message = await messenger.messages.import(new File([raw], "move.eml", {type:"message/rfc822"}), fixture.source.id, {read:true,new:false});
@@ -240,15 +241,22 @@ try {
         for (let attempt=0;attempt<100;attempt++) { if ((await messenger.storage.local.get('fixtureRawGateStarted')).fixtureRawGateStarted) break; await wait(25); }
         check((await messenger.storage.local.get('fixtureRawGateStarted')).fixtureRawGateStarted, "Raw retrieval is waiting before the real move");
       } else await settled(state => state.records.some(record => record.messageId === message.id && record.status === "error"));
+      const originKey = (await request("state")).records.find(record => record.messageId === message.id).key;
       await messenger.messages.move([message.id], fixture.history.id, {isUserAction:true});
-      await settled(state => state.records.some(record => record.locator.subject === "Synthetic " + mode + " raw move" && record.locator.folder.id === fixture.history.id));
-      if (mode === "early") await messenger.storage.local.set({fixtureReleaseRawGate:true});
-      state = await settled(state => state.records.some(record => record.locator.subject === "Synthetic " + mode + " raw move" && record.status === "clean"));
+      if (mode === "early") {
+        for (let attempt=0;attempt<200;attempt++) { if ((await messenger.storage.local.get('fixtureMoveForwarded')).fixtureMoveForwarded) break;await wait(25); }
+        check((await messenger.storage.local.get('fixtureMoveForwarded')).fixtureMoveForwarded, "Moved notification was forwarded after its destination notification");
+        report.pendingMoveStaged = (await messenger.storage.local.get('fixturePendingMoveStaged')).fixturePendingMoveStaged;
+        await settled(state => state.records.find(record => record.key === originKey)?.locator.folder.id === fixture.history.id,30);
+        await messenger.storage.local.set({fixtureReleaseRawGate:true});
+      } else await settled(state => state.records.some(record => record.locator.subject === "Synthetic " + mode + " raw move" && record.locator.folder.id === fixture.history.id));
+      state = await settled(state => { const entries=state.records.filter(record => record.locator.subject === "Synthetic " + mode + " raw move");return entries.length===1&&entries[0].status==="clean"; },30);
       const matches = state.records.filter(record => record.locator.subject === "Synthetic " + mode + " raw move");
       check(matches.length === 1 && matches[0].locator.folder.id === fixture.history.id, "Real move recovery has one history at the current location");
       if (mode === "early") check(matches[0].attempts === 1, "Known in-flight move recovers without delayed scan retry");
     }
     report.rawMoveRecovery = true;
+    report.pendingMoveDeduplication = true;
     report.reviewAndDeletion = true;
     await request("settings", { settings: { ...state.settings, scanSettings: { phishing: "display", macros: "notify", pua: "display", mailMiB: 50, expandedMiB: 200, seconds: 90 } } });
     const client = new NativeClient(messenger.runtime);
