@@ -292,7 +292,7 @@ function restoreRetryRecord(record) {
   Object.assign(record, previous, { nextRetry: null });
 }
 function finishRetry(record) {
-  if (!retryContext || record.bulkRetryId !== retryContext.id) return;
+  if (!retryContext || retryContext.staging || record.bulkRetryId !== retryContext.id) return;
   retryContext.entries.delete(record.key);
   delete record.bulkRetryId; delete record.bulkRetryBefore;
   batchProgress.completed++;
@@ -424,6 +424,24 @@ function changeSettings(input) {
   return settingsChanges;
 }
 
+function restoreRetryState(record, before) {
+  for (const name of Object.keys(record)) if (!Object.hasOwn(before, name)) delete record[name];
+  Object.assign(record, before);
+}
+
+async function reserveRetries(targets, operation) {
+  let release;
+  retryStaging = new Promise(resolve => { release = resolve; });
+  for (const record of targets) deleting.add(record.key);
+  try { return await operation(); }
+  finally {
+    for (const record of targets) deleting.delete(record.key);
+    retryStaging = null;
+    release();
+    void drain().catch(report);
+  }
+}
+
 function retryRecord(key) {
   const work = async () => {
     if (maintenanceActive() || helperRemoved) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
@@ -431,26 +449,65 @@ function retryRecord(key) {
     const record = records.find(item => item.key === key);
     if (!record || deleting.has(record.key) || ["scanning", "queued", "deleted"].includes(record.status)) throw new Error(t("mail074", "この結果は再検査できません。"));
     const before = { ...record };
-    let release;
-    retryStaging = new Promise(resolve => { release = resolve; });
-    deleting.add(key);
-    try {
-      rememberResult(record);
-      Object.assign(record, { status: "queued", source: "manual", attempts: 0, nextRetry: null, folderJobId: null });
-      delete record.unscannedReason;
-      await persistState();
-    } catch (error) {
-      for (const name of Object.keys(record)) if (!Object.hasOwn(before, name)) delete record[name];
-      Object.assign(record, before);
-      await updateBadge().catch(report);
-      throw error;
-    } finally {
-      deleting.delete(key);
-      retryStaging = null;
-      release();
-    }
-    void drain().catch(report);
+    await reserveRetries([record], async () => {
+      try {
+        rememberResult(record);
+        Object.assign(record, { status: "queued", source: "manual", attempts: 0, nextRetry: null, folderJobId: null });
+        delete record.unscannedReason;
+        await persistState();
+      } catch (error) {
+        restoreRetryState(record, before);
+        await updateBadge().catch(report);
+        throw error;
+      }
+    });
     return { ok: true };
+  };
+  retryChanges = retryChanges.catch(() => {}).then(work);
+  return retryChanges;
+}
+
+function retryMany(keys) {
+  const work = async () => {
+    if (maintenanceActive() || helperRemoved) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
+    if (batchProgress?.active) throw new Error(t("bulkBusy", "一括操作の処理中です。"));
+    requestedKeys(keys);
+    const targets = keys.map(key => records.find(record => record.key === key));
+    if (targets.some(record => !record || deleting.has(record.key) || !canRetry(record))) throw new Error(t("mail075", "再検査できない結果が含まれています。選び直してください。"));
+    const progress = startBatch("retry", targets.length, "prepare");
+    const before = new Map(targets.map(record => [record, { ...record }]));
+    retryContext = { id: progress.id, staging: true, entries: new Map(targets.map(record => [record.key, record])) };
+    await reserveRetries(targets, async () => {
+      let committed = false;
+      try {
+        for (const record of targets) {
+          rememberResult(record);
+          Object.assign(record, { bulkRetryId: progress.id, bulkRetryBefore: before.get(record), unscannedReason: null,
+            status: "queued", source: "manual", attempts: 0, nextRetry: null, folderJobId: null });
+        }
+        await persistState();
+        committed = true;
+        if (progress.stopRequested) {
+          for (const record of targets) restoreRetryRecord(record);
+          progress.cancelled = targets.length;
+          await persistState();
+          retryContext = null;
+          progress.active = false;
+        } else {
+          retryContext.staging = false;
+          progress.phase = "execute";
+        }
+      } catch (error) {
+        if (!committed) for (const record of targets) restoreRetryState(record, before.get(record));
+        retryContext = null;
+        progress.active = false;
+        progress.error = true;
+        progress.cancelled = targets.length;
+        await updateBadge().catch(report);
+        throw error;
+      }
+    });
+    return { ok: true, count: progress.stopRequested ? 0 : targets.length, ...(progress.stopRequested ? { cancelled: true } : {}) };
   };
   retryChanges = retryChanges.catch(() => {}).then(work);
   return retryChanges;
@@ -582,11 +639,12 @@ function enqueue(first, source) {
 }
 
 async function drain() {
-  if (running || maintenanceActive() || helperRemoved || batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation)) return;
+  if (running || retryStaging || maintenanceActive() || helperRemoved || batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation)) return;
   running = true;
   let client, connection, engine, configurable = false, completed = false;
   try {
     while (true) {
+      if (retryStaging) break;
       if (overflowPending && !["queued", "scanning"].includes(overflowPending.status)) {
         await notify(overflowPending);
         await finishOverflow(overflowPending);
@@ -634,7 +692,7 @@ async function drain() {
       record.attempts++;
       record.updatedAt = new Date().toISOString();
       await save();
-      let currentDigest = null;
+      let currentDigest = null, scannerTouched = false;
       try {
         const message = await resolveRecord(record);
         if (message.headersOnly) {
@@ -655,6 +713,7 @@ async function drain() {
           }
         }
         refreshQuarantineLocation(record, current);
+        scannerTouched = true;
         if (!client || client.closed) {
           connection = scanConnection.acquire();
           client = connection.client;
@@ -685,8 +744,10 @@ async function drain() {
           connection = client = null;
         }
       } catch (error) {
-        if (connection) scanConnection.discard(connection);
-        connection = client = null;
+        if (scannerTouched || client?.closed) {
+          if (connection) scanConnection.discard(connection);
+          connection = client = null;
+        }
         record.sha256 = currentDigest;
         record.status = error.incomplete ? "incomplete" : "error";
         delete record.detailMessages;
@@ -733,7 +794,7 @@ async function drain() {
     }
     completed = true;
   } catch (error) {
-    if (retryContext) {
+    if (retryContext && !retryContext.staging) {
       for (const record of records) {
         if (record.bulkRetryId !== retryContext.id) continue;
         if (record.status === "queued") restoreRetryRecord(record);
@@ -1145,26 +1206,8 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         return { ok: true };
       case "retry":
         return await retryRecord(request.key);
-      case "retryMany": {
-        const keys = requestedKeys(request.keys);
-        const targets = keys.map(key => records.find(record => record.key === key));
-        if (targets.some(record => !record || deleting.has(record.key) || !canRetry(record))) throw new Error(t("mail075", "再検査できない結果が含まれています。選び直してください。"));
-        const progress = startBatch("retry", targets.length);
-        retryContext = { id: progress.id, entries: new Map(targets.map(record => [record.key, record])) };
-        for (const record of targets) {
-          const before = { ...record };
-          rememberResult(record);
-          Object.assign(record, { bulkRetryId: progress.id, bulkRetryBefore: before, unscannedReason: null,
-            status: "queued", source: "manual", attempts: 0, nextRetry: null, folderJobId: null });
-        }
-        try { await save(); }
-        catch (error) {
-          for (const record of targets) restoreRetryRecord(record);
-          retryContext = null; progress.active = false; throw error;
-        }
-        void drain().catch(report);
-        return { ok: true, count: targets.length };
-      }
+      case "retryMany":
+        return await retryMany(request.keys);
       case "reviewMany": {
         requestedKeys(request.keys);
         if (typeof request.reviewed !== "boolean" || typeof request.note !== "string" || request.note.length > 1000) throw new Error(t("reviewInvalid", "確認状態の指定が不正です。"));
@@ -1226,6 +1269,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         if (!progress?.active || request.id !== progress.id) return { ok: true };
         progress.stopRequested = true;
         if (progress.operation === "retry" && retryContext) {
+          if (retryContext.staging) return { ok: true };
           for (const [key, record] of retryContext.entries) {
             if (record.status !== "queued") continue;
             restoreRetryRecord(record); retryContext.entries.delete(key); progress.cancelled++;

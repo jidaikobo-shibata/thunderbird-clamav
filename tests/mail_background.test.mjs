@@ -2485,3 +2485,79 @@ test("idle timer failure closes its connection without blocking a later incoming
   assert.equal(h.nativePorts.length,2);
   h.expireIdle();
 });
+
+async function reviewedBulkFixture() {
+  const mails=[mail(1),mail(2)],digest=await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello"));
+  const {reviewReason}=await import("../thunderbird/review.mjs");
+  const records=mails.map((message,index)=>{
+    const record={key:"reviewed-"+index,status:"incomplete",source:"folder",attempts:2,nextRetry:null,folderJobId:"previous",detail:"synthetic retained result",sha256:digest,signatures:[],locator:locator(message)};
+    record.review={note:"synthetic human decision "+index,reason:reviewReason(record),resultHash:digest,fingerprint:"sha256:"+digest};return record;
+  });
+  const h=await harness({direct:true,mails,saved:{records,settings:{enabled:false,accountIds:[],notifications:false}}});
+  return {h,mails,before:structuredClone((await h.send("state")).records),keys:records.map(record=>record.key)};
+}
+
+test("uncommitted bulk retry cannot run or leak through a timer and concurrent save",async()=>{
+  const {h,before,keys}=await reviewedBulkFixture(),write=h.api.storage.local.set;
+  let release,entered,first=true;
+  const gate=new Promise(resolve=>{release=resolve;}),started=new Promise(resolve=>{entered=resolve;});
+  h.api.storage.local.set=async value=>{if(first){first=false;entered();await gate;throw new Error("synthetic reservation failure");}return write(value);};
+  const retry=h.send("retryMany",{keys});await started;
+  const health=h.send("health");h.timers[0]();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(h.rawReads.length,0);
+  assert.ok((await h.send("state")).records.every(record=>record.status==="queued"));
+  release();assert.equal((await retry).ok,false);assert.equal((await health).ok,true);
+  assert.deepEqual((await h.send("state")).records,before);
+  assert.deepEqual(h.stored().records,before);
+  h.timers[0]();await new Promise(resolve=>setImmediate(resolve));assert.equal(h.rawReads.length,0);
+  assert.equal((await h.send("retryMany",{keys})).count,2);
+  await settle(h,s=>s.records.every(record=>record.status==="clean")&&!s.batch.active);
+  assert.equal(h.directRequests.filter(request=>request.op==="end").length,2);
+  h.expireIdle();
+});
+
+test("bulk retry reservation can be cancelled without deadlock before its write settles",async()=>{
+  const {h,before,keys}=await reviewedBulkFixture(),write=h.api.storage.local.set;
+  let release,entered,first=true;
+  const gate=new Promise(resolve=>{release=resolve;}),started=new Promise(resolve=>{entered=resolve;});
+  h.api.storage.local.set=async value=>{if(first){first=false;entered();await gate;}return write(value);};
+  const retry=h.send("retryMany",{keys});await started;
+  const id=(await h.send("state")).batch.id;let cancelReturned=false;
+  const cancelling=h.send("cancelBatch",{id}).then(value=>{cancelReturned=true;return value;});
+  await new Promise(resolve=>setImmediate(resolve));const immediate=cancelReturned;
+  release();await cancelling;const result=await retry;
+  assert.equal(immediate,true);assert.equal(result.cancelled,true);assert.equal(result.count,0);
+  const state=await h.send("state");assert.equal(state.batch.active,false);assert.equal(state.batch.cancelled,2);
+  assert.deepEqual(state.records,before);assert.deepEqual(h.stored().records,before);
+  assert.equal(h.rawReads.length,0);
+});
+
+test("failed cancellation persistence still restores unstarted bulk work after restart",async()=>{
+  const {h,before,keys,mails}=await reviewedBulkFixture(),write=h.api.storage.local.set;
+  let release,entered,calls=0;
+  const gate=new Promise(resolve=>{release=resolve;}),started=new Promise(resolve=>{entered=resolve;});
+  h.api.storage.local.set=async value=>{calls++;if(calls===1){entered();await gate;}if(calls===2)throw new Error("synthetic cancellation save failure");return write(value);};
+  const retry=h.send("retryMany",{keys});await started;
+  await h.send("cancelBatch",{id:(await h.send("state")).batch.id});release();
+  assert.equal((await retry).ok,false);
+  assert.deepEqual((await h.send("state")).records,before);assert.equal(h.rawReads.length,0);
+  const next=await harness({direct:true,mails,saved:h.rawStored()});
+  assert.deepEqual((await next.send("state")).records,before);
+  assert.equal(next.rawReads.length,0);
+});
+
+for(const reason of ["size","headers","read"]) test(`mail preflight ${reason} failure does not restart a healthy scanner`,async()=>{
+  const mails=[mail(1),mail(2),mail(3)];if(reason==="headers")mails[1].headersOnly=true;
+  const h=await harness({direct:true,mails}),getRaw=h.api.messages.getRaw;
+  h.api.messages.getRaw=(id,options)=>{
+    if(id===2&&reason==="size")return {size:26*1024*1024,arrayBuffer(){throw new Error("must not allocate oversized mail");}};
+    if(id===2&&reason==="read")throw new Error("synthetic body unavailable");
+    return getRaw(id,options);
+  };
+  await h.send("scanSelection");
+  const state=await settle(h,s=>s.records.length===3&&s.records.every(record=>!["queued","scanning"].includes(record.status))&&h.idleTimers.some(timer=>timer.active));
+  assert.deepEqual(state.records.map(record=>record.status),["clean",reason==="size"?"incomplete":"error","clean"]);
+  assert.equal(h.nativePorts.length,1);
+  assert.equal(h.directRequests.filter(request=>request.op==="end").length,2);
+  h.expireIdle();
+});

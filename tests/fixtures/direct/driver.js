@@ -146,6 +146,28 @@ try {
     await wait(200);
     check(state.records.find(record => record.key === incomplete.key).review?.note === "Synthetic reviewed encryption", "Review retained on identical rescan");
     report.rescanCleanup = await messenger.testFixture.idle();
+    report.stage = "bulk-preflight";
+    const previousSettings = structuredClone(state.settings);
+    await request("settings", {settings:{...previousSettings,scanSettings:{...previousSettings.scanSettings,mailMiB:5}}});
+    const largeRaw = fixture.mails.plain.replace(/Subject: [^\r\n]+/, "Subject: Synthetic size preflight").replace(/Message-ID: [^\r\n]+/i, "Message-ID: <size-preflight@example.invalid>") + ("x".repeat(998)+"\r\n").repeat(5300);
+    const largeMail = await messenger.messages.import(new File([largeRaw], "large.eml", {type:"message/rfc822"}), fixture.source.id, {read:true,new:false});
+    await messenger.testFixture.inject(largeMail.id);
+    state = await settled(state=>state.records.some(record=>record.messageId===largeMail.id&&record.status==="incomplete"));
+    const largeKey = state.records.find(record=>record.messageId===largeMail.id).key;
+    await messenger.testFixture.idle();
+    const openCount = (await messenger.testFixture.runtime()).openCount;
+    const retryKeys = [plainKey,largeKey,incomplete.key];
+    await request("retryMany", {keys:retryKeys});
+    state = await settled(state=>!state.batch?.active&&retryKeys.every(key=>["clean","incomplete"].includes(state.records.find(record=>record.key===key)?.status)));
+    await wait(200);
+    check((await messenger.testFixture.runtime()).openCount===openCount+1, "Preflight size rejection does not restart the real scanner");
+    check(state.records.find(record=>record.key===incomplete.key).review?.note==="Synthetic reviewed encryption", "Bulk retry retains matching review notes");
+    const largeDeletion = await request("prepareDelete", {key:largeKey});
+    await request("deletePermanently", {key:largeKey,token:largeDeletion.token});
+    await request("settings", {settings:previousSettings});
+    state = await request("state");
+    report.bulkPreflightReuse = true;
+
     report.stage = "ordinary-move";
     incomplete = state.records.find(record => record.key === incomplete.key);
     const historyCount = state.records.length;

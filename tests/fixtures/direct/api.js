@@ -57,7 +57,7 @@ var testFixture = (() => {
         runtime: async () => {
           await guard();
           const transport = context.extension.__testDirect;
-          return { parent: Services.appinfo.processID, sessions: transport ? [...transport.sessions.values()].map(session => ({ pid: session.process.pid, directory: session.directory })) : [] };
+          return { parent: Services.appinfo.processID, openCount: transport?.opened.length || 0, sessions: transport ? [...transport.sessions.values()].map(session => ({ pid: session.process.pid, directory: session.directory })) : [] };
         },
         finish: async action => {
           await guard();

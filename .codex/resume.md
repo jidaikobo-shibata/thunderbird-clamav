@@ -1,6 +1,7 @@
 # 再開メモ
 
 ## 現状
+- fix/audit-followupsの0.20.0a16：一括再検査の予約保存前の実行/別保存への混入を防止し、保存失敗時の復元と予約中の中止に対応。事前確認失敗では正常な接続を保持。JS240/Python80中77成功・Darwin3除外、日英UI、Ubuntu独立実機のサイズ超過を挟む一括検査の起動1回/確認情報保持/通常全操作/更新/清掃、XPI一致を確認。成果物dist/clam-mail-check-direct-0.20.0a16.xpi。普段の環境とmacOS/Windows実機は未確認、Windows未統合、push/公開未実施。
 - fix/audit-followupsの0.20.0a15：保存枠不足の新着優先、個別再検査の保存失敗時の復元と未確定予約の実行/保存防止、正常な内蔵検査接続の5秒間再利用を実装。異常/待機終了時の解放、Windowタイマーの束縛・古いコールバックの無効化・異常時の即時解放を確認。JS234/Python80中77成功・Darwin3除外。日英UI、Ubuntu独立実機で実PID再利用/待機後清掃/通常全操作/更新/背景待機接続を含むアドオン削除後の清掃、XPI一致を確認。成果物dist/clam-mail-check-direct-0.20.0a15.xpi。普段の操作負荷とmacOS/Windows実機は未確認、Windows未統合、push/公開未実施。
 - fix/audit-followupsの0.20.0a14：既知の検出と未完了の再検査の情報を統合後も保持し、不正/未対応の保存形式・索引欠損では元データへ書き込まず停止する。JS220/Python80中77成功・Darwin3除外。日英UI、Ubuntu独立実機のinvalid-storage（データ不変→正常データ復元→実ボタンで復旧）と通常全操作/更新後履歴/清掃、XPI一致を確認。成果物dist/clam-mail-check-direct-0.20.0a14.xpi。普段の環境とmacOS/Windows実機は未確認、Windows未統合、push/公開未実施。
 - fix/audit-followupsの0.20.0a13：履歴32分割/チェックポイント256項目の差分保存、移動照合と新着受付のキュー分離・索引/イベント内本文照合再利用、隔離先候補のキャッシュを実装。旧形式の移行前バックアップ/失敗復旧とページ欠損時の停止、確認メモの保持を検証。JS213/Python80中77成功・Darwin3除外。日英UI5000候補とUbuntu独立実機の全操作/更新/清掃/保存失敗復旧、XPI一致を確認。成果物dist/clam-mail-check-direct-0.20.0a13.xpi。a12以前へ直接上書きで戻すのは非対応（バックアップ復元が必要）。普段の入力への効果、macOS/Windows実機は未確認。Windows未統合、push/公開未実施。
