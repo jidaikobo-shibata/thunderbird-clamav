@@ -69,3 +69,20 @@ test("shared selection includes deleted history while action eligibility stays s
   assert.equal(selectable(queued), false);
   assert.equal(canForget(queued), false);
 });
+
+test("repeated history searches reuse the supplied folder index without scanning candidates", async () => {
+  const { createFolderIndex } = await import("../thunderbird/folder-labels.mjs");
+  let pathReads = 0;
+  const folders = Array.from({ length: 5000 }, (_, i) => ({ accountId: "one", get path() { pathReads++; return "/Folder" + i; }, displayNames: ["Parent", "Folder " + i] }));
+  const many = Array.from({ length: 1000 }, (_, i) => ({ key: String(i), status: "clean", updatedAt: "2026-11-20T10:00:00Z",
+    locator: { accountId: "one", folder: { path: "/Folder4999" } } }));
+  const index = createFolderIndex(folders), readsAfterBuild = pathReads;
+  assert.equal(readsAfterBuild, 5000);
+  for (let i = 0; i < 3; i++) {
+    assert.equal(filterRecords(many, { folders: index, search: "parent" }).length, 1000);
+    assert.equal(filterRecords(many, { folders: index, search: "missing" }).length, 0);
+  }
+  assert.equal(pathReads, readsAfterBuild);
+  assert.equal(filterRecords(many, { folders, search: "parent" }).length, 1000);
+  assert.equal(pathReads, readsAfterBuild + 5000); // Array callers build once per search, never per record.
+});

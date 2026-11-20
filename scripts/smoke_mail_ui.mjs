@@ -167,7 +167,7 @@ try {
         }
         return { ok: true, moved: request.keys.length, failed: 0 };
       }
-      if (request.type === "folderChoices") return { ok: true, folders: fixtureFolders };
+      if (request.type === "folderChoices") return { ok: true, folders: window.fixtureFolderOverride ?? fixtureFolders };
       if (request.type === "folderContext") {
         const folders = (request.folderIds || ["inbox"]).map(id => fixtureFolders.find(folder => folder.id === id));
         testState.folderRequest = { token: "folder-token", folder: folders[0], folders };
@@ -339,7 +339,16 @@ try {
       await evaluate("document.getElementById('delete-cancel').click()");
       await until("!document.querySelector('#results tr button.danger').disabled");
       assert.equal(await evaluate("testCalls.some(call => call.type === 'permission')"), false);
-      await evaluate("document.getElementById('tab-help').click()");
+      await evaluate("window.fixtureFolderOverride=[{id:'inbox',accountId:'test',path:'/Inbox',displayNames:['Indexed folder refresh']}];document.getElementById('tab-scan').click();document.getElementById('reload-folders').click()");
+      await until("!document.getElementById('reload-folders').disabled");
+      await evaluate("document.getElementById('tab-results').click();document.getElementById('search').value='Indexed folder refresh';document.getElementById('search').dispatchEvent(new Event('input',{bubbles:true}))");
+      assert.equal(await evaluate("document.querySelectorAll('#results tr').length>0"), true);
+      await evaluate("window.fixtureFolderOverride=[];document.getElementById('tab-scan').click();document.getElementById('reload-folders').click()");
+      await until("!document.getElementById('reload-folders').disabled");
+      assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 0);
+      await evaluate("window.fixtureFolderOverride=null;document.getElementById('reload-folders').click()");
+      await until("!document.getElementById('reload-folders').disabled");
+      await evaluate("document.getElementById('search').value='';document.getElementById('search').dispatchEvent(new Event('input',{bubbles:true}));document.getElementById('tab-help').click()");
       assert.doesNotMatch(await evaluate("document.getElementById('panel-help').innerText"), /Terminal/);
       assert.match(await evaluate("document.getElementById('panel-help').innerText"), language === 'ja' ? /アドオンマネージャー/ : /Add-ons Manager/);
       assert.equal(await evaluate("testCalls.some(call=>call.type==='helperPlan'||call.type==='uninstallSelf')"), false);

@@ -5,7 +5,7 @@ import { syncScanPolicy, readScanPolicy, policyDescription, advisoryDescription 
 import { isReviewed, canReview, canUnreview, reviewStamp } from "./review.mjs";
 import { canQuarantine, quarantineNeedsPermission } from "./quarantine.mjs";
 import { syncQuarantineSettings, readQuarantineSettings, requireMovePermission, confirmQuarantine, quarantineSummary } from "./quarantine-ui.mjs";
-import { folderLabel } from "./folder-labels.mjs";
+import { createFolderIndex, folderLabel } from "./folder-labels.mjs";
 import { t, uiLanguage, localizeDocument, localizeDetail } from "./i18n.mjs";
 import { installationUI, helperNotice } from "./installation.mjs";
 import { LABELS, needsAttention, normalizeAutomaticSettings } from "./core.mjs";
@@ -26,6 +26,7 @@ const TABS = DIRECT ? ["scan", "results", "settings", "help"] : ["scan", "result
 let userNavigated = false, seenSetupRequest = null;
 const selectedFolders = new Set();
 let folderChoices = [], foldersLoading = false, settingsSaving = false;
+let folderNames = createFolderIndex(folderChoices);
 
 async function request(type, values = {}) {
   const response = await messenger.runtime.sendMessage({ ...values, type });
@@ -168,7 +169,7 @@ function activateTab(name, focus = false) {
 
 function jobFolderLabel(job) {
   const folders = job.folders || [job.folder];
-  return folders.length > 1 ? t("folderJobLabel", "$1ほか（$2フォルダー）", [folderLabel(folders[0], folderChoices), folders.length]) : folderLabel(folders[0], folderChoices);
+  return folders.length > 1 ? t("folderJobLabel", "$1ほか（$2フォルダー）", [folderLabel(folders[0], folderNames), folders.length]) : folderLabel(folders[0], folderNames);
 }
 
 function renderFolder() {
@@ -187,7 +188,7 @@ function renderFolder() {
   setText($("folder-title"), t("mail108", "フォルダー検査：$1 ／ $2$3", [account, jobFolderLabel(job), job.includeSubfolders ? t("mail109", "（サブフォルダーを含む）") : ""]));
   const elapsed = Math.max(0, Math.floor(((job.finishedAt ? new Date(job.finishedAt).getTime() : Date.now()) - new Date(job.startedAt).getTime()) / 1000));
   const targets = job.folders || [job.folder];
-  const labels = targets.map(folder => folderLabel(folder, folderChoices));
+  const labels = targets.map(folder => folderLabel(folder, folderNames));
   const signature = JSON.stringify(labels);
   $("folder-job-targets").hidden = targets.length < 2;
   if ($("folder-job-target-list").dataset.signature !== signature) {
@@ -222,11 +223,11 @@ function showFolderDialog(context) {
   seenFolderRequest = context.token;
   activateTab("scan");
   const account = latest.accounts.find(account => account.id === context.folder.accountId)?.name || context.folder.accountId;
-  setText($("folder-target"), [account, folderLabel(context.folder, folderChoices)].join(t("listSeparator", " ／ ")));
+  setText($("folder-target"), [account, folderLabel(context.folder, folderNames)].join(t("listSeparator", " ／ ")));
   const folders = context.folders || [context.folder];
   $("folder-target-list").replaceChildren();
   for (const folder of folders) {
-    const item = document.createElement("li"); item.textContent = folderLabel(folder, folderChoices); $("folder-target-list").append(item);
+    const item = document.createElement("li"); item.textContent = folderLabel(folder, folderNames); $("folder-target-list").append(item);
   }
   setText($("folder-target"), t("folderConfirmCount", "$1：$2フォルダーを検査します。", [account, folders.length]));
   $("folder-subfolders").checked = false;
@@ -316,7 +317,7 @@ function confirmDeletion(targets, history = false) {
     subject.textContent = target.subject;
     const detail = item.appendChild(document.createElement("div"));
     const account = latest.accounts.find(account => account.id === target.accountId)?.name || target.accountId;
-    detail.textContent = [target.author, account, target.folderInfo ? folderLabel(target.folderInfo, folderChoices, target.accountId) : target.folder, LABELS[target.status], target.signatures.join(" / ")].filter(Boolean).join(t("listSeparator", " ／ "));
+    detail.textContent = [target.author, account, target.folderInfo ? folderLabel(target.folderInfo, folderNames, target.accountId) : target.folder, LABELS[target.status], target.signatures.join(" / ")].filter(Boolean).join(t("listSeparator", " ／ "));
     $("delete-targets").append(item);
   }
   $("delete-ack").checked = false;
@@ -413,7 +414,7 @@ function renderOverflow() {
   for (const record of report?.recent || []) {
     const item = document.createElement("li");
     const description = document.createElement("p");
-    description.textContent = [LABELS[record.status], record.locator.author, record.locator.subject, folderLabel(record.locator.folder, folderChoices, record.locator.accountId), localizeDetail(record)].filter(Boolean).join(" / ");
+    description.textContent = [LABELS[record.status], record.locator.author, record.locator.subject, folderLabel(record.locator.folder, folderNames, record.locator.accountId), localizeDetail(record)].filter(Boolean).join(" / ");
     item.append(description);
     const open = document.createElement("button");
     open.textContent = t("mail131", "開く");
@@ -433,7 +434,7 @@ function renderRecords() {
   if (!latest) return;
   renderFolder();
   renderOverflow();
-  const filtered = filterRecords(latest.records, { status: $("filter").value, account: $("account-filter").value, search: $("search").value, folderJobId: folderFilterId, folders: folderChoices });
+  const filtered = filterRecords(latest.records, { status: $("filter").value, account: $("account-filter").value, search: $("search").value, folderJobId: folderFilterId, folders: folderNames });
   filteredRecords = filtered;
   const result = resultPage(filtered, page);
   page = result.page;
@@ -456,8 +457,8 @@ function renderRecords() {
     setText(entry.parts.sender, record.locator.author || t("mail021", "差出人なし"));
     setText(entry.parts.subject, record.locator.subject || t("mail022", "件名なし"));
     const account = latest.accounts.find(account => account.id === record.locator.accountId)?.name || record.locator.accountId || "";
-    setText(entry.parts.location, [account, folderLabel(record.locator.folder, folderChoices, record.locator.accountId)].filter(Boolean).join(t("listSeparator", " ／ ")));
-    setText(entry.parts.detail, [scanHistoryDescription(record) || localizeDetail(record), advisoryDescription(record), quarantineSummary(record, folderChoices), isReviewed(record) && record.review.note ? t("reviewMemo", "判断メモ：$1", [record.review.note]) : ""].filter(Boolean).join(" "));
+    setText(entry.parts.location, [account, folderLabel(record.locator.folder, folderNames, record.locator.accountId)].filter(Boolean).join(t("listSeparator", " ／ ")));
+    setText(entry.parts.detail, [scanHistoryDescription(record) || localizeDetail(record), advisoryDescription(record), quarantineSummary(record, folderNames), isReviewed(record) && record.review.note ? t("reviewMemo", "判断メモ：$1", [record.review.note]) : ""].filter(Boolean).join(" "));
     setText(entry.parts.signatures, (record.signatures || []).join(" / "));
     setText(entry.parts.engine, record.engine || "");
     setText(entry.parts.scanPolicy, record.scanSettings ? policyDescription(record.scanSettings) : "");
@@ -686,6 +687,7 @@ async function loadFolders() {
   try {
     const response = await request("folderChoices");
     folderChoices = response.folders;
+    folderNames = createFolderIndex(folderChoices);
     if (!settingsSaving) syncSettings(latest.settings);
     const availableIds = new Set(folderChoices.filter(folder => folder.accountId === $("scan-account").value).map(folder => folder.id));
     for (const id of selectedFolders) if (!availableIds.has(id)) selectedFolders.delete(id);
@@ -695,6 +697,7 @@ async function loadFolders() {
     if (latest.accounts.some(account => account.id === previous)) $("scan-account").value = previous;
     else if (latest.accounts.length === 1) $("scan-account").value = latest.accounts[0].id;
     renderFolderChoices();
+    renderRecords();
     setText($("folder-load-status"), response.limited ? t("mail163", "フォルダー数の上限に達しました。一覧にない対象はThunderbirdの右クリックから指定してください。") :
       folderChoices.length ? "" : t("mail164", "検査できるフォルダーがありません。"));
   } catch (error) { setText($("folder-load-status"), t("mail165", "一覧を取得できませんでした。「一覧を更新」で再試行してください。") + error.message); }
