@@ -680,7 +680,8 @@ async function scanSelection() {
   await enqueue(selected, "manual");
 }
 
-const ready = (async () => {
+let initializationError = null;
+async function initialize() {
   const data = await api.storage.local.get(["directMigrationBackup", "settings", "records", "overflowPending", "overflowReport", "issue", "folderJob", "folderCheckpoint", "lastHealth", "lastScan", "helperRemoved", "installation"]);
   directMigrationBackup = data.directMigrationBackup || null;
   if (DIRECT && !directMigrationBackup) {
@@ -748,7 +749,12 @@ const ready = (async () => {
   await save();
   await helperInfo();
   await updateBadge();
-})().catch(error => { report(error); throw error; });
+}
+function beginInitialization() {
+  initializationError = null;
+  return initialize().catch(error => { initializationError = error; report(error); throw error; });
+}
+let ready = beginInitialization();
 
 api.messages.onNewMailReceived.addListener((folder, list) => {
   void ready.then(() => enqueue(list, "automatic")).catch(report);
@@ -815,6 +821,12 @@ api.runtime.onInstalled.addListener(() => { void openDashboard().catch(report); 
 api.runtime.onMessage.addListener(async (request, sender) => {
   if (sender.id !== api.runtime.id || sender.url !== api.runtime.getURL("dashboard.html")) return undefined;
   try {
+    // Retry only on an explicit connection check. Polling and mail operations
+    // must not repeatedly initialize or run against partially recovered state.
+    if (request.type === "health" && initializationError) {
+      ready = beginInitialization();
+      void ready.then(drain).catch(report);
+    }
     await ready;
     if ((maintenanceActive() || helperRemoved) && !["state", "helperInfo", "helperApply", "helperCancel", "helperMarkRemoved", "health"].includes(request.type)) {
       throw new Error(t("mail054", "補助プログラムの管理中か削除後です。導入を確認してから操作してください。"));
@@ -1198,7 +1210,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         return { ok: true };
       default: throw new Error(t("mail082", "未対応の操作です。"));
     }
-  } catch (error) { return { ok: false, error: error.message || t("mail083", "操作に失敗しました。"), ...(error.setupRequired ? { setupRequired: true } : {}) }; }
+  } catch (error) { return { ok: false, error: error.message || t("mail083", "操作に失敗しました。"), ...(error.setupRequired ? { setupRequired: true } : {}), ...(initializationError ? { startupFailed: true } : {}) }; }
 });
 
 // Timers are sufficient for a persistent MV2 background page. Restart recovery

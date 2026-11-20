@@ -17,7 +17,7 @@ await configureDirectView();
 const DIRECT = directRuntime();
 
 const $ = id => document.getElementById(id);
-let latest, initialized = false, refreshing = false, busy = false, page = 0;
+let latest, initialized = false, refreshing = false, busy = false, startupFailed = false, page = 0;
 let visible = [], filteredRecords = [];
 const rows = new Map(), selected = new Set();
 let folderFilterId = null, seenFolderRequest = null;
@@ -30,9 +30,19 @@ let folderChoices = [], foldersLoading = false, settingsSaving = false;
 async function request(type, values = {}) {
   const response = await messenger.runtime.sendMessage({ ...values, type });
   if (!response?.ok) {
+    if (response?.startupFailed) {
+      const showRecovery = !startupFailed;
+      startupFailed = true;
+      const message = t("startupRecovery", "初期化に失敗しました。保存先の状態を確認し、「接続を再確認」で再試行してください。") + " " + response.error;
+      setText($("health-result"), message);
+      if (showRecovery) openSetup();
+      updateControls();
+      throw new Error(message);
+    }
     if (response?.setupRequired) { await refresh(); openSetup(); }
     throw new Error(response?.error || t("mail102", "拡張の処理に接続できませんでした。"));
   }
+  if (type === "state") startupFailed = false;
   return response;
 }
 function setText(element, text) {
@@ -42,7 +52,7 @@ function blocked() { return busy || Boolean(latest?.batch?.active) || Boolean(la
 const installer = installationUI({ request, action, latest: () => latest, busy: () => blocked() });
 function selection() { return (latest?.records || []).filter(record => selected.has(record.key)); }
 function updateControls() {
-  const locked = blocked() || Boolean(latest?.helperRemoved), chosen = selection();
+  const locked = blocked() || startupFailed || Boolean(latest?.helperRemoved), chosen = selection();
   const retryCount = chosen.filter(canRetry).length, deleteCount = chosen.filter(canDelete).length, historyCount = chosen.filter(canForget).length;
   const outside = chosen.filter(record => !visible.some(item => item.key === record.key)).length;
   setText($("selected-count"), t("selectionCount", "$1件を選択中（画面外$2件）", [chosen.length, outside]));
@@ -71,7 +81,7 @@ function updateControls() {
   setText($("select-filtered"), t("selectFilteredCount", "絞り込み結果の選択可能な$1件をすべて選択", [allCandidates.length]));
   const navigationLocked = Boolean(latest?.maintenance) || busy && !latest?.batch?.active;
   for (const id of ["filter", "account-filter", "search", "reset-filters"]) $(id).disabled = navigationLocked;
-  $("health").disabled = locked;
+  $("health").disabled = blocked() || Boolean(latest?.helperRemoved);
   $("overflow-clear").disabled = locked || !latest?.overflowReport?.total;
   for (const button of $("overflow-recent").querySelectorAll("button")) button.disabled = locked || button.dataset.noDigest === "true";
   const job = latest?.folderJob;
@@ -766,6 +776,7 @@ $("settings-form").addEventListener("change", () => {
 $("health").addEventListener("click", () => {
   void action(async () => {
     const { health } = await request("health");
+    if (startupFailed || !latest) await refresh();
     latest.lastHealth = health;
     renderConnection();
     if (health.status !== "ready") throw new Error(health.detail);

@@ -18,9 +18,39 @@ async function settled(predicate, seconds = 360) {
   report.timeoutState = { issue: last?.issue, records: last?.records.map(record => ({key:record.key, status:record.status, subject:record.locator.subject, detail:record.detail, quarantine:record.quarantine})), folderJob:last?.folderJob };
   throw new Error("Mail integration did not settle");
 }
+async function recoveryScenario() {
+  const failure = await messenger.runtime.sendMessage({type:'state'});
+  check(!failure.ok && failure.startupFailed,'Startup failure is recoverable');
+  for(let i=0;i<100 && !document.getElementById('health-result').textContent.includes('synthetic startup storage failure');i++) await wait(100);
+  check(!document.getElementById('panel-settings').hidden,'Recovery instructions are visible');
+  check(document.getElementById('notifications').disabled,'Settings are locked before recovery');
+  check(!document.getElementById('health').disabled,'Recovery button remains usable');
+  document.getElementById('health').click();
+  const state = await settled(state=>state.records.some(record=>record.key==='preserved-review'));
+  check(state.records[0].review.note==='Synthetic human decision','Startup recovery retains human notes');
+  for(let i=0;i<100 && document.getElementById('notifications').disabled;i++) await wait(100);
+  check(!document.getElementById('notifications').disabled,'Recovery unlocks settings');
+  const fixture=await messenger.testFixture.prepare();
+  const before=await messenger.storage.local.get(['folderJob','folderCheckpoint','records']);
+  const context=await request('folderContext',{folderId:fixture.source.id});
+  const failed=await messenger.runtime.sendMessage({type:'folderStart',token:context.token,includeSubfolders:false});
+  check(!failed.ok && failed.error.includes('synthetic folder start failure'),'New start fails at persistence');
+  const after=await request('state');
+  check(JSON.stringify(after.folderJob)===JSON.stringify(state.folderJob),'Old progress is retained in memory');
+  check(JSON.stringify(after.records)===JSON.stringify(state.records),'No mail history is replaced');
+  check(JSON.stringify(await messenger.storage.local.get(['folderJob','folderCheckpoint','records']))===JSON.stringify(before),'Persistent progress and checkpoint remain intact');
+  const held=new NativeClient(messenger.runtime);
+  await held.request('health');
+  report.recovery=true;
+  report.runtime=await messenger.testFixture.runtime();
+  report.ok=true;
+  await messenger.testFixture.report(JSON.stringify(report));
+}
+
 const report = { ok: false, version: messenger.runtime.getManifest().version };
 try {
   const options = await (await fetch(messenger.runtime.getURL("fixture/options.json"))).json();
+  if (options.scenario === "recovery") { await recoveryScenario(); } else {
   let state = await request("state");
   const fixture = await messenger.testFixture.prepare();
   check(state.installation.state === "integrated", "Integrated scanner state");
@@ -129,6 +159,7 @@ try {
   await messenger.testFixture.report(JSON.stringify(report));
   if (report.version === "0.20.0a1") await messenger.testFixture.update();
   else if (["quit", "uninstall"].includes(options.scenario)) await messenger.testFixture.finish(options.scenario);
+  }
   }
 } catch (error) {
   report.error = String(error) + "\n" + error.stack;

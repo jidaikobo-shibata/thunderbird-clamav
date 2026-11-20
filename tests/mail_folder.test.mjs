@@ -114,7 +114,7 @@ test("duplicates and virtual child folders do not inflate the scan total", async
 test("failed initial persistence does not leave an unstartable active job", async () => {
   const scan = new FolderScan({}, { changed: async () => { throw new Error("storage failure"); } });
   await assert.rejects(scan.start(root, false), /storage/);
-  assert.equal(scan.active, false); assert.equal(scan.job.status, "error");
+  assert.equal(scan.active, false); assert.equal(scan.job, null);
 });
 
 test("a completed run notification keeps its own summary when a new run starts during persistence", async () => {
@@ -277,4 +277,24 @@ test("refreshing scan targets rejects moved, cross-account, virtual and missing 
   assert.deepEqual(await refreshScanFolders({ folders: { get: async () => renamed } }, [root]), [renamed]);
   const legacy = { ...root }; delete legacy.id;
   assert.deepEqual(await refreshScanFolders({ folders: { get: async () => { throw new Error("no runtime ID"); } } }, [legacy]), [legacy]);
+});
+
+
+test("failed new folder start restores the prior job, checkpoints and pending targets", async () => {
+  const {scan} = fixture();
+  await scan.start(root, false); await scan.collecting;
+  scan.take(); await scan.complete("clean", {hint:"a".repeat(64),digest:"b".repeat(64)});
+  await scan.stop();
+  const job = scan.snapshot(), checkpoints = scan.checkpointState();
+  const targets = scan.targets, cursor = scan.cursor;
+  scan.changed = async () => { throw new Error("synthetic storage failure"); };
+  await assert.rejects(scan.start(child, false), /storage failure/);
+  assert.deepEqual(scan.snapshot(), job);
+  assert.deepEqual(scan.checkpointState(), checkpoints);
+  assert.equal(scan.targets, targets);
+  assert.equal(scan.cursor, cursor);
+  assert.equal(scan.resumable, true);
+  scan.changed = async () => {};
+  await scan.resume(root); await scan.collecting;
+  assert.equal(scan.job.id, job.id);
 });

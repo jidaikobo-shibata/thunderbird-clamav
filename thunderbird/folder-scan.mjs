@@ -86,9 +86,10 @@ export class FolderScan {
     if (!roots.length || roots.length > 5000 || roots.some(root => !realFolder(root) || root.accountId !== roots[0].accountId) || new Set(roots.map(keyOf)).size !== roots.length || typeof includeSubfolders !== "boolean") {
       throw new Error(t("foldersInvalid", "同じアカウントの通常のメールフォルダーを選択してください。"));
     }
+    const previous = { job: this.job, targets: this.targets, cursor: this.cursor, checkpoints: this.checkpoints };
     this.targets = [];
     this.cursor = 0;
-    this.checkpoints.clear();
+    this.checkpoints = new Map();
     folder = roots[0];
     const savedRoots = roots.map(root => ({ id: root.id, accountId: root.accountId, path: root.path, name: root.name || root.path, displayNames: root.displayNames }));
     this.job = { id: crypto.randomUUID(), folders: savedRoots, folder: { id: folder.id, accountId: folder.accountId,
@@ -98,9 +99,7 @@ export class FolderScan {
       counts: { clean: 0, detected: 0, incomplete: 0, error: 0 }, detail: t("mail182", "対象メールを確認しています。") };
     try { await this.changed(); }
     catch (error) {
-      this.job.status = "error";
-      this.job.detail = t("mail183", "検査の開始状態を保存できませんでした。");
-      this.job.finishedAt = new Date().toISOString();
+      Object.assign(this, previous);
       throw error;
     }
     this.launch(roots);

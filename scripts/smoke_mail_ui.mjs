@@ -117,6 +117,7 @@ try {
     let batchKeys = [], forgetKeys = [];
     window.messenger = { i18n: { getUILanguage: () => language, getMessage }, runtime: { getPlatformInfo: async () => ({os:${JSON.stringify(process.argv.includes("--mac") ? "mac" : "linux")},arch:${JSON.stringify(process.argv.includes("--intel") ? "x86-64" : "aarch64")}}), getManifest: () => ({ version: direct ? "0.20.0a2" : "0.19.2", ...(direct ? {experiment_apis:{clamDirect:{}}} : {}) }), getURL: name => "/" + name, sendMessage: async request => {
       testCalls.push(request);
+      if (request.type === "state" && testState.startupFailure) return {ok:false,startupFailed:true,error:"synthetic startup storage failure"};
       if (request.type === "state") return structuredClone(testState);
       if (request.type === "clearOverflow") testState.overflowReport = null;
       if (request.type === "helperInfo") {
@@ -191,6 +192,7 @@ try {
         testState.folderJob.finishedAt = new Date().toISOString(); testState.folderJob.detail = "中止しました。"; }
 
       if (request.type === "health") {
+        delete testState.startupFailure;
         testState.lastHealth = fixtureHealth();
         testState.installation.clamavCode = testState.lastHealth.code || "ready";
         return { ok: true, health: testState.lastHealth };
@@ -301,6 +303,14 @@ try {
       assert.match(await evaluate("document.getElementById('results').innerText"), /Synthetic.Retained/);
       assert.match(await evaluate("document.getElementById('results').innerText"), language === 'ja' ? /今回の再検査/ : /Latest rescan/);
       await evaluate("document.getElementById('search').value=''; document.getElementById('search').dispatchEvent(new Event('input',{bubbles:true}))");
+      await evaluate("window.recoveryBefore=JSON.stringify(testState.records);testState.startupFailure=true;document.getElementById('tab-scan').click()");
+      await until("document.getElementById('health-result').textContent.includes('synthetic startup storage failure') && !document.getElementById('panel-settings').hidden");
+      assert.equal(await evaluate("document.getElementById('notifications').disabled"),true);
+      assert.equal(await evaluate("document.getElementById('health').disabled"),false);
+      assert.match(await evaluate("document.getElementById('health-result').textContent"),language==='ja'?/再試行/:/retry/);
+      await evaluate("document.getElementById('health').click()");
+      await until("!document.getElementById('health').disabled && !document.getElementById('notifications').disabled");
+      assert.equal(await evaluate("JSON.stringify(testState.records)===recoveryBefore"),true);
       await evaluate("document.getElementById('tab-results').click(); document.querySelector('#results tr button.danger').click()");
       await until("document.getElementById('delete-dialog').open");
       assert.equal(await evaluate("document.activeElement.id"), "delete-cancel");
@@ -757,7 +767,7 @@ try {
   for (const language of ["ja", "en-US"]) {
     await evaluate(`sessionStorage.setItem('fixture-language', '${language}'); sessionStorage.setItem('fixture-health', 'clamav_missing'); sessionStorage.removeItem('fixture-installation')`);
     await call("Page.reload");
-    await until("document.getElementById('clamav-install-guide').open && document.getElementById('health-result').textContent.includes('/usr/bin/clamscan')");
+    await until("document.getElementById('clamav-install-guide').open && testState.lastHealth?.code === 'clamav_missing'");
     await evaluate("document.getElementById('tab-setup').click()");
     assert.equal(await evaluate("document.getElementById('clamav-install-guide').hidden"), false);
     assert.match(await evaluate("document.getElementById('clamav-install-guide').textContent"), /sudo apt install clamav clamav-daemon clamav-freshclam/);

@@ -2992,5 +2992,8 @@
   },
   "directMacDefinitions": {
     "message": "The creation command refuses to overwrite an existing configuration file; inspect it if creation fails. Complete the first FreshClam update, then check the connection again. Update definitions regularly: definitions older than three days cause scans to fail. Python from python.org is also supported. The macOS-provided Python is not used."
+  },
+  "startupRecovery": {
+    "message": "Initialization failed. Check that storage is available, then click Check connection again to retry."
   }
 }

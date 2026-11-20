@@ -8,15 +8,19 @@ function event() {
 }
 
 let caseId = 0;
-async function harness({ direct = false, backupFailure = false, saved = {}, mails = [], nativeFailure = false, oversized = false, deleteAllowed = false, deleteFailure = false, deleteFailureIds = [], scanResult = {}, scanGate = null,
+async function harness({ failReads = [], failWrites = [], direct = false, backupFailure = false, saved = {}, mails = [], nativeFailure = false, oversized = false, deleteAllowed = false, deleteFailure = false, deleteFailureIds = [], scanResult = {}, scanGate = null,
   manageInfo = null, healthResult = null, folderRefs = [{ id: "inbox", accountId: "one", path: "/Inbox", name: "受信トレイ" }] } = {}) {
   let stored = structuredClone(saved);
+  const storageCounts = { reads: 0, writes: 0 };
   const notifications = [], opened = [], rawReads = [], timers = [], deleted = [], nativePorts = [];
   const events = { newMail: event(), selected: event(), message: event(), moved: event() };
   const byId = new Map(mails.map(mail => [mail.id, mail]));
   const api = {
     permissions: { contains: async () => deleteAllowed },
-    storage: { local: { get: async () => structuredClone(stored), set: async value => { stored = structuredClone(value); } } },
+    storage: { local: { get: async () => { if (failReads.includes(++storageCounts.reads)) throw new Error("synthetic storage read failure"); return structuredClone(stored); }, set: async value => {
+      if (failWrites.includes(++storageCounts.writes)) throw new Error("synthetic storage failure");
+      stored = { ...stored, ...structuredClone(value) };
+    } } },
     runtime: {
       id: "unit", getManifest: () => ({ version: "0.9.4" }), getURL: path => "moz-extension://unit/" + path,
       onMessage: events.message, onInstalled: event(),
@@ -104,7 +108,7 @@ async function harness({ direct = false, backupFailure = false, saved = {}, mail
     events.message.listeners[0]({ type, ...values }, sender);
   await send("state");
   nativePorts.length = 0; // Startup installation check is separate from scan connections.
-  return { api, send, events, notifications, opened, rawReads, timers, deleted, nativePorts, directRequests, migrationBackups, stored: () => stored };
+  return { api, send, events, notifications, opened, rawReads, timers, deleted, nativePorts, directRequests, migrationBackups, storageCounts, stored: () => stored };
 }
 
 function mail(id, accountId = "one") {
@@ -1839,4 +1843,64 @@ test("a ready response with an incompatible protocol cannot start a folder scan"
   assert.equal(state.folderJob, null);
   assert.equal(state.records.length, 0);
   assert.equal(h.rawReads.length, 0);
+});
+
+
+test("explicit connection checks recover transient startup writes without losing history", async () => {
+  for (const failedWrite of [2, 3]) {
+    const saved = { settings: { enabled: false, accountIds: [], notifications: false }, records: [{key:"human",status:"clean",locator:{accountId:"one"},review:{note:"keep"}}] };
+    const h = await harness({ direct: true, saved, failWrites: [failedWrite] });
+    const failure = await h.send("state");
+    assert.equal(failure.ok, false);
+    assert.equal(failure.startupFailed, true);
+    const reads = h.storageCounts.reads;
+    assert.equal((await h.send("scanSelection")).ok, false);
+    assert.equal((await h.send("state")).ok, false);
+    assert.equal(h.storageCounts.reads, reads); // Polling does not retry initialization.
+    assert.equal(h.rawReads.length, 0);
+    const recovered = await Promise.all([h.send("health"), h.send("health")]);
+    assert.ok(recovered.every(result => result.ok), JSON.stringify(recovered));
+    assert.equal(h.storageCounts.reads, reads + 1); // Concurrent clicks share one initialization.
+    const state = await h.send("state");
+    assert.equal(state.ok, true);
+    assert.equal(state.records[0].review.note, "keep");
+    assert.equal(state.settings.enabled, false);
+    assert.equal(h.migrationBackups.length, 1);
+  }
+});
+
+test("repeated startup failures remain recoverable without allowing mail operations", async () => {
+  const h = await harness({ direct: true, failWrites: [2, 3] });
+  assert.equal((await h.send("health")).startupFailed, true);
+  assert.equal((await h.send("scanSelection")).ok, false);
+  assert.equal(h.rawReads.length, 0);
+  assert.equal((await h.send("health")).ok, true);
+  assert.equal((await h.send("state")).ok, true);
+});
+
+test("migration backup must succeed before explicit startup recovery can write or inspect mail", async () => {
+  const saved = {records:[{key:"human",status:"clean",locator:{accountId:"one"},review:{note:"original"}}]};
+  const h = await harness({direct:true,backupFailure:true,saved});
+  assert.equal((await h.send("health")).startupFailed, true);
+  assert.deepEqual(h.stored(), saved);
+  assert.equal(h.rawReads.length, 0);
+  let backups = 0;
+  h.api.clamDirect.backup = async snapshot => {
+    assert.deepEqual(JSON.parse(snapshot).records, saved.records); backups++;
+    return {path:"/synthetic/recovered-backup.json"};
+  };
+  assert.equal((await h.send("health")).ok, true);
+  assert.equal(backups, 1);
+  assert.equal((await h.send("state")).records[0].review.note, "original");
+});
+
+
+test("an initial storage read failure can be retried without overwriting unread data", async () => {
+  const saved={records:[{key:"unread",status:"clean",locator:{accountId:"one"}}]};
+  const h=await harness({direct:true,saved,failReads:[1]});
+  assert.equal((await h.send("state")).startupFailed,true);
+  assert.deepEqual(h.stored(),saved);
+  assert.equal(h.storageCounts.writes,0);
+  assert.equal((await h.send("health")).ok,true);
+  assert.equal((await h.send("state")).records[0].key,"unread");
 });
