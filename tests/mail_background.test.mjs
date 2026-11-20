@@ -3191,3 +3191,130 @@ test("optional proof deadline also releases automatic quarantine", async () => {
   await settle(h, state => state.records.every(record => !["queued", "scanning"].includes(record.status)));
   h.expireIdle();
 });
+
+for (const header of [false, true]) for (const mode of ["normal", "notificationFailure", "changedVerdict"]) test(`timed-out proof still follows moves while fallback scans (header=${header}, mode=${mode})`, async () => {
+  const { h, middle, final, releaseProof } = await blockedMoveProof(header);
+  if (mode === "notificationFailure") {
+    const create = h.api.notifications.create; let failed = false;
+    h.api.notifications.create = async (...args) => {
+      if (!failed) { failed = true; throw new Error("synthetic notification failure"); }
+      return create(...args);
+    };
+  }
+  if (mode === "changedVerdict") {
+    const request = h.api.clamDirect.request;
+    h.api.clamDirect.request = async (token, value) => {
+      const response = JSON.parse(await request(token, value));
+      if (JSON.parse(value).op === "end") response.signatures = ["Synthetic.DifferentThreat"];
+      return JSON.stringify(response);
+    };
+  }
+  let enter, release;
+  const started = new Promise(resolve => { enter = resolve; }), gate = new Promise(resolve => { release = resolve; });
+  const raw = h.api.messages.getRaw;
+  h.api.messages.getRaw = async (id, options) => {
+    const file = await raw(id, options);
+    if (id === middle.id) { enter(); await gate; }
+    return file;
+  };
+  await started; // The independent scan starts after the optional deadline.
+  h.api.messages.get = async id => { if (id !== final.id) throw new Error("old location gone"); return final; };
+  h.api.messages.query = async () => ({ messages: [final] });
+  await h.events.moved.listeners[0]({ messages: [middle] }, { messages: [final] });
+  assert.ok((await h.send("state")).records.every(record => record.messageId === final.id));
+  release(); releaseProof();
+  const state = await settle(h, state => state.records.length === 1 && state.records[0].status === "detected");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.notifications.length, mode === "changedVerdict" ? 2 : 1);
+  assert.equal(h.directRequests.filter(request => request.op === "end").length, 2);
+  assert.equal((await h.send("open", { key: state.records[0].key })).ok, true);
+  assert.equal(h.stored().records.length, 1);
+  h.expireIdle();
+});
+
+async function interruptedMoveChain({ header = false, hops = 1, changed = false, ambiguous = false, wrongSource = false, reviewAfterFailure = false } = {}) {
+  const mails = Array.from({ length: hops + 2 }, (_, i) => ({ ...mail(951), id: 951 + i,
+    headerMessageId: header ? "chain@example.invalid" : "",
+    folder: { id: "chain" + i, accountId: "one", path: "/Chain" + i },
+    ...(changed && i === hops + 1 ? { raw: "Subject: changed\r\n\r\nchanged destination body" } : {}) }));
+  const h = await harness({ direct: true, mails, scanResult: { status: reviewAfterFailure ? "incomplete" : "detected", signatures: ["Synthetic.Threat"] },
+    saved: { settings: { enabled: true, accountIds: ["one"], notifications: true } } });
+  h.events.newMail.listeners[0](mails[0].folder, { messages: [mails[0]] });
+  await settle(h, state => state.records[0]?.status === (reviewAfterFailure ? "incomplete" : "detected"));
+  await new Promise(resolve => setImmediate(resolve));
+  let enter, release;
+  const started = new Promise(resolve => { enter = resolve; }), gate = new Promise(resolve => { release = resolve; });
+  const raw = h.api.messages.getRaw;
+  h.api.messages.getRaw = async (id, options) => {
+    if (id === mails[1].id) { enter(); await gate; throw new Error("intermediate body moved before retrieval finished"); }
+    if (mails.slice(2, -1).some(mail => mail.id === id)) throw new Error("later intermediate also unavailable");
+    return raw(id, options);
+  };
+  const first = h.events.moved.listeners[0]({ messages: [mails[0]] },
+    { messages: ambiguous ? [mails[1], { ...mails[1], id: 999 }] : [mails[1]] });
+  await started;
+  const remaining = [];
+  const enqueueRemaining = () => {
+    for (let i = 1; i < mails.length - 1; i++) remaining.push(h.events.moved.listeners[0](
+      { messages: [{ ...mails[i], ...(wrongSource ? { id: 998 } : {}) }] }, { messages: [mails[i + 1]] }));
+  };
+  if (!reviewAfterFailure) enqueueRemaining();
+  h.api.messages.get = async id => { if (id !== mails.at(-1).id) throw new Error("old location gone"); return mails.at(-1); };
+  h.api.messages.query = async () => ({ messages: [mails.at(-1)] });
+  release(); await first;
+  if (reviewAfterFailure) {
+    const record = (await h.send("state")).records[0];
+    const { reviewStamp } = await import("../thunderbird/review.mjs");
+    assert.equal((await h.send("reviewMany", { keys: [record.key], reviewed: true, note: "preserved judgment",
+      stamps: { [record.key]: reviewStamp(record) } })).ok, true);
+    enqueueRemaining();
+  }
+  await Promise.all(remaining);
+  return { h, mails, state: await h.send("state") };
+}
+
+for (const header of [false, true]) for (const hops of [1, 2]) test(`unreadable intermediate moves are verified at the final location (header=${header}, hops=${hops})`, async () => {
+  const { h, mails, state } = await interruptedMoveChain({ header, hops });
+  assert.equal(state.records[0].messageId, mails.at(-1).id);
+  assert.equal(state.records[0].locator.folder.path, mails.at(-1).folder.path);
+  assert.equal((await h.send("open", { key: state.records[0].key })).ok, true);
+  h.events.newMail.listeners[0](mails.at(-1).folder, { messages: [mails.at(-1)] });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal((await h.send("state")).records.length, 1);
+  assert.equal(h.notifications.length, 1);
+  assert.equal(h.stored().records[0].messageId, mails.at(-1).id);
+  h.expireIdle();
+});
+
+for (const option of ["changed", "ambiguous", "wrongSource"]) test(`unverified move hints cannot bypass ${option} protection`, async () => {
+  const { h, mails, state } = await interruptedMoveChain({ [option]: true });
+  assert.equal(state.records[0].messageId, mails[0].id);
+  assert.equal(state.records[0].locator.folder.path, mails[0].folder.path);
+  assert.equal((await h.send("open", { key: state.records[0].key })).ok, false);
+  h.events.newMail.listeners[0](mails.at(-1).folder, { messages: [mails.at(-1)] });
+  await settle(h, state => state.records.length === 2 && state.records.every(record => record.status === "detected"));
+  assert.equal((await h.send("state")).records[0].messageId, mails[0].id);
+  h.expireIdle();
+});
+
+for (const expired of [false, true]) test(`intermediate move hints expire without changing action targets (expired=${expired})`, async () => {
+  const { h, mails } = await interruptedMoveChain({ changed: true });
+  const next = { ...mails.at(-1), id: 997, folder: { id: "last", accountId: "one", path: "/Last" } };
+  const bytes = await h.api.messages.getRaw(mails[0].id, { decrypt: false });
+  h.api.messages.getRaw = async () => bytes; // The latest destination matches the original contents.
+  const now = Date.now;
+  try {
+    if (expired) Date.now = () => now() + 60001;
+    await h.events.moved.listeners[0]({ messages: [mails.at(-1)] }, { messages: [next] });
+  } finally { Date.now = now; }
+  assert.equal((await h.send("state")).records[0].messageId, expired ? mails[0].id : next.id);
+  h.expireIdle();
+});
+
+test("human review invalidates an unverified intermediate location", async () => {
+  const { h, mails, state } = await interruptedMoveChain({ reviewAfterFailure: true });
+  assert.equal(state.records[0].messageId, mails[0].id);
+  assert.equal(state.records[0].review.note, "preserved judgment");
+  assert.equal(h.stored().records[0].review.note, "preserved judgment");
+  h.expireIdle();
+});

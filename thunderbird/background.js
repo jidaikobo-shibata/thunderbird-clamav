@@ -64,6 +64,7 @@ let batchProgress = null, retryContext = null;
 const historyTickets = new Map();
 const movedScans = new WeakMap();
 const moveRevisions = new WeakMap();
+const unverifiedMoves = new WeakMap(), notifiedMoveResults = new WeakMap();
 const pendingMoveDuplicates = new WeakMap(), pendingMoveOrigin = new WeakMap();
 let folderRequest = null;
 let lastHealth = null, lastScan = null;
@@ -546,11 +547,17 @@ async function updateBadge() {
   await api.browserAction.setTitle({ title: notice.title });
 }
 
-async function notify(record) {
+function moveResultStamp(record) {
+  return JSON.stringify([record.sha256, record.status, record.lastAttempt, record.detail, record.signatures, record.advisories, record.unscannedReason]);
+}
+
+async function notify(record, coalescedMove = false) {
   if (!settings.notifications || !needsAttention(record)) return;
   // A transient failure is actionable only after its scheduled retry fails.
   if (scanFailed(record) && record.nextRetry) return;
   if (record.status === "advisory" && !advisoryNotifies(record)) return;
+  const stamp = moveResultStamp(record);
+  if (coalescedMove && notifiedMoveResults.get(record) === stamp) return;
   // Subjects/senders are deliberately omitted from lock-screen notifications.
   try {
     await api.notifications.create(record.key, {
@@ -558,6 +565,7 @@ async function notify(record) {
       title: t("mail211", "ClamAV メール検査：") + LABELS[record.lastAttempt?.status || record.status],
       message: t("mail030", "Thunderbirdの検査結果画面で対象メールを確認してください。")
     });
+    notifiedMoveResults.set(record, stamp);
   } catch { issue = t("mail031", "デスクトップ通知を表示できません。結果画面を確認してください。"); }
 }
 
@@ -913,10 +921,12 @@ async function drain() {
         try { reviewFingerprint = (await verified(record)).fingerprint; } catch { /* Unverifiable contents require review again. */ }
       }
       reconcileReview(record, previousReview, reviewFingerprint);
+      let coalescedMove = false;
       const movedScan = movedScans.get(record);
       if (movedScan) {
         movedScans.delete(record);
         record = coalesceMovedScan(movedScan.original, record, movedScan.hash);
+        coalescedMove = record === movedScan.original;
       }
       if (pendingMoveDuplicates.has(record) || pendingMoveOrigin.has(record)) await settlePendingMove(record);
       const quarantineConfig = settings.quarantine?.[record.locator.accountId];
@@ -943,7 +953,7 @@ async function drain() {
         } : null);
       }
       await save();
-      if (!fromFolder) await notify(record);
+      if (!fromFolder) await notify(record, coalescedMove);
       if (record === overflowPending) await finishOverflow(record);
       await updateBadge();
     }
@@ -1218,6 +1228,27 @@ async function settlePendingMove(original) {
   await recordChanges.catch(report); // A failed save must retain the queued scan.
 }
 
+// Unverified intermediate locations are hints for later explicit moves only.
+// They must never become a display/action target or transfer a prior verdict.
+function moveIdentity(record) {
+  return JSON.stringify([record.locator, record.messageId, record.session, record.sha256,
+    record.lastResult, record.lastAttempt, record.review, record.reviewBeforeScan,
+    record.quarantine, record.bulkRetryId, record.folderJobId]);
+}
+function moveHint(record) {
+  const hint = unverifiedMoves.get(record);
+  if (!hint) return null;
+  if (hint.expires <= Date.now() || hint.identity !== moveIdentity(record)) {
+    unverifiedMoves.delete(record);
+    return null;
+  }
+  return hint.message;
+}
+function pendingMoveFollower(record, primary) {
+  return pendingMoveOrigin.get(record) === primary && !deleting.has(record.key) &&
+    pristineAutomaticPending(record) && (!record.sha256 || record.sha256 === primary.sha256);
+}
+
 // External moves (including Undo) update the display only after content
 // verification. Our own quarantine/deletion operations retain their own locks.
 api.messages.onMoved?.addListener((originals, moved) => {
@@ -1230,9 +1261,12 @@ api.messages.onMoved?.addListener((originals, moved) => {
       message.date ? new Date(message.date).toISOString() : ""]);
     const tracked = new Map(), destinations = new Map(), digests = new Map();
     for (const record of new Set([...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : [])])) {
-      const key = JSON.stringify([record.locator.accountId, record.locator.folder?.path, envelope(record.locator)]);
-      if (!tracked.has(key)) tracked.set(key, []);
-      tracked.get(key).push(record);
+      const locations = [ { id: record.messageId, folder: record.locator.folder, ...record.locator }, moveHint(record) ].filter(Boolean);
+      for (const location of locations) {
+        const key = JSON.stringify([accountOf(location), location.folder?.path, envelope(location)]);
+        if (!tracked.has(key)) tracked.set(key, []);
+        if (!tracked.get(key).includes(record)) tracked.get(key).push(record);
+      }
     }
     for (const message of newMessages) {
       if (!realFolder(message.folder) || message.external) continue;
@@ -1247,14 +1281,18 @@ api.messages.onMoved?.addListener((originals, moved) => {
       const possible = tracked.get(key) || [];
       // Yield for tracked work, but do not add a timer for every untracked mail.
       if (possible.length || ++examined % 100 === 0) await yieldBatch();
-      const eligible = possible.filter(record => sameEnvelope(old, record.locator) &&
-        old.folder?.path === record.locator.folder?.path &&
-        (record.session !== session || !Number.isInteger(record.messageId) || record.messageId === old.id));
+      const eligible = possible.filter(record => {
+        const hinted = moveHint(record);
+        const source = hinted && position(hinted) === position(old) ? hinted :
+          { id: record.messageId, folder: record.locator.folder };
+        return sameEnvelope(old, record.locator) && old.folder?.path === source.folder?.path &&
+          (record.session !== session || !Number.isInteger(source.id) || source.id === old.id);
+      });
       const canonical = eligible.map(item => pendingMoveOrigin.get(item) || item);
       const primary = canonical[0];
       const linkedGroup = eligible.length > 1 && primary && eligible.includes(primary) && canonical.every(item => item === primary) &&
         (pristineAutomaticPending(primary) || canRecoverMovedInput(primary) || canSettlePendingMove(primary)) &&
-        eligible.every(item => item === primary || !deleting.has(item.key) && queuedMoveDuplicate(item));
+        eligible.every(item => item === primary || pendingMoveFollower(item, primary));
       if (eligible.length !== 1 && !linkedGroup) continue;
       const record = linkedGroup ? primary : eligible[0];
       if (deleting.has(record.key) || record.status === "deleted") continue;
@@ -1273,13 +1311,28 @@ api.messages.onMoved?.addListener((originals, moved) => {
         }
         catch { /* An unreadable move cannot transfer a prior verdict. */ }
       }
-      if (matches.length !== 1 || (record.sha256 || record.lastResult?.sha256) !== hash || deleting.has(record.key) || record.status === "deleted" ||
+      if ((record.sha256 || record.lastResult?.sha256) !== hash || deleting.has(record.key) || record.status === "deleted" ||
           JSON.stringify([record.locator, record.messageId, record.session, record.quarantine?.status]) !== before) continue;
+      if (matches.length !== 1) {
+        if (hash && candidates.length === 1 && sameEnvelope(candidates[0], record.locator)) {
+          for (const item of linkedGroup ? eligible : [record]) {
+            unverifiedMoves.set(item, { message: structuredClone(candidates[0]), identity: moveIdentity(item), expires: Date.now() + 60000 });
+          }
+        }
+        continue;
+      }
+      if (linkedGroup && !eligible.every(item => item === record || pendingMoveFollower(item, record))) continue;
+      unverifiedMoves.delete(record);
       refreshQuarantineLocation(record, matches[0]);
       record.session = session;
       moveRevisions.set(record, (moveRevisions.get(record) || 0) + 1);
       if (linkedGroup) for (const duplicate of eligible) {
-        if (duplicate !== record) { refreshQuarantineLocation(duplicate, matches[0]); duplicate.session = session; }
+        if (duplicate !== record) {
+          refreshQuarantineLocation(duplicate, matches[0]);
+          duplicate.session = session;
+          moveRevisions.set(duplicate, (moveRevisions.get(duplicate) || 0) + 1);
+          unverifiedMoves.delete(duplicate);
+        }
       }
       if ((!hash && pristineAutomaticPending(record)) || pendingMoveDuplicates.has(record)) {
         const pending = records.filter(item => item !== record && item.session === session && item.messageId === record.messageId &&
