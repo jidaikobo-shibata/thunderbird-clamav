@@ -14,7 +14,7 @@ const catalogs = Object.fromEntries(await Promise.all(["ja", "en"].map(async lan
 const profile = await mkdtemp(path.join(tmpdir(), "clam-mail-ui-"));
 const server = createServer(async (request, response) => {
   const name = new URL(request.url, "http://localhost").pathname.slice(1);
-  if (!["scan-history.mjs", "direct-transport.mjs", "direct-view.mjs", "dashboard.html", "dashboard.css", "dashboard.js", "review.mjs", "scan-policy.mjs", "quarantine.mjs", "quarantine-ui.mjs", "core.mjs", "results.mjs", "folder-scan.mjs", "folder-labels.mjs", "installation.mjs", "i18n.mjs", "installer.pyz", "icon.svg"].includes(name)) {
+  if (!["state-storage.mjs", "scan-history.mjs", "direct-transport.mjs", "direct-view.mjs", "dashboard.html", "dashboard.css", "dashboard.js", "review.mjs", "scan-policy.mjs", "quarantine.mjs", "quarantine-ui.mjs", "core.mjs", "results.mjs", "folder-scan.mjs", "folder-labels.mjs", "installation.mjs", "i18n.mjs", "installer.pyz", "icon.svg"].includes(name)) {
     response.writeHead(404).end(); return;
   }
   const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript", ".svg": "image/svg+xml", ".pyz": "application/octet-stream" };
@@ -249,6 +249,28 @@ try {
         await call("Page.reload");
       }
       await until("document.querySelectorAll('#results tr').length === 50 && document.getElementById('panel-settings').contains(document.getElementById('connection-title'))");
+      assert.deepEqual(await evaluate(`(async () => {
+        const {syncQuarantineSettings} = await import('./quarantine-ui.mjs');
+        const original = document.getElementById('quarantine-settings');
+        const host = document.createElement('div');
+        original.id = 'saved-quarantine-settings'; host.id = 'quarantine-settings'; document.body.append(host);
+        try {
+          const accounts = [{id:'perf',name:'Synthetic account'}];
+          const folders = Array.from({length:5000},(_,index)=>({id:'f'+index,accountId:'perf',path:'/Folder'+index,displayNames:['Synthetic','Folder '+index]}));
+          let visits = 0;
+          Object.defineProperty(folders, Symbol.iterator, {value:function*(){visits++;yield* Array.prototype.values.call(this);}});
+          const settings = {quarantine:{perf:{folderId:'f3',path:'/Folder3',auto:true}}};
+          syncQuarantineSettings(settings,accounts,folders);
+          const select=host.querySelector('select'), option=select.options[4];
+          syncQuarantineSettings(settings,accounts,folders);
+          const cached=visits===1 && select.options[4]===option && select.value==='f3' && host.querySelector('input').checked;
+          const changed=folders.map(folder=>({...folder})); changed[3].displayNames=['Renamed folder'];
+          syncQuarantineSettings(settings,accounts,changed);
+          const renamed=select.options[4].textContent==='Renamed folder';
+          syncQuarantineSettings({quarantine:{perf:{folderId:'missing',path:'/Missing',auto:false}}},accounts,changed);
+          return [cached,renamed,select.value==='missing' && !host.querySelector('input').checked];
+        } finally {host.remove();original.id='quarantine-settings';}
+      })()`),[true,true,true]);
       assert.deepEqual(await evaluate("[...document.querySelectorAll('[role=tab]')].map(tab=>tab.id)"), ['tab-scan','tab-results','tab-settings','tab-help']);
       assert.equal(await evaluate("document.getElementById('panel-scan').hidden"), false);
       assert.equal(await evaluate("document.title"), language === 'ja' ? 'ClamAV メール検査' : 'ClamAV Mail Check');

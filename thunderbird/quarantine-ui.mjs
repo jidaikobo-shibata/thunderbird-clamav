@@ -3,6 +3,25 @@ import { t } from "./i18n.mjs";
 import { quarantineFolder, canQuarantine } from "./quarantine.mjs";
 import { folderLabel } from "./folder-labels.mjs";
 
+const folderOptions = new WeakMap();
+function accountOptions(folders, accountId) {
+  let accounts = folderOptions.get(folders);
+  if (!accounts) {
+    accounts = new Map();
+    for (const folder of folders) {
+      if (!quarantineFolder(folder)) continue;
+      let group = accounts.get(folder.accountId);
+      if (!group) { group = { choices: new Map(), options: [["", t("qNoTarget", "隔離先を指定しない")]] }; accounts.set(folder.accountId, group); }
+      group.choices.set(folder.id, folder.path);
+      // This is already the canonical choice; no search through all folders.
+      group.options.push([folder.id, folderLabel(folder)]);
+    }
+    for (const group of accounts.values()) group.signature = JSON.stringify(group.options);
+    folderOptions.set(folders, accounts);
+  }
+  return accounts.get(accountId) || { choices: new Map(), options: [["", t("qNoTarget", "隔離先を指定しない")]], signature: "none" };
+}
+
 export function syncQuarantineSettings(settings, accounts, folders) {
   const host = document.getElementById("quarantine-settings");
   const ids = new Set(accounts.map(account => account.id));
@@ -20,11 +39,14 @@ export function syncQuarantineSettings(settings, accounts, folders) {
     row.setAttribute("role", "group"); row.setAttribute("aria-label", account.name);
     row.querySelector("span").textContent = t("qAccountTarget", "$1の隔離先", [account.name]);
     const config = settings.quarantine?.[account.id], select = row.querySelector("select"), auto = row.querySelector("input");
-    const choices = folders.filter(folder => folder.accountId === account.id && quarantineFolder(folder));
-    const options = [["", t("qNoTarget", "隔離先を指定しない")], ...choices.map(folder => [folder.id, folderLabel(folder, folders, account.id)])];
-    if (config && !choices.some(folder => folder.id === config.folderId && folder.path === config.path)) options.push([config.folderId, t("qUnavailableTarget", "確認できない隔離先：$1（選び直してください）", [config.path])]);
-    const signature = JSON.stringify(options);
-    if (select.dataset.options !== signature) { select.replaceChildren(...options.map(([value, name]) => new Option(name, value))); select.dataset.options = signature; }
+    const cached = accountOptions(folders, account.id);
+    const unavailable = config && cached.choices.get(config.folderId) !== config.path;
+    const signature = cached.signature + (unavailable ? JSON.stringify([config.folderId, config.path]) : "");
+    if (select.dataset.options !== signature) {
+      const options = unavailable ? [...cached.options, [config.folderId, t("qUnavailableTarget", "確認できない隔離先：$1（選び直してください）", [config.path])]] : cached.options;
+      select.replaceChildren(...options.map(([value, name]) => new Option(name, value)));
+      select.dataset.options = signature;
+    }
     select.value = config?.folderId || ""; auto.checked = Boolean(config?.auto);
   }
 }

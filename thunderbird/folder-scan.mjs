@@ -1,3 +1,4 @@
+import { CheckpointMap } from "./state-storage.mjs";
 import { t } from "./i18n.mjs";
 import { messagePages, locator, sha256 } from "./core.mjs";
 
@@ -44,7 +45,7 @@ export class FolderScan {
     this.job = null;
     this.targets = [];
     this.cursor = 0;
-    this.checkpoints = new Map();
+    this.checkpoints = new CheckpointMap();
   }
   get resumable() { return Boolean(this.job && RESUMABLE.includes(this.job.status)); }
   checkpointState() {
@@ -89,7 +90,7 @@ export class FolderScan {
     const previous = { job: this.job, targets: this.targets, cursor: this.cursor, checkpoints: this.checkpoints };
     this.targets = [];
     this.cursor = 0;
-    this.checkpoints = new Map();
+    this.checkpoints = new CheckpointMap();
     folder = roots[0];
     const savedRoots = roots.map(root => ({ id: root.id, accountId: root.accountId, path: root.path, name: root.name || root.path, displayNames: root.displayNames }));
     this.job = { id: crypto.randomUUID(), folders: savedRoots, folder: { id: folder.id, accountId: folder.accountId,
@@ -130,7 +131,7 @@ export class FolderScan {
     const previous = this.job, checkpoints = this.checkpoints;
     this.removing = true;
     this.job = null;
-    this.checkpoints = new Map();
+    this.checkpoints = new CheckpointMap();
     this.targets = [];
     this.cursor = 0;
     try { await this.changed(); }

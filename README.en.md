@@ -1,6 +1,6 @@
 # ClamAV Mail Check
 
-This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a12**, a prerelease of the integrated Ubuntu/macOS scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a12 has not been published.
+This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a13**, a prerelease of the integrated Ubuntu/macOS scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a13 has not been published.
 
 ## Requirements
 
@@ -53,13 +53,15 @@ No additional Python or npm packages are needed:
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-Install `dist/clam-mail-check-direct-0.20.0a12.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
+Install `dist/clam-mail-check-direct-0.20.0a13.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
 
 Open Settings and choose Check connection again. Start with a small manual folder scan. Automatic scanning is disabled for a new installation; select accounts only after checking results.
 
 ## Update and remove
 
 Install the newer XPI **over the existing extension without removing it first**. The add-on ID, settings, history, review notes and interrupted-work data are retained; the integrated scanner updates with the XPI.
+
+Version 0.20.0a13 changes the storage format for history and resume checkpoints. Existing data is backed up inside the profile before migration; migration stops if the backup fails. Installing 0.20.0a12 or earlier over this version is not a supported downgrade. Returning to an older version requires restoring the pre-migration backup.
 
 Remove the extension through Thunderbird's Add-ons Manager. Normal extension settings/history may be lost. Messages, accounts, Python, ClamAV, definitions, FreshClam configurations and any older helpers remain. A migration backup, if previously created inside the profile, also remains and is not restored or erased automatically.
 

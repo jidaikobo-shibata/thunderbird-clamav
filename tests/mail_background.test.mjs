@@ -1,3 +1,4 @@
+import { readStoredState } from "../thunderbird/state-storage.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { sha256, locator } from "../thunderbird/core.mjs";
@@ -108,7 +109,7 @@ async function harness({ failReads = [], failWrites = [], direct = false, backup
     events.message.listeners[0]({ type, ...values }, sender);
   await send("state");
   nativePorts.length = 0; // Startup installation check is separate from scan connections.
-  return { api, send, events, notifications, opened, rawReads, timers, deleted, nativePorts, directRequests, migrationBackups, storageCounts, stored: () => stored };
+  return { api, send, events, notifications, opened, rawReads, timers, deleted, nativePorts, directRequests, migrationBackups, storageCounts, stored: () => readStoredState(structuredClone(stored)), rawStored: () => structuredClone(stored) };
 }
 
 function mail(id, accountId = "one") {
@@ -1938,7 +1939,7 @@ test("changed or ambiguous move targets cannot inherit a previous verdict", asyn
   for(const options of [{changed:true},{ambiguous:true}]){
     const {h,original,destinations}=await moveFixture(options);
     const before=h.storageCounts.writes;
-    h.events.moved.listeners[0]({messages:[original]},{messages:destinations});
+    await h.events.moved.listeners[0]({messages:[original]},{messages:destinations});
     // An empty incoming list queues a save after move reconciliation, without
     // inspecting or changing a mail record.
     h.events.newMail.listeners[0](original.folder,{messages:[]});
@@ -2187,4 +2188,112 @@ test("move reconciliation cannot suppress a newly activated automatic quarantine
   assert.equal(state.records.length,2);
   assert.equal(state.records[1].status,"detected");
   assert.match(state.records[1].quarantine.detail,/隔離先/);
+});
+
+
+test("slow move verification does not block unrelated incoming mail",async()=>{
+  const original=mail(1), moved={...original,id:2,folder:{id:"child",accountId:"one",path:"/Inbox/Child"}}, fresh=mail(3);
+  const digest=await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello"));
+  const h=await harness({direct:true,mails:[original,moved,fresh],saved:{records:[{key:"moving",status:"incomplete",sha256:digest,locator:locator(original)}],settings:{enabled:true,accountIds:["one"],notifications:false}}});
+  const raw=h.api.messages.getRaw;
+  let release,entered;
+  const gate=new Promise(resolve=>{release=resolve;});
+  const started=new Promise(resolve=>{entered=resolve;});
+  h.api.messages.getRaw=async(id,options)=>{if(id===2){entered();await gate;}return raw(id,options);};
+  const moving=h.events.moved.listeners[0]({messages:[original]},{messages:[moved]});
+  await started;
+  h.events.newMail.listeners[0](fresh.folder,{messages:[fresh]});
+  const state=await settle(h,s=>s.records.some(record=>record.messageId===3&&record.status==="clean"));
+  assert.equal(state.records.find(record=>record.key==="moving").locator.folder.path,"/Inbox");
+  release();await moving;
+  assert.equal((await h.send("state")).records.find(record=>record.key==="moving").messageId,2);
+});
+
+test("incremental storage survives an actual raw-format restart with human notes",async()=>{
+  const message=mail(1);
+  const digest=await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello"));
+  const saved={directMigrationBackup:{notNeeded:true},records:[{key:"kept",status:"incomplete",locator:locator(message),sha256:digest,review:{note:"human decision"}}]};
+  const h=await harness({direct:true,saved,mails:[message]});
+  assert.equal(h.rawStored().records.format,2);
+  assert.equal(h.migrationBackups.length,1);
+  assert.equal(h.migrationBackups[0].records[0].review.note,"human decision");
+  const next=await harness({direct:true,saved:h.rawStored(),mails:[message]});
+  assert.equal((await next.send("state")).records[0].review.note,"human decision");
+  assert.equal(next.migrationBackups.length,0);
+});
+
+
+test("format migration backup failure preserves the original storage until explicit recovery",async()=>{
+  const saved={directMigrationBackup:{notNeeded:true},records:[{key:"human",status:"clean",locator:{accountId:"one"},review:{note:"preserve latest decision"}}]};
+  const h=await harness({direct:true,saved,backupFailure:true});
+  assert.equal((await h.send("state")).startupFailed,true);
+  assert.deepEqual(h.rawStored(),saved);
+  assert.equal(h.storageCounts.writes,0);
+  h.api.clamDirect.backup=async()=>({path:"/synthetic/recovery-backup.json"});
+  assert.equal((await h.send("health")).ok,true);
+  assert.equal(h.rawStored().records.format,2);
+  assert.equal((await h.send("state")).records[0].review.note,"preserve latest decision");
+});
+
+
+test("a rescan completed during delayed move verification cannot be replaced by an older clean result",async()=>{
+  const original=mail(1),moved={...original,id:2,folder:{id:"child",accountId:"one",path:"/Inbox/Child"}};
+  let scans=0,releaseScan;
+  const scanGate=new Promise(resolve=>{releaseScan=resolve;});
+  const h=await harness({direct:true,mails:[original,moved],saved:{settings:{enabled:true,accountIds:["one"],notifications:false}},
+    scanGate:()=>{scans++;return scans===3?scanGate:undefined;},
+    scanResult:()=>scans===1?{status:"incomplete"}:scans===3?{status:"detected",signatures:["Synthetic.NewVerdict"]}:{}});
+  h.events.newMail.listeners[0](original.folder,{messages:[original]});
+  let state=await settle(h,s=>s.records[0]?.status==="incomplete");
+  const key=state.records[0].key;
+  h.events.newMail.listeners[0](moved.folder,{messages:[moved]});
+  await settle(h,s=>s.records[1]?.status==="clean");
+  await h.send("retry",{key});
+  await settle(h,s=>s.records[0].status==="scanning"&&scans===3);
+  const raw=h.api.messages.getRaw;
+  let releaseMove,entered;
+  const moveGate=new Promise(resolve=>{releaseMove=resolve;}),started=new Promise(resolve=>{entered=resolve;});
+  h.api.messages.getRaw=async(id,options)=>{if(id===2){entered();await moveGate;}return raw(id,options);};
+  const moving=h.events.moved.listeners[0]({messages:[original]},{messages:[moved]});
+  await started;
+  releaseScan();
+  await settle(h,s=>s.records[0].status==="detected");
+  releaseMove();await moving;
+  state=await h.send("state");
+  assert.equal(state.records.length,1);
+  assert.equal(state.records[0].key,key);
+  assert.equal(state.records[0].status,"detected");
+  assert.deepEqual(state.records[0].signatures,["Synthetic.NewVerdict"]);
+});
+
+test("paged folder checkpoints resume from raw storage without rescanning completed mail",async()=>{
+  const original=mail(1),fresh=mail(2);original.folder.id="inbox";fresh.folder.id="inbox";
+  const digest=await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello"));
+  const {checkpointHint}=await import("../thunderbird/folder-scan.mjs");
+  const saved={records:[{key:"kept",status:"incomplete",locator:locator(original),sha256:digest,review:{note:"keep judgment"}}],
+    folderJob:{id:"resumable",folder:original.folder,folders:[original.folder],status:"stopped",includeSubfolders:false,completed:1,total:2,scanning:0,counts:{clean:0,detected:0,incomplete:1,error:0}},
+    folderCheckpoint:{version:1,id:"resumable",entries:[[await checkpointHint(locator(original))+":"+digest,1]]}};
+  const h=await harness({direct:true,saved,mails:[original,fresh]});
+  assert.equal(h.rawStored().folderCheckpoint.version,2);
+  const next=await harness({direct:true,saved:h.rawStored(),mails:[original,fresh]});
+  assert.equal((await next.send("folderResume",{jobId:"resumable"})).ok,true);
+  const state=await settle(next,s=>s.folderJob?.status==="completed");
+  assert.equal(state.folderJob.resumedMatched,1);
+  assert.equal(state.folderJob.completed,2);
+  assert.equal(next.directRequests.filter(request=>request.op==="end").length,1);
+  assert.equal(state.records.find(record=>record.key==="kept").review.note,"keep judgment");
+});
+
+test("ambiguous bulk move candidates are read once per event and remain unmerged",async()=>{
+  const first=mail(1),second={...mail(1),id:3,folder:{accountId:"one",path:"/Other"}};
+  const folder={id:"child",accountId:"one",path:"/Inbox/Child"};
+  const destinations=[{...first,id:2,folder},{...second,id:4,folder}];
+  const digest=await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello"));
+  const records=[first,second].map(message=>({key:"old-"+message.id,status:"clean",sha256:digest,locator:locator(message)}));
+  const h=await harness({direct:true,mails:[first,second,...destinations],saved:{records}});
+  await h.events.moved.listeners[0]({messages:[first,second]},{messages:destinations});
+  assert.deepEqual(h.rawReads,[2,4]);
+  const state=await h.send("state");
+  assert.equal(state.records.length,2);
+  assert.deepEqual(state.records.map(record=>record.locator.folder.path),["/Inbox","/Other"]);
 });

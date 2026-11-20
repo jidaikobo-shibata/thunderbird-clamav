@@ -1,3 +1,4 @@
+import { StateStorage, readStoredState } from "./state-storage.mjs";
 import { readScannerHealth, applyScannerHealth, scannerReady } from "./scanner-health.mjs";
 import { rememberResult, finishScanAttempt, scanFailed } from "./scan-history.mjs";
 import { directRuntime } from "./direct-transport.mjs";
@@ -14,8 +15,9 @@ import { canDelete, canForget, canRetry } from "./results.mjs";
 import { FolderScan, FOLDER_STATES, realFolder, checkpointHint, refreshScanFolders } from "./folder-scan.mjs";
 
 const api = messenger;
+const stateStorage = new StateStorage(api.storage.local);
 const DIRECT = directRuntime(api.runtime);
-let directMigrationBackup = null;
+let directMigrationBackup = null, incrementalMigrationBackup = null;
 const session = crypto.randomUUID();
 const MAX_RECORDS = 1000;
 let settings = { ...DEFAULTS };
@@ -57,6 +59,7 @@ let lastMailTab;
 let writes = Promise.resolve();
 let settingsChanges = Promise.resolve();
 let mutations = Promise.resolve();
+let moves = Promise.resolve();
 const deletionTickets = new Map();
 const deleting = new Set();
 const batchTickets = new Map();
@@ -373,13 +376,9 @@ function report(error) {
 function save() {
   // Take a snapshot now, then serialize storage writes so an older snapshot
   // cannot overwrite a later scan result.
-  const value = JSON.parse(JSON.stringify({ directMigrationBackup, settings, records, overflowPending, overflowReport, issue, lastHealth, lastScan, helperRemoved, installation, folderJob: folderScan.snapshot(), folderCheckpoint: folderScan.checkpointState() }));
-  writes = writes.catch(() => {}).then(() => {
-    // Configuration is committed separately. A queued history snapshot must
-    // never restore configuration that was current when that snapshot began.
-    value.settings = structuredClone(settings);
-    return api.storage.local.set(value);
-  });
+  const snapshot = stateStorage.snapshot({ directMigrationBackup, incrementalMigrationBackup, overflowPending, overflowReport, issue, lastHealth, lastScan, helperRemoved, installation,
+    folderJob: folderScan.snapshot() }, records, folderScan.checkpoints.snapshot(folderScan.job?.id));
+  writes = writes.catch(() => {}).then(() => stateStorage.write(snapshot, settings));
   void updateBadge().catch(() => {});
   return writes;
 }
@@ -724,11 +723,21 @@ async function scanSelection() {
 
 let initializationError = null;
 async function initialize() {
-  const data = await api.storage.local.get(["directMigrationBackup", "settings", "records", "overflowPending", "overflowReport", "issue", "folderJob", "folderCheckpoint", "lastHealth", "lastScan", "helperRemoved", "installation"]);
+  const stored = await api.storage.local.get(null);
+  const data = readStoredState(stored);
+  stateStorage.restore(stored);
   directMigrationBackup = data.directMigrationBackup || null;
+  incrementalMigrationBackup = stored.incrementalMigrationBackup || null;
   if (DIRECT && !directMigrationBackup) {
     directMigrationBackup = data.settings || data.records?.length ? await api.clamDirect.backup(JSON.stringify(data)) : { notNeeded: true };
-    await api.storage.local.set({ directMigrationBackup });
+    incrementalMigrationBackup ||= directMigrationBackup;
+    await api.storage.local.set({ directMigrationBackup, incrementalMigrationBackup });
+  }
+  if (DIRECT && !incrementalMigrationBackup) {
+    const legacy = (Array.isArray(stored.records) && stored.records.length > 0) || stored.folderCheckpoint?.version === 1;
+    incrementalMigrationBackup = legacy ? (!stored.directMigrationBackup && directMigrationBackup?.path ? directMigrationBackup :
+      await api.clamDirect.backup(JSON.stringify(stored))) : { notNeeded: true };
+    await api.storage.local.set({ incrementalMigrationBackup });
   }
   settings = normalizeAutomaticSettings(data.settings);
   records = Array.isArray(data.records) ? data.records : [];
@@ -818,6 +827,13 @@ function coalesceMovedScan(original, duplicate, hash) {
   const review = original.review || original.reviewBeforeScan;
   // Conflicting human judgments require an explicit decision, not deduplication.
   if (review && (original.status !== duplicate.status || reviewReason(original) !== reviewReason(duplicate))) return duplicate;
+  // A rescan can finish while move verification awaits I/O. An older
+  // destination result must not retract that newer verdict.
+  const originalTime = Date.parse(original.updatedAt), duplicateTime = Date.parse(duplicate.updatedAt);
+  if (originalTime > duplicateTime || originalTime === duplicateTime && original.status === "detected" && duplicate.status !== "detected") {
+    records.splice(records.indexOf(duplicate), 1);
+    return original;
+  }
   rememberResult(original);
   const fields = ["status", "detail", "detailMessages", "signatures", "advisories", "sha256", "engine", "scanSettings", "updatedAt", "unscannedReason", "attempts", "nextRetry"];
   for (const key of fields) {
@@ -838,10 +854,27 @@ api.messages.onMoved?.addListener((originals, moved) => {
     const oldMessages = [], newMessages = [];
     for await (const message of messagePages(api.messages, originals)) oldMessages.push(message);
     for await (const message of messagePages(api.messages, moved)) newMessages.push(message);
-    let changed = false;
+    const envelope = message => JSON.stringify([message.headerMessageId || "", message.author || "", message.subject || "",
+      message.date ? new Date(message.date).toISOString() : ""]);
+    const tracked = new Map(), destinations = new Map(), digests = new Map();
+    for (const record of new Set([...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : [])])) {
+      const key = JSON.stringify([record.locator.accountId, record.locator.folder?.path, envelope(record.locator)]);
+      if (!tracked.has(key)) tracked.set(key, []);
+      tracked.get(key).push(record);
+    }
+    for (const message of newMessages) {
+      if (!realFolder(message.folder) || message.external) continue;
+      const key = envelope(message);
+      if (!destinations.has(key)) destinations.set(key, []);
+      destinations.get(key).push(message);
+    }
+    let changed = false, examined = 0;
     for (const old of oldMessages) {
-      const tracked = [...new Set([...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : [])])];
-      const eligible = tracked.filter(record => sameEnvelope(old, record.locator) &&
+      const key = JSON.stringify([accountOf(old), old.folder?.path, envelope(old)]);
+      const possible = tracked.get(key) || [];
+      // Yield for tracked work, but do not add a timer for every untracked mail.
+      if (possible.length || ++examined % 100 === 0) await yieldBatch();
+      const eligible = possible.filter(record => sameEnvelope(old, record.locator) &&
         old.folder?.path === record.locator.folder?.path &&
         (record.session !== session || !Number.isInteger(record.messageId) || record.messageId === old.id));
       if (eligible.length !== 1) continue;
@@ -850,13 +883,16 @@ api.messages.onMoved?.addListener((originals, moved) => {
       const hash = record.sha256 || record.lastResult?.sha256;
       if (!hash && !["queued", "scanning"].includes(record.status)) continue;
       const before = JSON.stringify([record.locator, record.messageId, record.session, record.quarantine?.status]);
-      const candidates = newMessages.filter(message => realFolder(message.folder) && !message.external && sameEnvelope(message, { ...record.locator, accountId: accountOf(message) }));
+      const candidates = destinations.get(envelope(record.locator)) || [];
       if (candidates.length > 20) continue;
       // Pending work with no prior digest has no verdict to transfer. A unique
       // move-event target can redirect it; drain still reads/verifies its bytes.
       const matches = !hash && candidates.length === 1 ? [...candidates] : [];
       if (hash) for (const candidate of candidates) {
-        try { if (await sha256(await rawBytes(candidate.id)) === hash) matches.push(candidate); }
+        try {
+          if (!digests.has(candidate.id)) digests.set(candidate.id, rawBytes(candidate.id).then(sha256));
+          if (await digests.get(candidate.id) === hash) matches.push(candidate);
+        }
         catch { /* An unreadable move cannot transfer a prior verdict. */ }
       }
       if (matches.length !== 1 || (record.sha256 || record.lastResult?.sha256) !== hash || deleting.has(record.key) || record.status === "deleted" ||
@@ -876,7 +912,8 @@ api.messages.onMoved?.addListener((originals, moved) => {
     }
     if (changed) await save();
   };
-  mutations = mutations.catch(() => {}).then(work).catch(report);
+  moves = moves.catch(() => {}).then(work).catch(report);
+  return moves;
 });
 api.mailTabs.onSelectedMessagesChanged.addListener(tab => { lastMailTab = tab.id; });
 api.menus.onClicked.addListener((info, tab) => {

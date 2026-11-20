@@ -1,14 +1,14 @@
 # ClamAV Mail Check / ClamAV メール検査
 
 Thunderbirdのメールを、コンピューターにインストールしたClamAVで検査する拡張機能です。
-このブランチは **0.20.0a12（試用版）** です。補助プログラムの別途インストールは不要です。
+このブランチは **0.20.0a13（試用版）** です。補助プログラムの別途インストールは不要です。
 公開済みの0.20.0a5はUbuntu向けです。このブランチのXPIは末尾のビルド手順で作成できます。GitHubにはまだ公開していません。
 
 [English installation guide](README.en.md)
 
 ## インストール
 
-1. このブランチから作成した`dist/clam-mail-check-direct-0.20.0a12.xpi`を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
+1. このブランチから作成した`dist/clam-mail-check-direct-0.20.0a13.xpi`を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
 2. Thunderbirdのアドオンマネージャーで、歯車メニューの「ファイルからアドオンをインストール」を選び、XPIを指定します。
 3. 表示される権限を確認してインストールします。Experiment APIを使用するため、Thunderbirdとコンピューターへの全面アクセス権限が必要です。
 4. ツールバーのアイコンから画面を開き、「設定」末尾の「ClamAVの状態」で「接続を再確認」を押します。ClamAVが未導入なら、表示される導入手順に従います。ウイルス定義の初回更新も完了させてください。
@@ -76,6 +76,8 @@ ClamAVが検出しないメールの安全性を保証するものではあり�
 
 更新は、新しいXPIを**旧版を削除せず上書きインストール**します。設定と履歴を引き継ぎます。GitHubの新しい試用版を確認して手動で更新してください。
 
+0.20.0a13では履歴と再開用データの保存形式を変更しています。既存データがある場合は移行前にプロファイル内へバックアップを作成し、作成できなければ移行を停止します。0.20.0a12以前への上書きによるダウングレードは対応していません。戻す場合は、移行前バックアップからの復元が必要です。
+
 削除はThunderbirdのアドオンマネージャーから行います。メールとClamAV・Python3は残ります。アドオンの通常の設定と履歴は失われる可能性があります。
 
 ## メールを移動した場合
@@ -108,7 +110,7 @@ ClamAVが検出しないメールの安全性を保証するものではあり�
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-成果物は`dist/clam-mail-check-direct-0.20.0a12.xpi`です。同じXPIにUbuntu/macOS用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
+成果物は`dist/clam-mail-check-direct-0.20.0a13.xpi`です。同じXPIにUbuntu/macOS用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
 
 ```bash
 for test_file in tests/*.test.mjs; do
