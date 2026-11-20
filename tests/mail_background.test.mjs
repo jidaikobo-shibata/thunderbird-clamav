@@ -2718,3 +2718,65 @@ for (const kind of ["new", "existing", "eviction", "overflow"]) for (const fail 
     assert.equal(h.rawReads.length, readsBefore + 1);
   }
 });
+
+for (const mode of ["normal", "failed-receipt", "disabled"]) test(`incoming overflow receipts preempt remaining manual selection (${mode})`, async () => {
+  const mails = [mail(1), mail(2), mail(3), mail(4)];
+  const records = Array.from({ length: 1000 }, (_, i) => ({ key: "protected-" + i, status: "detected", sha256: "saved-digest", locator: { subject: "protected " + i } }));
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+  const h = await harness({ mails, saved: { records, settings: { enabled: true, accountIds: ["one"], notifications: false } },
+    scanGate: async id => { if (id === 1) { entered(); await gate; } } });
+  h.api.mailTabs.getSelectedMessages = async () => ({ messages: mails.slice(0, 2) });
+  const before = structuredClone((await h.send("state")).records);
+  const original = h.api.storage.local.set;
+  let failed = false;
+  if (mode === "failed-receipt") h.api.storage.local.set = async value => {
+    if (!failed && value.overflowPending?.messageId === 3 && value.overflowPending.status === "queued") {
+      failed = true; throw new Error("synthetic incoming reservation failure");
+    }
+    return original(value);
+  };
+  const manual = h.send("scanSelection");
+  await started;
+  h.events.newMail.listeners[0](mails[2].folder, { messages: [mails[2]] });
+  h.events.newMail.listeners[0](mails[3].folder, { messages: [mails[3]] });
+  await new Promise(resolve => setImmediate(resolve));
+  if (mode === "disabled") assert.equal((await h.send("settings", { settings: { enabled: false, accountIds: [], notifications: false } })).ok, true);
+  release();
+  assert.equal((await manual).ok, true);
+  const expected = mode === "normal" ? [1, 3, 4, 2] : mode === "failed-receipt" ? [1, 4, 2] : [1, 2];
+  await settle(h, state => state.overflowReport?.total === expected.length && !state.overflowPending);
+  assert.deepEqual(h.rawReads, expected);
+  assert.deepEqual((await h.send("state")).records, before);
+  assert.deepEqual(h.stored().records, before);
+  if (mode === "failed-receipt") assert.equal(failed, true);
+});
+
+for (const overflow of [false, true]) test(`incoming admission preserves shared commit protection (overflow=${overflow})`, async () => {
+  const records = overflow ? Array.from({ length: 1000 }, (_, i) => ({ key: "protected-" + i, status: "detected", locator: { subject: "protected " + i } })) : [];
+  const h = await harness({ mails: [mail(1)], saved: { records, settings: { enabled: true, accountIds: ["one"], notifications: false } } });
+  const before = structuredClone((await h.send("state")).records), original = h.api.storage.local.set;
+  let release, entered, held = false;
+  const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+  h.api.storage.local.set = async value => {
+    if (!held) { held = true; entered(); await gate; throw new Error("synthetic incoming commit failure"); }
+    return original(value);
+  };
+  h.events.newMail.listeners[0](mail(1).folder, { messages: [mail(1)] });
+  await started;
+  const health = h.send("health");
+  await h.timers[0]();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual((await h.send("state")).records, before);
+  assert.equal(h.rawReads.length, 0);
+  release();
+  assert.equal((await health).ok, true);
+  await settle(h, state => state.issue.includes("synthetic incoming commit failure"));
+  assert.deepEqual(h.stored().records, before);
+  assert.equal(h.stored().overflowPending, null);
+  assert.equal(h.rawReads.length, 0);
+  // A failed receipt must release its priority claim and allow manual work.
+  assert.equal((await h.send("scanSelection")).ok, true);
+  await settle(h, state => overflow ? state.overflowReport?.total === 1 : state.records[0]?.status === "clean");
+  assert.deepEqual(h.rawReads, [1]);
+});

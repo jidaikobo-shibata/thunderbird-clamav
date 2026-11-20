@@ -46,22 +46,14 @@ async function finishOverflow(record) {
   overflowPending = null;
   try { await save(); } finally { wakeOverflow(); }
 }
-async function queueOverflow(record) {
-  while (overflowPending) await new Promise(resolve => overflowWaiters.add(resolve));
-  overflowPending = record;
-  try { await save(); }
-  catch (error) { overflowPending = null; wakeOverflow(); throw error; }
-  const done = new Promise(resolve => overflowWaiters.add(resolve));
-  void drain().catch(report);
-  await done;
-}
 let issue = "";
 let running = false;
 let lastMailTab;
 let writes = Promise.resolve();
 let settingsChanges = Promise.resolve();
 let recordChanges = Promise.resolve(), recordStaging = null;
-let mutations = Promise.resolve();
+let mutations = Promise.resolve(), manualMutations = Promise.resolve();
+let automaticReceipts = 0;
 let moves = Promise.resolve();
 const deletionTickets = new Map();
 const deleting = new Set();
@@ -624,21 +616,34 @@ async function resolveRecord(record) {
   return matches[0];
 }
 
-// Manual selection shares the same commit gate as retries and history changes.
+// Admission shares the same commit gate as retries and history changes.
 // Overflow waits happen outside the gate so the scanner can free its slot.
-function stageManual(message) {
+function stageMessage(message, source) {
   const work = async () => {
-    if (maintenanceActive() || helperRemoved) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
-    if (batchProgress?.active) throw new Error(t("bulkBusy", "一括操作の処理中です。"));
-    const existing = records.find(record => record.session === session && record.messageId === message.id);
-    if (existing && (deleting.has(existing.key) || ["deleted", "queued", "scanning"].includes(existing.status))) return {};
+    if (source === "automatic") {
+      if (!settings.enabled || !settings.accountIds.includes(accountOf(message))) return {};
+      if (await inQuarantine(message, settings, [...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : [])],
+        { session, digestOf: async message => sha256(await rawBytes(message.id)) })) return {};
+      if (!settings.enabled || !settings.accountIds.includes(accountOf(message))) return {};
+      if ((overflowReport?.recent || []).some(record => record.session === session && record.messageId === message.id)) return {};
+    } else {
+      if (maintenanceActive() || helperRemoved) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
+      if (batchProgress?.active) throw new Error(t("bulkBusy", "一括操作の処理中です。"));
+    }
+    const existing = [...records, ...(overflowPending ? [overflowPending] : [])].find(record => record.session === session && record.messageId === message.id);
+    if (existing && source === "automatic") return {};
+    if (existing && (existing === overflowPending || deleting.has(existing.key) || ["deleted", "queued", "scanning"].includes(existing.status))) return {};
     const evicted = !existing && records.length >= MAX_RECORDS ? records.find(record =>
       ["clean", "deleted"].includes(record.status) && !deleting.has(record.key)) : null;
     const overflow = !existing && records.length >= MAX_RECORDS && !evicted;
-    if (overflow && overflowPending) return { retry: true, wait: new Promise(resolve => overflowWaiters.add(resolve)) };
+    if (overflow && (overflowPending || source === "manual" && automaticReceipts)) return { retry: true, wait: new Promise(resolve => overflowWaiters.add(resolve)) };
     const candidate = existing ? { ...existing } : { key: crypto.randomUUID(), createdAt: new Date().toISOString() };
     rememberResult(candidate);
-    Object.assign(candidate, { messageId: message.id, session, locator: locator(message), source: "manual", quarantineIntent: null,
+    Object.assign(candidate, { messageId: message.id, session, locator: locator(message), source,
+      quarantineIntent: source === "automatic" && settings.quarantine?.[accountOf(message)]?.auto ? {
+        folderId: settings.quarantine[accountOf(message)].folderId, path: settings.quarantine[accountOf(message)].path,
+        activation: settings.quarantine[accountOf(message)].activation
+      } : null,
       unscannedReason: null, status: "queued", detail: t("mail038", "検査を待っています。"), signatures: [],
       sha256: null, engine: null, attempts: 0, nextRetry: null, folderJobId: null, updatedAt: new Date().toISOString() });
     let wait;
@@ -654,6 +659,11 @@ function stageManual(message) {
         if (evicted) records = records.filter(record => record !== evicted);
         records.push(candidate);
       }
+      // An account can be disabled while the candidate's write is pending.
+      if (source === "automatic") {
+        excludePausedAutomatic();
+        if (candidate.status !== "queued") await persistState();
+      }
     });
     await updateBadge().catch(report);
     return { wait };
@@ -663,52 +673,27 @@ function stageManual(message) {
 }
 
 function enqueue(first, source) {
+  if (source === "automatic") automaticReceipts++;
   const work = async () => {
-    for await (const message of messagePages(api.messages, first)) {
-      if (source === "manual" && helperRemoved) throw new Error(t("mail037", "補助プログラムの導入を確認してから検査してください。"));
-      if (message.external || !message.folder) continue;
-      if (source === "manual") {
+    try {
+      for await (const message of messagePages(api.messages, first)) {
+        if (message.external || !message.folder) continue;
         let outcome;
-        do { outcome = await stageManual(message); if (outcome.wait) await outcome.wait; } while (outcome.retry);
-        continue;
+        do { outcome = await stageMessage(message, source); if (outcome.wait) await outcome.wait; } while (outcome.retry);
       }
-      if (source === "automatic" && await inQuarantine(message, settings, [...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : [])], { session, digestOf: async message => sha256(await rawBytes(message.id)) })) continue;
-      if (source === "automatic" && (!settings.enabled ||
-          !settings.accountIds.includes(accountOf(message)))) continue;
-      if (source === "automatic" && (overflowReport?.recent || []).some(record => record.session === session && record.messageId === message.id)) continue;
-      const existing = records.find(record => record.session === session && record.messageId === message.id);
-      if (existing && (deleting.has(existing.key) || existing.status === "deleted")) continue;
-      if (existing && ["queued", "scanning"].includes(existing.status)) continue;
-      if (existing && source === "automatic") continue;
-      // History retention is independent from incoming inspection. A single
-      // persisted overflow work item provides backpressure without dropping mail.
-      const keep = Boolean(existing) || reserveHistory();
-      const record = existing || { key: crypto.randomUUID(), createdAt: new Date().toISOString() };
-      rememberResult(record);
-      Object.assign(record, {
-        messageId: message.id, session, locator: locator(message), source,
-        quarantineIntent: source === "automatic" && settings.quarantine?.[accountOf(message)]?.auto ? {
-          folderId: settings.quarantine[accountOf(message)].folderId, path: settings.quarantine[accountOf(message)].path,
-          activation: settings.quarantine[accountOf(message)].activation
-        } : null,
-        unscannedReason: null, status: "queued", detail: t("mail038", "検査を待っています。"), signatures: [],
-        sha256: null, engine: null, attempts: 0, nextRetry: null, folderJobId: null, updatedAt: new Date().toISOString()
-      });
-      if (!existing) {
-        if (keep) records.push(record);
-        else await queueOverflow(record);
-      }
-    }
-    if (source === "manual") {
       // Reservations are already durable; failure of this trailing refresh must
       // not report them as rejected. Let in-flight state writes settle as before.
       await save().catch(report);
-      return;
+    } finally {
+      if (source === "automatic") { automaticReceipts--; wakeOverflow(); }
     }
-    await save();
-    await updateBadge();
-    void drain().catch(report);
   };
+  // Waiting for a manual overflow slot never blocks reception of fresh mail.
+  // Both lanes still share recordChanges for atomic reservation and persistence.
+  if (source === "manual") {
+    manualMutations = manualMutations.catch(() => {}).then(work);
+    return manualMutations;
+  }
   mutations = mutations.catch(() => {}).then(work);
   return mutations;
 }
