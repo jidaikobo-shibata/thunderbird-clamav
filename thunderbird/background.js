@@ -1,4 +1,5 @@
 import { StateStorage, readStoredState } from "./state-storage.mjs";
+import { ScanConnection } from "./scan-connection.mjs";
 import { readScannerHealth, applyScannerHealth, scannerReady } from "./scanner-health.mjs";
 import { rememberResult, finishScanAttempt, retainKnownDetection, scanFailed } from "./scan-history.mjs";
 import { directRuntime } from "./direct-transport.mjs";
@@ -17,6 +18,7 @@ import { FolderScan, FOLDER_STATES, realFolder, checkpointHint, refreshScanFolde
 const api = messenger;
 const stateStorage = new StateStorage(api.storage.local);
 const DIRECT = directRuntime(api.runtime);
+const scanConnection = new ScanConnection(() => new NativeClient(api.runtime), DIRECT ? {} : { idleMs: 0 });
 let directMigrationBackup = null, incrementalMigrationBackup = null;
 const session = crypto.randomUUID();
 const MAX_RECORDS = 1000;
@@ -58,6 +60,7 @@ let running = false;
 let lastMailTab;
 let writes = Promise.resolve();
 let settingsChanges = Promise.resolve();
+let retryChanges = Promise.resolve(), retryStaging = null;
 let mutations = Promise.resolve();
 let moves = Promise.resolve();
 const deletionTickets = new Map();
@@ -77,6 +80,7 @@ function releaseMaintenance() {
 }
 async function helperInfo() {
   if (maintenanceActive()) return installation;
+  if (!running) scanConnection.discard();
   const generation = maintenanceGeneration;
   let client;
   try {
@@ -374,6 +378,12 @@ function report(error) {
 }
 
 function save() {
+  // Do not persist a retry reservation until its own write has succeeded.
+  if (retryStaging) return retryStaging.then(() => save());
+  return persistState();
+}
+
+function persistState() {
   // Take a snapshot now, then serialize storage writes so an older snapshot
   // cannot overwrite a later scan result.
   const snapshot = stateStorage.snapshot({ directMigrationBackup, incrementalMigrationBackup, overflowPending, overflowReport, issue, lastHealth, lastScan, helperRemoved, installation,
@@ -403,6 +413,7 @@ function changeSettings(input) {
       await api.storage.local.set({ settings: next });
       settings = next;
       excludePausedAutomatic();
+      if (!settings.enabled && !running) scanConnection.discard();
     });
     await writes;
     void updateBadge().catch(report);
@@ -411,6 +422,38 @@ function changeSettings(input) {
   };
   settingsChanges = settingsChanges.catch(() => {}).then(work);
   return settingsChanges;
+}
+
+function retryRecord(key) {
+  const work = async () => {
+    if (maintenanceActive() || helperRemoved) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
+    if (batchProgress?.active) throw new Error(t("bulkBusy", "一括操作の処理中です。"));
+    const record = records.find(item => item.key === key);
+    if (!record || deleting.has(record.key) || ["scanning", "queued", "deleted"].includes(record.status)) throw new Error(t("mail074", "この結果は再検査できません。"));
+    const before = { ...record };
+    let release;
+    retryStaging = new Promise(resolve => { release = resolve; });
+    deleting.add(key);
+    try {
+      rememberResult(record);
+      Object.assign(record, { status: "queued", source: "manual", attempts: 0, nextRetry: null, folderJobId: null });
+      delete record.unscannedReason;
+      await persistState();
+    } catch (error) {
+      for (const name of Object.keys(record)) if (!Object.hasOwn(before, name)) delete record[name];
+      Object.assign(record, before);
+      await updateBadge().catch(report);
+      throw error;
+    } finally {
+      deleting.delete(key);
+      retryStaging = null;
+      release();
+    }
+    void drain().catch(report);
+    return { ok: true };
+  };
+  retryChanges = retryChanges.catch(() => {}).then(work);
+  return retryChanges;
 }
 
 function toolbarState() {
@@ -541,7 +584,7 @@ function enqueue(first, source) {
 async function drain() {
   if (running || maintenanceActive() || helperRemoved || batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation)) return;
   running = true;
-  let client, engine, configurable = false;
+  let client, connection, engine, configurable = false, completed = false;
   try {
     while (true) {
       if (overflowPending && !["queued", "scanning"].includes(overflowPending.status)) {
@@ -549,10 +592,12 @@ async function drain() {
         await finishOverflow(overflowPending);
       }
       // Folder work is fed one at a time, after fresh mail and manual work.
-      let record = records.find(item => item.status === "queued" && item.source === "automatic" &&
+      let record = records.find(item => !deleting.has(item.key) && item.status === "queued" && item.source === "automatic" &&
         settings.enabled && settings.accountIds.includes(item.locator.accountId)) ||
-        records.find(item => item.status === "queued" && item.source === "manual") ||
-        (overflowPending?.status === "queued" && (overflowPending.source === "manual" || settings.enabled && settings.accountIds.includes(overflowPending.locator.accountId)) ? overflowPending : null);
+        (overflowPending?.status === "queued" && overflowPending.source === "automatic" &&
+          settings.enabled && settings.accountIds.includes(overflowPending.locator.accountId) ? overflowPending : null) ||
+        records.find(item => !deleting.has(item.key) && item.status === "queued" && item.source === "manual") ||
+        (overflowPending?.status === "queued" && overflowPending.source === "manual" ? overflowPending : null);
       if (!record && folderScan.available()) {
         if (records.length >= MAX_RECORDS) {
           const index = records.findIndex(item => ["clean", "deleted"].includes(item.status));
@@ -611,12 +656,14 @@ async function drain() {
         }
         refreshQuarantineLocation(record, current);
         if (!client || client.closed) {
-          client = new NativeClient(api.runtime);
-          const health = await client.request("health");
+          connection = scanConnection.acquire();
+          client = connection.client;
+          const health = connection.health || await client.request("health");
           if (!scannerReady(health)) {
             client.close();
             throw new Error(health.detail || t("mail044", "補助プログラムのバージョンが対応していません。"));
           }
+          connection.health = health;
           engine = health.engine;
           configurable = health.scanSettingsVersion === 1;
         }
@@ -633,7 +680,13 @@ async function drain() {
         if (result.status !== "error") lastScan = { checkedAt: new Date().toISOString(),
           engine: record.engine, status: result.status };
         record.nextRetry = null;
+        if (result.status === "error") {
+          scanConnection.discard(connection);
+          connection = client = null;
+        }
       } catch (error) {
+        if (connection) scanConnection.discard(connection);
+        connection = client = null;
         record.sha256 = currentDigest;
         record.status = error.incomplete ? "incomplete" : "error";
         delete record.detailMessages;
@@ -678,6 +731,7 @@ async function drain() {
       if (record === overflowPending) await finishOverflow(record);
       await updateBadge();
     }
+    completed = true;
   } catch (error) {
     if (retryContext) {
       for (const record of records) {
@@ -705,8 +759,10 @@ async function drain() {
     }
     throw error;
   } finally {
-    client?.close();
-    running = false;
+    try {
+      if (completed) scanConnection.release(connection);
+      else scanConnection.discard();
+    } finally { running = false; }
   }
 }
 
@@ -1087,23 +1143,8 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         if (request.jobId !== folderScan.job?.id) throw new Error(t("mail073", "検査の対象が変わりました。画面を更新してください。"));
         await folderScan.stop();
         return { ok: true };
-      case "retry": {
-        if (batchProgress?.active) throw new Error(t("bulkBusy", "一括操作の処理中です。"));
-        const record = records.find(item => item.key === request.key);
-        if (!record || deleting.has(record.key) || ["scanning", "queued", "deleted"].includes(record.status)) {
-          throw new Error(t("mail074", "この結果は再検査できません。"));
-        }
-        rememberResult(record);
-        record.status = "queued";
-        delete record.unscannedReason;
-        record.source = "manual";
-        record.attempts = 0;
-        record.nextRetry = null;
-        record.folderJobId = null;
-        await save();
-        void drain().catch(report);
-        return { ok: true };
-      }
+      case "retry":
+        return await retryRecord(request.key);
       case "retryMany": {
         const keys = requestedKeys(request.keys);
         const targets = keys.map(key => records.find(record => record.key === key));

@@ -1,4 +1,5 @@
 import { readStoredState } from "../thunderbird/state-storage.mjs";
+import { SCAN_IDLE_MS } from "../thunderbird/scan-connection.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { sha256, locator } from "../thunderbird/core.mjs";
@@ -101,15 +102,28 @@ async function harness({ failReads = [], failWrites = [], direct = false, backup
     };
   }
   globalThis.messenger = api;
+  const idleTimers = [];
+  const realTimeout = globalThis.setTimeout, realClearTimeout = globalThis.clearTimeout;
+  globalThis.setTimeout = (callback, ms, ...args) => {
+    if (ms !== SCAN_IDLE_MS) return realTimeout(callback, ms, ...args);
+    if (idleTimers.failNext) { idleTimers.failNext = false; throw new Error("synthetic idle timer failure"); }
+    const timer = { callback, active: true, unref() {} }; idleTimers.push(timer); return timer;
+  };
+  globalThis.clearTimeout = timer => {
+    if (idleTimers.includes(timer)) timer.active = false;
+    else realClearTimeout(timer);
+  };
   const realInterval = globalThis.setInterval;
   globalThis.setInterval = callback => { timers.push(callback); return 0; };
   try { await import(`../thunderbird/background.js?case=${++caseId}`); }
-  finally { globalThis.setInterval = realInterval; }
+  finally { globalThis.setInterval = realInterval; globalThis.setTimeout = realTimeout; globalThis.clearTimeout = realClearTimeout; }
   const send = (type, values = {}, sender = { id: "unit", url: api.runtime.getURL("dashboard.html") }) =>
     events.message.listeners[0]({ type, ...values }, sender);
   await send("state");
   nativePorts.length = 0; // Startup installation check is separate from scan connections.
-  return { api, send, events, notifications, opened, rawReads, timers, deleted, nativePorts, directRequests, migrationBackups, storageCounts, stored: () => {
+  return { api, send, events, notifications, opened, rawReads, timers, deleted, nativePorts, directRequests, migrationBackups, storageCounts, idleTimers,
+    expireIdle: () => { for (const timer of idleTimers) if (timer.active) { timer.active = false; timer.callback(); } },
+    stored: () => {
     const data=readStoredState(structuredClone(stored));
     // Legacy fixtures contain logical arrays, never incremental page keys.
     for(const key of Object.keys(data)) if(/^(history|checkpoint)Page:/.test(key)) delete data[key];
@@ -2376,4 +2390,98 @@ test("invalid or unsupported storage stops before any write and recovers only fr
     assert.equal((await h.send("health")).ok,true);
     assert.equal((await h.send("state")).records[0].review.note,"preserve latest decision");
   }
+});
+
+
+test("new mail outside the history slots is scanned before the next queued manual mail",async()=>{
+  const first=mail(1),second=mail(2),fresh=mail(1001);
+  let release,entered;
+  const gate=new Promise(resolve=>{release=resolve;}),started=new Promise(resolve=>{entered=resolve;});
+  const records=Array.from({length:1000},(_,index)=>({key:"history-"+index,source:"manual",status:index<2?"queued":"incomplete",attempts:0,locator:locator(index===0?first:index===1?second:mail(index+10))}));
+  const h=await harness({direct:true,mails:[first,second,fresh],saved:{records,settings:{enabled:true,accountIds:["one"],notifications:false}},scanGate:id=>{if(id===1){entered();return gate;}}});
+  await started;
+  h.events.newMail.listeners[0](fresh.folder,{messages:[fresh]});
+  await settle(h,s=>s.overflowPending?.status==="queued");
+  release();
+  await settle(h,s=>s.records.some(record=>record.messageId===2&&record.status==="clean"));
+  assert.deepEqual(h.rawReads,[1,1001,2]);
+  assert.equal((await h.send("state")).overflowPending,null);
+});
+
+test("failed individual retry cannot run or leak through a concurrent save and restores its badge",async()=>{
+  const message=mail(1),digest=await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello"));
+  const h=await harness({direct:true,mails:[message],saved:{records:[{key:"keep",status:"detected",source:"folder",attempts:3,folderJobId:"prior",sha256:digest,signatures:["Synthetic.Threat"],locator:locator(message)}]}});
+  const before=structuredClone((await h.send("state")).records[0]),write=h.api.storage.local.set,badges=[];
+  h.api.browserAction.setBadgeText=async value=>{badges.push(value.text);};
+  let release,entered,first=true;
+  const gate=new Promise(resolve=>{release=resolve;}),started=new Promise(resolve=>{entered=resolve;});
+  h.api.storage.local.set=async value=>{if(first){first=false;entered();await gate;throw new Error("synthetic retry save failure");}return write(value);};
+  const retry=h.send("retry",{key:"keep"});await started;
+  const health=h.send("health");
+  h.timers[0]();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(h.rawReads.length,0);
+  release();
+  assert.equal((await retry).ok,false);
+  assert.equal((await health).ok,true);
+  assert.deepEqual((await h.send("state")).records[0],before);
+  assert.deepEqual(h.stored().records[0],before);
+  assert.equal(badges.at(-1),"1");
+  h.timers[0]();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(h.rawReads.length,0);
+  assert.equal((await h.send("retry",{key:"keep"})).ok,true);
+  await settle(h,state=>state.records[0].status==="clean");
+  assert.equal(h.directRequests.filter(request=>request.op==="end").length,1);
+});
+
+test("separate incoming bursts reuse one scanner until its bounded idle expiry",async()=>{
+  const mails=[mail(1),mail(2),mail(3)],h=await harness({direct:true,mails,saved:{settings:{enabled:true,accountIds:["one"],notifications:false}}});
+  for(const message of mails.slice(0,2)){
+    h.events.newMail.listeners[0](message.folder,{messages:[message]});
+    await settle(h,s=>s.records.some(record=>record.messageId===message.id&&record.status==="clean")&&h.idleTimers.some(timer=>timer.active));
+  }
+  assert.equal(h.nativePorts.length,1);
+  assert.equal(h.nativePorts[0].disconnected,false);
+  h.expireIdle();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(h.nativePorts[0].disconnected,true);
+  h.events.newMail.listeners[0](mails[2].folder,{messages:[mails[2]]});
+  await settle(h,s=>s.records.some(record=>record.messageId===3&&record.status==="clean")&&h.idleTimers.some(timer=>timer.active));
+  assert.equal(h.nativePorts.length,2);
+  h.expireIdle();
+});
+
+test("a scanner error discards its connection before inspecting the next message",async()=>{
+  let scans=0;
+  const mails=[mail(1),mail(2)],h=await harness({direct:true,mails,scanResult:()=>++scans===1?{status:"error",detail:"synthetic engine error"}:{},saved:{settings:{enabled:true,accountIds:["one"],notifications:false}}});
+  h.events.newMail.listeners[0](mails[0].folder,{messages:[mails[0]]});
+  await settle(h,s=>s.records[0]?.status==="error");
+  assert.equal(h.nativePorts[0].disconnected,true);
+  h.events.newMail.listeners[0](mails[1].folder,{messages:[mails[1]]});
+  await settle(h,s=>s.records[1]?.status==="clean");
+  assert.equal(h.nativePorts.length,2);
+  h.expireIdle();
+});
+
+test("an explicit connection check closes the retained idle scanner",async()=>{
+  const message=mail(1),h=await harness({direct:true,mails:[message]});
+  await h.send("scanSelection");
+  await settle(h,s=>s.records[0]?.status==="clean"&&h.idleTimers.some(timer=>timer.active));
+  assert.equal(h.nativePorts[0].disconnected,false);
+  assert.equal((await h.send("health")).ok,true);
+  assert.equal(h.nativePorts[0].disconnected,true);
+  assert.equal(h.idleTimers.some(timer=>timer.active),false);
+});
+
+
+test("idle timer failure closes its connection without blocking a later incoming scan",async()=>{
+  const mails=[mail(1),mail(2)],h=await harness({direct:true,mails,saved:{settings:{enabled:true,accountIds:["one"],notifications:false}}});
+  h.idleTimers.failNext=true;
+  h.events.newMail.listeners[0](mails[0].folder,{messages:[mails[0]]});
+  await settle(h,s=>s.records[0]?.status==="clean"&&h.nativePorts[0]?.disconnected===true);
+  assert.equal((await h.send("state")).issue,"");
+  assert.equal(h.nativePorts[0].disconnected,true);
+  h.events.newMail.listeners[0](mails[1].folder,{messages:[mails[1]]});
+  await settle(h,s=>s.records[1]?.status==="clean"&&h.idleTimers.some(timer=>timer.active));
+  assert.equal(h.nativePorts.length,2);
+  h.expireIdle();
 });

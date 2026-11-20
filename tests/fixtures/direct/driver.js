@@ -122,6 +122,21 @@ try {
     check(results["Synthetic attachment"] === "detected", "EICAR attachment verdict");
     check(results["Synthetic zip"] === "detected", "EICAR ZIP verdict");
     check(results["Synthetic encrypted"] === "incomplete", "Encrypted mail coverage");
+    // Separate requests inside the idle window must reuse the real clamd.
+    const plainKey = state.records.find(record=>record.locator.subject==="Synthetic plain").key;
+    await request("retry", {key:plainKey});
+    state = await settled(state=>state.records.find(record=>record.key===plainKey)?.status==="clean");
+    const warmFirst = await messenger.testFixture.runtime();
+    check(warmFirst.sessions.length === 1, "One retained scanner after a standalone scan");
+    await request("retry", {key:plainKey});
+    state = await settled(state=>state.records.find(record=>record.key===plainKey)?.status==="clean");
+    const warmSecond = await messenger.testFixture.runtime();
+    check(warmSecond.sessions.length === 1 && warmSecond.sessions[0].pid === warmFirst.sessions[0].pid, "Separate scans reuse the same supervised process");
+    report.warmReuse = true;
+    await messenger.testFixture.idle();
+    check((await messenger.testFixture.runtime()).sessions.length === 0, "Retained scanner closes after bounded idle time");
+    report.warmIdleCleanup = true;
+
     report.verdicts = results;
     let incomplete = state.records.find(record => record.locator.subject === "Synthetic encrypted");
     await request("reviewMany", { keys: [incomplete.key], reviewed: true, note: "Synthetic reviewed encryption", stamps: { [incomplete.key]: reviewStamp(incomplete) } });
@@ -194,8 +209,13 @@ try {
   const retained = new NativeClient(messenger.runtime);
   const sample = new TextEncoder().encode("Subject: synthetic lifecycle\r\n\r\nhello");
   check((await retained.scan(sample, await sha256(sample), state.settings.scanSettings)).status === "clean", "Lifecycle scan");
+  const lifecycleRaw = fixture.mails.plain.replace(/Subject: [^\r\n]+/, "Subject: Synthetic lifecycle background " + report.version).replace(/Message-ID: [^\r\n]+/i, "Message-ID: <lifecycle-background-" + report.version + "@example.invalid>");
+  const lifecycleMail = await messenger.messages.import(new File([lifecycleRaw], "lifecycle.eml", {type:"message/rfc822"}), fixture.source.id, {read:false,new:true});
+  await messenger.testFixture.inject(lifecycleMail.id);
+  await settled(state=>state.records.some(record=>record.messageId===lifecycleMail.id&&record.status==="clean"));
   report.runtime = await messenger.testFixture.runtime();
-  check(report.runtime.sessions.length > 0, "Live supervised scanner");
+  check(report.runtime.sessions.length >= 2, "Lifecycle cleanup includes a retained background scanner");
+  report.retainedBackgroundScanner = true;
   report.ok = true;
   await messenger.testFixture.report(JSON.stringify(report));
   if (report.version === "0.20.0a1") await messenger.testFixture.update();

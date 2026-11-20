@@ -1,14 +1,14 @@
 # ClamAV Mail Check / ClamAV メール検査
 
 Thunderbirdのメールを、コンピューターにインストールしたClamAVで検査する拡張機能です。
-このブランチは **0.20.0a14（試用版）** です。補助プログラムの別途インストールは不要です。
+このブランチは **0.20.0a15（試用版）** です。補助プログラムの別途インストールは不要です。
 公開済みの0.20.0a5はUbuntu向けです。このブランチのXPIは末尾のビルド手順で作成できます。GitHubにはまだ公開していません。
 
 [English installation guide](README.en.md)
 
 ## インストール
 
-1. このブランチから作成した`dist/clam-mail-check-direct-0.20.0a14.xpi`を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
+1. このブランチから作成した`dist/clam-mail-check-direct-0.20.0a15.xpi`を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
 2. Thunderbirdのアドオンマネージャーで、歯車メニューの「ファイルからアドオンをインストール」を選び、XPIを指定します。
 3. 表示される権限を確認してインストールします。Experiment APIを使用するため、Thunderbirdとコンピューターへの全面アクセス権限が必要です。
 4. ツールバーのアイコンから画面を開き、「設定」末尾の「ClamAVの状態」で「接続を再確認」を押します。ClamAVが未導入なら、表示される導入手順に従います。ウイルス定義の初回更新も完了させてください。
@@ -92,6 +92,8 @@ ClamAVが検出しないメールの安全性を保証するものではあり�
 
 ## データの扱い
 
+内蔵の検査接続は、短い間隔の新着などで再利用するため、通常5秒間待機してから閉じます。待機中はClamAVの定義などのメモリと一時ディレクトリを保持します。
+
 メール本文と添付ファイルをローカルの検査処理へ渡します。検査のための一時ファイルは終了時に削除します。メール本文や検査結果を外部サービスへ送信する機能、利用状況の収集はありません。ClamAVの定義更新は、別途導入したFreshClamが担当します。
 
 差出人・件名・検出名・判断メモなどはThunderbirdのローカルストレージに保存します。本文と添付は履歴に保存しません。既存データの初回移行時には、プロファイル内にバックアップを保存します。このバックアップはアドオンを削除しても残り、自動復元・自動消去はしません。
@@ -110,7 +112,7 @@ ClamAVが検出しないメールの安全性を保証するものではあり�
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-成果物は`dist/clam-mail-check-direct-0.20.0a14.xpi`です。同じXPIにUbuntu/macOS用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
+成果物は`dist/clam-mail-check-direct-0.20.0a15.xpi`です。同じXPIにUbuntu/macOS用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
 
 ```bash
 for test_file in tests/*.test.mjs; do
