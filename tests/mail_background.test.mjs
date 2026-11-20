@@ -1906,13 +1906,13 @@ test("an initial storage read failure can be retried without overwriting unread 
 });
 
 
-async function moveFixture({changed = false, ambiguous = false, reviewed = false} = {}) {
+async function moveFixture({changed = false, ambiguous = false, reviewed = false, scanGate = null, scanResult = {}, quarantine = {}} = {}) {
   const original=mail(1); original.folder.id="inbox";
   const moved={...original,id:2,folder:{id:"child",accountId:"one",path:"/Inbox/Child"},...(changed?{raw:"different contents"}:{})};
   const digest=await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello"));
   const record={key:"ordinary",status:"incomplete",detail:"synthetic encrypted part",sha256:digest,locator:locator(original),source:"automatic",signatures:[]};
   if(reviewed){const {reviewReason}=await import("../thunderbird/review.mjs");record.review={note:"keep human judgment",reason:reviewReason(record),resultHash:digest,fingerprint:"sha256:"+digest};}
-  const h=await harness({direct:true,mails:[original,moved],saved:{records:[record],settings:{enabled:true,accountIds:["one"],notifications:false}}});
+  const h=await harness({direct:true,scanGate,scanResult,mails:[original,moved],saved:{records:[record],settings:{enabled:true,accountIds:["one"],notifications:false,quarantine}}});
   const destinations=ambiguous?[moved,{...moved,id:3}]:[moved];
   if(ambiguous){const raw=h.api.messages.getRaw;h.api.messages.getRaw=(id,options)=>raw(id===3?2:id,options);}
   return {h,original,moved,destinations};
@@ -2010,4 +2010,181 @@ test("an unreadable message in a bulk move does not prevent other verified locat
   const state=await settle(h,s=>s.records.find(record=>record.key==="old-3").messageId===4);
   assert.equal(state.records.find(record=>record.key==="old-1").locator.folder.path,"/Inbox");
   assert.equal(state.records.find(record=>record.key==="old-3").locator.folder.path,folder.path);
+});
+
+
+test("concurrent settings changes survive an earlier failed save without publishing pending values", async () => {
+  const h = await harness({mails:[mail(1)],saved:{settings:{enabled:true,accountIds:["one"],notifications:false}}});
+  const initial = structuredClone((await h.send("state")).settings);
+  const write = h.api.storage.local.set;
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  let first = true;
+  h.api.storage.local.set = async value => {
+    if (first) { first = false; entered(); await gate; throw new Error("synthetic first settings failure"); }
+    return write(value);
+  };
+  const a = h.send("settings",{settings:{enabled:true,accountIds:["one"],notifications:true}});
+  await started;
+  const b = h.send("settings",{settings:{enabled:false,accountIds:[],notifications:true}});
+  assert.deepEqual((await h.send("state")).settings,initial);
+  const health = h.send("health"); // Also queues an ordinary persistence snapshot.
+  release();
+  assert.equal((await a).ok,false);
+  assert.equal((await b).ok,true);
+  await health;
+  const state = await h.send("state");
+  assert.equal(state.settings.enabled,false);
+  assert.deepEqual(h.stored().settings,state.settings);
+  const writes = h.storageCounts.writes;
+  h.events.newMail.listeners[0](mail(1).folder,{messages:[mail(1)]});
+  await settle(h,()=>h.storageCounts.writes>writes);
+  assert.equal((await h.send("state")).records.length,0);
+  assert.deepEqual(h.stored().settings,state.settings);
+});
+
+test("history snapshots queued during a settings commit cannot restore old configuration",async()=>{
+  const h=await harness();
+  const write=h.api.storage.local.set;
+  let release,entered;
+  const gate=new Promise(resolve=>{release=resolve;});
+  const started=new Promise(resolve=>{entered=resolve;});
+  let first=true;
+  h.api.storage.local.set=async value=>{if(first){first=false;entered();await gate;}return write(value);};
+  const saving=h.send("settings",{settings:{enabled:true,accountIds:["one"],notifications:true}});
+  await started;
+  const health=h.send("health");
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal((await h.send("state")).settings.enabled,false);
+  release();
+  assert.equal((await saving).ok,true);
+  await health;
+  assert.deepEqual(h.stored().settings,(await h.send("state")).settings);
+  assert.equal(h.stored().settings.enabled,true);
+});
+
+for (const inFlight of [false,true]) test(`incoming notification before move merges ${inFlight?"in-flight":"completed"} scan and preserves matching human review`,async()=>{
+  let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  const {h,original,moved}=await moveFixture({reviewed:true,scanGate:inFlight?()=>gate:null,
+    scanResult:{status:"incomplete",detail:"synthetic encrypted part"}});
+  h.events.newMail.listeners[0](moved.folder,{messages:[moved]});
+  await settle(h,s=>s.records.length===2&&s.records[1].status===(inFlight?"scanning":"incomplete"));
+  h.events.moved.listeners[0]({messages:[original]},{messages:[moved]});
+  await settle(h,s=>s.records[0].messageId===2);
+  release();
+  const state=await settle(h,s=>s.records.length===1&&s.records[0].status==="incomplete");
+  assert.equal(state.records[0].key,"ordinary");
+  assert.equal(state.records[0].review.note,"keep human judgment");
+  assert.equal(h.stored().records.length,1);
+});
+
+test("reverse move notifications retain the newer threat verdict",async()=>{
+  const {h,original,moved}=await moveFixture({scanResult:{status:"detected",detail:"new threat",signatures:["Synthetic.Threat"]}});
+  h.events.newMail.listeners[0](moved.folder,{messages:[moved]});
+  await settle(h,s=>s.records[1]?.status==="detected");
+  h.events.moved.listeners[0]({messages:[original]},{messages:[moved]});
+  const state=await settle(h,s=>s.records.length===1);
+  assert.equal(state.records[0].key,"ordinary");
+  assert.equal(state.records[0].status,"detected");
+  assert.deepEqual(state.records[0].signatures,["Synthetic.Threat"]);
+});
+
+test("move reconciliation keeps conflicting human judgments instead of deleting them",async()=>{
+  const {h,original,moved}=await moveFixture({reviewed:true,scanResult:{status:"detected",signatures:["Synthetic.Threat"]}});
+  h.events.newMail.listeners[0](moved.folder,{messages:[moved]});
+  await settle(h,s=>s.records[1]?.status==="detected");
+  h.events.moved.listeners[0]({messages:[original]},{messages:[moved]});
+  const state=await settle(h,s=>s.records[0].messageId===2);
+  assert.equal(state.records.length,2);
+  assert.equal(state.records[0].review.note,"keep human judgment");
+  assert.equal(state.records[1].status,"detected");
+});
+
+
+test("reverse move notifications never merge changed contents",async()=>{
+  const {h,original,moved}=await moveFixture({changed:true});
+  h.events.newMail.listeners[0](moved.folder,{messages:[moved]});
+  await settle(h,s=>s.records[1]?.status==="clean");
+  const writes=h.storageCounts.writes;
+  h.events.moved.listeners[0]({messages:[original]},{messages:[moved]});
+  h.events.newMail.listeners[0](moved.folder,{messages:[]});
+  const state=await settle(h,()=>h.storageCounts.writes>writes);
+  assert.equal(state.records.length,2);
+  assert.equal(state.records[0].locator.folder.path,original.folder.path);
+});
+
+test("a separately acknowledged destination history is never discarded by a later move event",async()=>{
+  const {h,original,moved}=await moveFixture({reviewed:true,scanResult:{status:"incomplete",detail:"synthetic encrypted part"}});
+  h.events.newMail.listeners[0](moved.folder,{messages:[moved]});
+  let state=await settle(h,s=>s.records[1]?.status==="incomplete");
+  const duplicate=state.records[1];
+  const {reviewStamp}=await import("../thunderbird/review.mjs");
+  assert.equal((await h.send("reviewMany",{keys:[duplicate.key],reviewed:true,note:"independent human decision",stamps:{[duplicate.key]:reviewStamp(duplicate)}})).ok,true);
+  h.events.moved.listeners[0]({messages:[original]},{messages:[moved]});
+  state=await settle(h,s=>s.records[0].messageId===2);
+  assert.equal(state.records.length,2);
+  assert.equal(state.records[0].review.note,"keep human judgment");
+  assert.equal(state.records[1].review.note,"independent human decision");
+});
+
+test("committed account exclusions survive restart before another history save",async()=>{
+  let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  const mails=[mail(1),mail(2)];
+  const records=mails.map(message=>({key:"queued-"+message.id,source:"automatic",status:"queued",attempts:0,locator:locator(message)}));
+  const h=await harness({mails,saved:{records,settings:{enabled:true,accountIds:["one"],notifications:false}},scanGate:()=>gate});
+  await settle(h,s=>s.records[0].status==="scanning"&&h.rawReads.length===1);
+  assert.equal((await h.send("settings",{settings:{enabled:false,accountIds:[],notifications:false}})).ok,true);
+  assert.equal((await h.send("state")).records[1].unscannedReason,"automaticExcluded");
+  const restarted=await harness({mails,saved:h.stored()});
+  const restored=await restarted.send("state");
+  assert.equal(restored.settings.enabled,false);
+  assert.equal(restored.records.find(record=>record.key==="queued-2").unscannedReason,"automaticExcluded");
+  assert.equal(restarted.rawReads.length,0);
+  release();
+  await settle(h,s=>s.records[0].status==="clean");
+});
+
+
+for(const method of ["managed","manual"]) test(`${method} helper removal waits for an in-flight settings commit`,async()=>{
+  const h=await harness();
+  installAdminMock(h);
+  const write=h.api.storage.local.set;
+  let release,entered;
+  const gate=new Promise(resolve=>{release=resolve;});
+  const started=new Promise(resolve=>{entered=resolve;});
+  let first=true;
+  h.api.storage.local.set=async value=>{if(first){first=false;entered();await gate;}return write(value);};
+  const saving=h.send("settings",{settings:{enabled:true,accountIds:["one"],notifications:false}});
+  await started;
+  const removal=method==="manual"?h.send("helperMarkRemoved",{acknowledged:true}):
+    (async()=>{const plan=await h.send("helperPlan",{operation:"uninstall"});assert.equal(plan.ok,true);return h.send("helperApply",{token:plan.plan.token});})();
+  await new Promise(resolve=>setImmediate(resolve));
+  release();
+  assert.equal((await saving).ok,true);
+  assert.equal((await removal).ok,true);
+  const state=await h.send("state");
+  assert.equal(state.helperRemoved,true);
+  assert.equal(state.settings.enabled,false);
+  assert.deepEqual(h.stored().settings,state.settings);
+});
+
+
+test("move reconciliation cannot suppress a newly activated automatic quarantine",async()=>{
+  let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  const {h,original,moved}=await moveFixture({scanGate:()=>gate,scanResult:{status:"detected",signatures:["Synthetic.Threat"]},
+    quarantine:{one:{folderId:"missing",path:"/Isolation",auto:true}}});
+  h.api.permissions.contains=async()=>true;
+  h.events.newMail.listeners[0](moved.folder,{messages:[moved]});
+  await settle(h,s=>s.records[1]?.status==="scanning");
+  h.events.moved.listeners[0]({messages:[original]},{messages:[moved]});
+  await settle(h,s=>s.records[0].messageId===2);
+  release();
+  const state=await settle(h,s=>s.records[1]?.quarantine?.status==="error");
+  assert.equal(state.records.length,2);
+  assert.equal(state.records[1].status,"detected");
+  assert.match(state.records[1].quarantine.detail,/隔離先/);
 });

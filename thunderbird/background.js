@@ -55,12 +55,14 @@ let issue = "";
 let running = false;
 let lastMailTab;
 let writes = Promise.resolve();
+let settingsChanges = Promise.resolve();
 let mutations = Promise.resolve();
 const deletionTickets = new Map();
 const deleting = new Set();
 const batchTickets = new Map();
 let batchProgress = null, retryContext = null;
 const historyTickets = new Map();
+const movedScans = new WeakMap();
 let folderRequest = null;
 let lastHealth = null, lastScan = null;
 let resultsRequest = null, setupRequest = null;
@@ -234,27 +236,16 @@ async function verified(record, expectedFingerprint = null) {
 }
 
 function excludePausedAutomatic() {
-  const changes = [];
   for (const record of [...records, ...(overflowPending ? [overflowPending] : [])]) {
     if (!pausedAutomatic(record, settings)) continue;
-    const before = { ...record };
+    const previousDetail = record.detail;
     record.status = "incomplete";
     record.unscannedReason = "automaticExcluded";
     record.detail = t("automaticExcludedDetail", "検査待ちの間に自動検査の対象から外れたため、検査していません。必要に応じて再検査してください。") +
-      ((record.attempts || 0) > 0 && before.detail ? " " + t("automaticExcludedPrevious", "前回の説明：$1", [before.detail]) : "");
+      ((record.attempts || 0) > 0 && previousDetail ? " " + t("automaticExcludedPrevious", "前回の説明：$1", [previousDetail]) : "");
     delete record.detailMessages;
     record.nextRetry = null;
     record.updatedAt = new Date().toISOString();
-    changes.push({ record, before, updatedAt: record.updatedAt });
-  }
-  return changes;
-}
-
-function restoreExcluded(changes) {
-  for (const { record, before, updatedAt } of changes) {
-    if (record.status !== "incomplete" || record.unscannedReason !== "automaticExcluded" || record.updatedAt !== updatedAt) continue;
-    for (const key of Object.keys(record)) if (!Object.hasOwn(before, key)) delete record[key];
-    Object.assign(record, before);
   }
 }
 
@@ -383,9 +374,44 @@ function save() {
   // Take a snapshot now, then serialize storage writes so an older snapshot
   // cannot overwrite a later scan result.
   const value = JSON.parse(JSON.stringify({ directMigrationBackup, settings, records, overflowPending, overflowReport, issue, lastHealth, lastScan, helperRemoved, installation, folderJob: folderScan.snapshot(), folderCheckpoint: folderScan.checkpointState() }));
-  writes = writes.catch(() => {}).then(() => api.storage.local.set(value));
+  writes = writes.catch(() => {}).then(() => {
+    // Configuration is committed separately. A queued history snapshot must
+    // never restore configuration that was current when that snapshot began.
+    value.settings = structuredClone(settings);
+    return api.storage.local.set(value);
+  });
   void updateBadge().catch(() => {});
   return writes;
+}
+
+function changeSettings(input) {
+  const requested = structuredClone(input);
+  const work = async () => {
+    const ids = (await api.accounts.list()).map(account => account.id);
+    const previous = settings;
+    const candidate = validateSettings(requested, ids);
+    const quarantine = await validateQuarantine(api, requested.quarantine, ids, previous.quarantine);
+    for (const [accountId, config] of Object.entries(quarantine || {})) {
+      const old = previous.quarantine?.[accountId];
+      if (config.auto) config.activation = old?.auto && old.folderId === config.folderId && old.path === config.path && old.activation ? old.activation : crypto.randomUUID();
+    }
+    const next = { ...candidate, ...(quarantine ? { quarantine } : {}) };
+    writes = writes.catch(() => {}).then(async () => {
+      if (maintenanceActive() || helperRemoved) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
+      if (batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation)) throw new Error(t("qBusy", "このメールは処理中です。"));
+      // Publish only after persistence succeeds; failed saves have no runtime
+      // effects. On startup, queued exclusions are derived from these settings.
+      await api.storage.local.set({ settings: next });
+      settings = next;
+      excludePausedAutomatic();
+    });
+    await writes;
+    void updateBadge().catch(report);
+    void drain().catch(report);
+    return { ok: true };
+  };
+  settingsChanges = settingsChanges.catch(() => {}).then(work);
+  return settingsChanges;
 }
 
 function toolbarState() {
@@ -620,6 +646,11 @@ async function drain() {
         try { reviewFingerprint = (await verified(record)).fingerprint; } catch { /* Unverifiable contents require review again. */ }
       }
       reconcileReview(record, previousReview, reviewFingerprint);
+      const movedScan = movedScans.get(record);
+      if (movedScan) {
+        movedScans.delete(record);
+        record = coalesceMovedScan(movedScan.original, record, movedScan.hash);
+      }
       const quarantineConfig = settings.quarantine?.[record.locator.accountId];
       if (record.status === "detected" && !record.lastAttempt && record.source === "automatic" && quarantineConfig?.auto && record.quarantineIntent &&
           record.quarantineIntent.folderId === quarantineConfig.folderId && record.quarantineIntent.path === quarantineConfig.path &&
@@ -770,6 +801,35 @@ let ready = beginInitialization();
 api.messages.onNewMailReceived.addListener((folder, list) => {
   void ready.then(() => enqueue(list, "automatic")).catch(report);
 }, true);
+// Only an explicit, content-verified move can establish this relationship.
+// Ordinary copies and histories with independent human actions stay separate.
+function coalesceMovedScan(original, duplicate, hash) {
+  if (!records.includes(original) || !records.includes(duplicate) || original === duplicate ||
+      deleting.has(original.key) || deleting.has(duplicate.key) ||
+      ["queued", "scanning", "deleted"].includes(original.status) ||
+      ["queued", "scanning", "deleted"].includes(duplicate.status) ||
+      duplicate.source !== "automatic" || duplicate.review || duplicate.reviewBeforeScan ||
+      duplicate.quarantine || duplicate.lastResult || duplicate.lastAttempt || duplicate.bulkRetryId ||
+      (duplicate.quarantineIntent && JSON.stringify(original.quarantineIntent) !== JSON.stringify(duplicate.quarantineIntent)) ||
+      original.sha256 !== hash || duplicate.sha256 !== hash ||
+      original.session !== session || duplicate.session !== session ||
+      original.messageId !== duplicate.messageId ||
+      JSON.stringify(original.locator) !== JSON.stringify(duplicate.locator)) return duplicate;
+  const review = original.review || original.reviewBeforeScan;
+  // Conflicting human judgments require an explicit decision, not deduplication.
+  if (review && (original.status !== duplicate.status || reviewReason(original) !== reviewReason(duplicate))) return duplicate;
+  rememberResult(original);
+  const fields = ["status", "detail", "detailMessages", "signatures", "advisories", "sha256", "engine", "scanSettings", "updatedAt", "unscannedReason", "attempts", "nextRetry"];
+  for (const key of fields) {
+    delete original[key];
+    if (duplicate[key] !== undefined) original[key] = structuredClone(duplicate[key]);
+  }
+  finishScanAttempt(original, hash);
+  reconcileReview(original, review, "sha256:" + hash);
+  records.splice(records.indexOf(duplicate), 1);
+  return original;
+}
+
 // External moves (including Undo) update the display only after content
 // verification. Our own quarantine/deletion operations retain their own locks.
 api.messages.onMoved?.addListener((originals, moved) => {
@@ -803,6 +863,15 @@ api.messages.onMoved?.addListener((originals, moved) => {
           JSON.stringify([record.locator, record.messageId, record.session, record.quarantine?.status]) !== before) continue;
       refreshQuarantineLocation(record, matches[0]);
       record.session = session;
+      if (hash) {
+        const duplicates = records.filter(item => item !== record && item.session === session &&
+          item.messageId === record.messageId && JSON.stringify(item.locator) === JSON.stringify(record.locator));
+        if (duplicates.length === 1) {
+          const duplicate = duplicates[0];
+          if (["queued", "scanning"].includes(duplicate.status)) movedScans.set(duplicate, { original: record, hash });
+          else coalesceMovedScan(record, duplicate, hash);
+        }
+      }
       changed = true;
     }
     if (changed) await save();
@@ -860,6 +929,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
       case "helperInfo":
         return { ok: true, installation: await helperInfo(), health: lastHealth };
       case "helperPlan": {
+        await settingsChanges.catch(() => {});
         if (DIRECT) throw new Error(t("directNoSetup", "この拡張では補助プログラムの別途導入・更新は不要です。"));
         if (running || folderScan.active || batchProgress?.active || deleting.size) throw new Error(t("mail055", "検査・削除の処理が終了してから操作してください。フォルダー検査中は先に中止してください。"));
         maintenanceGeneration++;
@@ -909,6 +979,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         } finally { releaseMaintenance(); void drain().catch(report); }
       }
       case "helperMarkRemoved":
+        await settingsChanges.catch(() => {});
         if (DIRECT) throw new Error(t("directNoSetup", "この拡張では補助プログラムの別途導入・更新は不要です。"));
         if (request.acknowledged !== true || running || folderScan.active || batchProgress?.active || deleting.size) throw new Error(t("mail065", "処理を停止し、Terminalで補助プログラムの削除が完了したことを確認してください。"));
         helperRemoved = true;
@@ -917,22 +988,8 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         installation = { state: "removed", detail: t("mail066", "Terminalでの削除完了を利用者が確認しました。") };
         await save();
         return { ok: true };
-      case "settings": {
-        const ids = (await api.accounts.list()).map(account => account.id);
-        const previous = settings;
-        const candidate = validateSettings(request.settings, ids);
-        const quarantine = await validateQuarantine(api, request.settings.quarantine, ids, previous.quarantine);
-        for (const [accountId, config] of Object.entries(quarantine || {})) {
-          const old = previous.quarantine?.[accountId];
-          if (config.auto) config.activation = old?.auto && old.folderId === config.folderId && old.path === config.path && old.activation ? old.activation : crypto.randomUUID();
-        }
-        settings = { ...candidate, ...(quarantine ? { quarantine } : {}) };
-        const excluded = excludePausedAutomatic();
-        try { await save(); }
-        catch (error) { settings = previous; restoreExcluded(excluded); await updateBadge().catch(() => {}); throw error; }
-        void drain().catch(report);
-        return { ok: true };
-      }
+      case "settings":
+        return await changeSettings(request.settings);
       case "health": {
         if (maintenanceActive()) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
         await helperInfo();
