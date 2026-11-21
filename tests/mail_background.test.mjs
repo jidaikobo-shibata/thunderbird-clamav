@@ -2,7 +2,7 @@ import { readStoredState } from "../thunderbird/state-storage.mjs";
 import { SCAN_IDLE_MS } from "../thunderbird/scan-connection.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { sha256, locator, SCAN_INPUT_TIMEOUT_MS } from "../thunderbird/core.mjs";
+import { sha256, locator, SCAN_INPUT_TIMEOUT_MS, REVIEW_FINGERPRINT_TIMEOUT_MS } from "../thunderbird/core.mjs";
 
 function event() {
   const listeners = [];
@@ -103,9 +103,12 @@ async function harness({ failReads = [], failWrites = [], direct = false, backup
   }
   configureMessages?.(api.messages);
   globalThis.messenger = api;
-  const idleTimers = [], inputTimers = [];
+  const idleTimers = [], inputTimers = [], reviewTimers = [];
   const realTimeout = globalThis.setTimeout, realClearTimeout = globalThis.clearTimeout;
   globalThis.setTimeout = (callback, ms, ...args) => {
+    if (ms === REVIEW_FINGERPRINT_TIMEOUT_MS) {
+      const timer = { callback, active: true }; reviewTimers.push(timer); return timer;
+    }
     if (ms === SCAN_INPUT_TIMEOUT_MS) {
       const timer = { callback, active: true }; inputTimers.push(timer); return timer;
     }
@@ -114,7 +117,7 @@ async function harness({ failReads = [], failWrites = [], direct = false, backup
     const timer = { callback, active: true, unref() {} }; idleTimers.push(timer); return timer;
   };
   globalThis.clearTimeout = timer => {
-    if (idleTimers.includes(timer) || inputTimers.includes(timer)) timer.active = false;
+    if (idleTimers.includes(timer) || inputTimers.includes(timer) || reviewTimers.includes(timer)) timer.active = false;
     else realClearTimeout(timer);
   };
   const realInterval = globalThis.setInterval;
@@ -125,7 +128,8 @@ async function harness({ failReads = [], failWrites = [], direct = false, backup
     events.message.listeners[0]({ type, ...values }, sender);
   await send("state");
   nativePorts.length = 0; // Startup installation check is separate from scan connections.
-  return { api, send, events, notifications, opened, rawReads, timers, deleted, nativePorts, directRequests, migrationBackups, storageCounts, idleTimers, inputTimers,
+  return { api, send, events, notifications, opened, rawReads, timers, deleted, nativePorts, directRequests, migrationBackups, storageCounts, idleTimers, inputTimers, reviewTimers,
+    expireReview: () => { const timer = reviewTimers.find(timer => timer.active); assert.ok(timer, "active review deadline"); timer.active = false; timer.callback(); },
     expireInput: () => { const timer = inputTimers.find(timer => timer.active); assert.ok(timer, "active input deadline"); timer.active = false; timer.callback(); },
     expireIdle: () => { for (const timer of idleTimers) if (timer.active) { timer.active = false; timer.callback(); } },
     stored: () => {
@@ -3835,5 +3839,143 @@ test("input timeout preserves a previous threat and a late lookup cannot replace
   const before = structuredClone(state.records[0]);
   release(); await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual((await h.send("state")).records[0], before);
+  h.expireIdle();
+});
+
+async function waitingReviewCarry(phase = "raw") {
+  const large = mail(1901), fresh = mail(1902), manual = mail(1903);
+  const h = await harness({ direct: true, mails: [large, fresh, manual], saved: { settings: { enabled: true, accountIds: ["one"], notifications: true } } });
+  const { reviewStamp } = await import("../thunderbird/review.mjs");
+  const size = 25 * 1024 * 1024 + 1, zeros = new Uint8Array(512 * 1024);
+  const raw = h.api.messages.getRaw, get = h.api.messages.get;
+  let holding = false, reads = 0, lookups = 0, slices = 0, enter, release;
+  const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { enter = resolve; });
+  h.api.messages.get = async id => {
+    const message = structuredClone(await get(id));
+    if (holding && id === large.id && ++lookups === 2 && phase === "lookup") { enter(); await gate; }
+    return message;
+  };
+  h.api.messages.getRaw = async (id, options) => {
+    if (id !== large.id) return raw(id, options);
+    const carry = holding && ++reads === 2;
+    if (carry && phase === "raw") { enter(); await gate; }
+    return { size, arrayBuffer() { throw new Error("must not allocate oversized mail"); }, slice(start, end) {
+      if (carry) slices++;
+      const blob = new Blob([zeros.slice(0, Math.min(size, end) - start)]);
+      return { arrayBuffer: async () => {
+        if (carry && phase === "chunk" && start === 0) { enter(); await gate; }
+        return blob.arrayBuffer();
+      } };
+    } };
+  };
+  h.api.mailTabs.getSelectedMessages = async () => ({ messages: [large] });
+  await h.send("scanSelection");
+  const record = (await settle(h, state => state.records[0]?.status === "incomplete")).records[0];
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await h.send("reviewMany", { keys: [record.key], reviewed: true, note: "known oversized synthetic mail",
+    stamps: { [record.key]: reviewStamp(record) } })).ok, true);
+  h.notifications.length = 0;
+  holding = true;
+  await h.send("retry", { key: record.key });
+  await started;
+  return { h, large, fresh, manual, key: record.key, release, slices: () => slices, reads: () => reads };
+}
+
+for (const phase of ["lookup", "raw", "chunk"]) test(`review carry deadline releases later inspections and ignores late ${phase} after a new human decision`, async () => {
+  const { h, large, fresh, manual, key, release, slices } = await waitingReviewCarry(phase);
+  assert.ok(h.inputTimers.every(timer => !timer.active));
+  h.events.newMail.listeners[0](fresh.folder, { messages: [fresh] });
+  h.api.mailTabs.getSelectedMessages = async () => ({ messages: [manual] });
+  await h.send("scanSelection");
+  h.expireReview();
+  let state = await settle(h, state => state.records.length === 3 && [fresh.id, manual.id].every(id => state.records.some(record => record.messageId === id && record.status === "clean")));
+  await new Promise(resolve => setImmediate(resolve));
+  const record = state.records.find(record => record.key === key);
+  assert.equal(record.status, "incomplete");
+  assert.equal(record.review, undefined);
+  assert.equal(record.reviewBeforeScan, undefined);
+  assert.equal(h.notifications.length, 1);
+  const { reviewStamp } = await import("../thunderbird/review.mjs");
+  assert.equal((await h.send("reviewMany", { keys: [key], reviewed: true, note: "new decision after timeout",
+    stamps: { [key]: reviewStamp(record) } })).ok, true);
+  state = await h.send("state");
+  const before = structuredClone(state.records.find(record => record.key === key)), previousSlices = slices();
+  release(); await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual((await h.send("state")).records.find(record => record.key === key), before);
+  assert.equal(slices(), previousSlices);
+  assert.ok(h.reviewTimers.every(timer => !timer.active));
+  h.expireIdle();
+});
+
+test("a late carry lookup cannot restore the old location after a human confirms the new one", async () => {
+  const { h, large, fresh, key, release, reads } = await waitingReviewCarry("lookup");
+  h.expireReview();
+  await settle(h, state => !state.records[0].reviewBeforeScan);
+  await new Promise(resolve => setImmediate(resolve));
+  const moved = { ...large, id: 1904, folder: { id: "moved", accountId: "one", path: "/Moved" } };
+  h.api.messages.get = async id => { if (id !== moved.id) throw new Error("old ID gone"); return moved; };
+  h.api.messages.query = async () => ({ messages: [moved] });
+  const raw = h.api.messages.getRaw;
+  h.api.messages.getRaw = (id, options) => raw(id === moved.id ? large.id : id, options);
+  const record = (await h.send("state")).records[0], { reviewStamp } = await import("../thunderbird/review.mjs");
+  assert.equal((await h.send("reviewMany", { keys: [key], reviewed: true, note: "confirmed at new location",
+    stamps: { [key]: reviewStamp(record) } })).ok, true);
+  const before = structuredClone((await h.send("state")).records[0]), beforeReads = reads();
+  assert.equal(before.messageId, moved.id);
+  release(); await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual((await h.send("state")).records[0], before);
+  assert.equal(reads(), beforeReads);
+  h.expireIdle();
+});
+
+test("forgotten history stays removed when a timed-out carry proof returns", async () => {
+  const { h, key, release } = await waitingReviewCarry();
+  h.expireReview();
+  await settle(h, state => !state.records[0].reviewBeforeScan);
+  await new Promise(resolve => setImmediate(resolve));
+  const prepared = await h.send("prepareForget", { keys: [key] });
+  assert.equal(prepared.ok, true);
+  assert.equal((await h.send("forgetMany", { token: prepared.token })).ok, true);
+  release(); await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await h.send("state")).records.length, 0);
+  assert.equal(h.stored().records.length, 0);
+  h.expireIdle();
+});
+
+test("a matching carry proof completed within its deadline keeps the original human review", async () => {
+  const { h, key, release } = await waitingReviewCarry();
+  release();
+  const state = await settle(h, state => state.records[0].review?.note === "known oversized synthetic mail" && !state.records[0].reviewBeforeScan);
+  assert.equal(state.records[0].status, "incomplete");
+  assert.ok(h.reviewTimers.every(timer => !timer.active));
+  assert.equal(h.notifications.length, 0);
+  h.expireIdle();
+});
+
+test("a retry reserved during carry verification keeps its own acknowledgement snapshot", async () => {
+  const { h, key, release } = await waitingReviewCarry();
+  assert.equal((await h.send("retry", { key })).ok, true);
+  h.expireReview();
+  const state = await settle(h, state => state.records[0].status === "incomplete" && state.records[0].review?.note === "known oversized synthetic mail" && !state.records[0].reviewBeforeScan);
+  await new Promise(resolve => setImmediate(resolve));
+  const before = structuredClone(state.records[0]);
+  assert.equal(h.notifications.length, 0);
+  release(); await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual((await h.send("state")).records[0], before);
+  h.expireIdle();
+});
+
+test("history forgotten before the carry deadline is not notified or restored", async () => {
+  const { h, key, release } = await waitingReviewCarry();
+  const prepared = await h.send("prepareForget", { keys: [key] });
+  assert.equal(prepared.ok, true);
+  assert.equal((await h.send("forgetMany", { token: prepared.token })).ok, true);
+  h.expireReview();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await h.send("state")).records.length, 0);
+  assert.equal(h.notifications.length, 0);
+  release(); await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.stored().records.length, 0);
+  assert.equal(h.notifications.length, 0);
   h.expireIdle();
 });

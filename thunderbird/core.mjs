@@ -6,6 +6,7 @@ export const MAX_BYTES = 25 * 1024 * 1024;
 export const MAX_TRANSFER_BYTES = 100 * 1024 * 1024;
 export const CHUNK_BYTES = 64 * 1024;
 export const SCAN_INPUT_TIMEOUT_MS = 60000;
+export const REVIEW_FINGERPRINT_TIMEOUT_MS = 10000;
 export const HOST = "local.clam_mail_check";
 export const DEFAULTS = Object.freeze({
   enabled: false, accountIds: [], notifications: true

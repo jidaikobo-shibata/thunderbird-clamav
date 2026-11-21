@@ -9,7 +9,7 @@ import { validateQuarantine, moveToQuarantine, inQuarantine, quarantineCandidate
 import { t } from "./i18n.mjs";
 import { toolbarNotice } from "./installation.mjs";
 import {
-  MAX_BYTES, MAX_TRANSFER_BYTES, SCAN_INPUT_TIMEOUT_MS, DEFAULTS, LABELS, NativeClient, accountOf, locator, sameEnvelope,
+  MAX_BYTES, MAX_TRANSFER_BYTES, SCAN_INPUT_TIMEOUT_MS, REVIEW_FINGERPRINT_TIMEOUT_MS, DEFAULTS, LABELS, NativeClient, accountOf, locator, sameEnvelope,
   validateSettings, messagePages, sha256, needsAttention, pausedAutomatic, normalizeAutomaticSettings
 } from "./core.mjs";
 import { canDelete, canForget, canRetry } from "./results.mjs";
@@ -210,24 +210,32 @@ function position(message) {
   return JSON.stringify([message.id, message.folder?.accountId, message.folder?.path, message.folder?.id]);
 }
 
-async function verified(record, expectedFingerprint = null) {
-  const message = await resolveRecord(record);
+async function verified(record, expectedFingerprint = null, check = () => {}) {
+  check();
+  const message = await resolveRecord(record, check);
+  check();
   if (message.external || !message.folder) throw new Error(t("mail010", "保存されているメールを特定できません。"));
   let fingerprint;
   if (record.sha256) {
-    const digest = await sha256(await rawBytes(message.id));
+    const digest = await sha256(await rawBytes(message.id, MAX_TRANSFER_BYTES, check));
+    check();
     if (digest !== record.sha256) throw new Error(t("mail011", "対象メールが検査時と一致しません。再検査してください。"));
     fingerprint = "sha256:" + digest;
   } else {
     // Failed/oversized scans may have no scan digest. Establish a confirmation
     // snapshot without loading the entire message or invoking the scanner.
     const raw = await api.messages.getRaw(message.id, { data_format: "File", decrypt: false });
+    check();
     if (!raw || !Number.isSafeInteger(raw.size) || raw.size < 0 || typeof raw.slice !== "function") {
       throw new Error(t("mail012", "削除対象のメール内容を取得できませんでした。"));
     }
     let digest = await sha256(new TextEncoder().encode("clam-mail-check-delete-v1:" + raw.size));
+    check();
     for (let offset = 0; offset < raw.size; offset += 512 * 1024) {
-      const chunk = new Uint8Array(await raw.slice(offset, offset + 512 * 1024).arrayBuffer());
+      check();
+      const buffer = await raw.slice(offset, offset + 512 * 1024).arrayBuffer();
+      check();
+      const chunk = new Uint8Array(buffer);
       if (chunk.length !== Math.min(512 * 1024, raw.size - offset)) {
         throw new Error(t("mail013", "削除対象のメール内容を最後まで取得できませんでした。"));
       }
@@ -235,14 +243,39 @@ async function verified(record, expectedFingerprint = null) {
       bytes.set(digest.match(/../g).map(value => parseInt(value, 16)));
       bytes.set(chunk, 32);
       digest = await sha256(bytes);
+      check();
     }
     fingerprint = "chunked-sha256-v1:" + digest;
   }
+  check();
   if (expectedFingerprint && fingerprint !== expectedFingerprint) {
     throw new Error(t("mail014", "確認後にメール内容が変わりました。もう一度確認してください。"));
   }
   refreshQuarantineLocation(record, message);
   return { message, fingerprint };
+}
+
+// Carrying a human acknowledgement is optional. Never let its body proof
+// hold the serial scanner, or allow an expired lookup to modify live history.
+async function carryReviewFingerprint(record, expectedFingerprint) {
+  let active = true, timer;
+  const expired = () => new Error("Review carry-forward verification expired");
+  const check = () => { if (!active) throw expired(); };
+  try {
+    const identity = moveIdentity(record), status = record.status;
+    const copy = structuredClone(record);
+    const deadline = new Promise((resolve, reject) => {
+      timer = inputTimers.set(() => { active = false; reject(expired()); }, REVIEW_FINGERPRINT_TIMEOUT_MS);
+    });
+    const result = await Promise.race([verified(copy, expectedFingerprint, check), deadline]);
+    check();
+    if (moveIdentity(record) !== identity || record.status !== status ||
+        (!records.includes(record) && record !== overflowPending) || deleting.has(record.key)) return null;
+    refreshQuarantineLocation(record, result.message);
+    record.session = copy.session;
+    return result.fingerprint;
+  } catch { return null; } // Keep the result unreviewed when identity is uncertain.
+  finally { active = false; inputTimers.clear(timer); }
 }
 
 function excludePausedAutomatic() {
@@ -1068,7 +1101,19 @@ async function drain() {
       finishScanAttempt(record, currentDigest);
       let reviewFingerprint = record.sha256 ? "sha256:" + record.sha256 : null;
       if (previousReview?.fingerprint && !record.sha256 && record.status === "incomplete") {
-        try { reviewFingerprint = (await verified(record)).fingerprint; } catch { /* Unverifiable contents require review again. */ }
+        const attempt = JSON.stringify([record.status, record.attempts, record.source, record.folderJobId, record.bulkRetryId]);
+        const reviewJobId = record.folderJobId;
+        reviewFingerprint = await carryReviewFingerprint(record, previousReview.fingerprint);
+        if ((!records.includes(record) && record !== overflowPending) || deleting.has(record.key) ||
+            attempt !== JSON.stringify([record.status, record.attempts, record.source, record.folderJobId, record.bulkRetryId])) {
+          // A retry or history operation superseded this attempt. Do not clear
+          // its review snapshot, notify it, or complete the newer reservation.
+          if (fromFolder && folderScan.job?.id === reviewJobId && folderScan.job.scanning) {
+            await folderScan.complete("incomplete");
+            await save();
+          }
+          continue;
+        }
       }
       reconcileReview(record, previousReview, reviewFingerprint);
       let coalescedMove = false;

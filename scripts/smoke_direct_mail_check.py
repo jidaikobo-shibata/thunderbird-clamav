@@ -76,7 +76,7 @@ def fixture_xpi(target, original, version, scenario="full"):
         const api = messenger;
         const testStorageSet = api.storage.local.set.bind(api.storage.local);
         const testRaw = api.messages.getRaw.bind(api.messages);
-        let failedEarlyInput = false, failedLateInput = false, holdEarlyMove = false, failedSlowInput = false;
+        let failedEarlyInput = false, failedLateInput = false, holdEarlyMove = false, failedSlowInput = false, reviewCarryReads = 0;
         const testAddNew = api.messages.onNewMailReceived.addListener.bind(api.messages.onNewMailReceived);
         let testNewListener;
         api.messages.onNewMailReceived.addListener = (listener, ...args) => {
@@ -106,7 +106,7 @@ def fixture_xpi(target, original, version, scenario="full"):
           })().catch(console.error);
         });
         api.storage.onChanged.addListener((changes, area) => {
-          const replay = changes.fixtureQuarantineReplayId?.newValue;
+          const replay = changes.fixtureQuarantineReplayId?.newValue ?? changes.fixtureReviewReplayId?.newValue;
           if (area === 'local' && Number.isInteger(replay)) {
             // Replay a resync notification using the real current header. The
             // local-folder notifier does not resend an already-known message.
@@ -123,12 +123,24 @@ def fixture_xpi(target, original, version, scenario="full"):
         });
         api.messages.getRaw = async (id, options) => {
           const header = await api.messages.get(id);
+          let reviewCarryHeld = false;
           const quarantineGate = await api.storage.local.get('fixtureQuarantinePendingId');
           if (quarantineGate.fixtureQuarantinePendingId === id) {
             await testStorageSet({fixtureQuarantineProofStarted:true});
             for (let attempt=0;attempt<4800;attempt++) {
               if ((await api.storage.local.get('fixtureQuarantineProofRelease')).fixtureQuarantineProofRelease) break;
               await new Promise(resolve => setTimeout(resolve,25));
+            }
+          }
+          if (header.subject === 'Synthetic reviewed oversized') {
+            const hold = await api.storage.local.get('fixtureHoldReviewCarry');
+            if (hold.fixtureHoldReviewCarry && ++reviewCarryReads === 2) {
+              reviewCarryHeld = true;
+              await testStorageSet({fixtureReviewCarryStarted:true});
+              for (let attempt=0;attempt<4800;attempt++) {
+                if ((await api.storage.local.get('fixtureReleaseReviewCarry')).fixtureReleaseReviewCarry) break;
+                await new Promise(resolve => setTimeout(resolve,25));
+              }
             }
           }
           if (!failedSlowInput && header.subject === 'Synthetic slow input') {
@@ -151,7 +163,9 @@ def fixture_xpi(target, original, version, scenario="full"):
           if (!failedLateInput && header.subject === 'Synthetic late raw move') {
             failedLateInput = true; throw new Error('synthetic late-body move failure');
           }
-          return testRaw(id,options);
+          const file = await testRaw(id,options);
+          if (reviewCarryHeld) await testStorageSet({fixtureReviewCarryReturned:true});
+          return file;
         };
         let failedReceipt = false;
         api.storage.local.set = async value => {
@@ -174,6 +188,9 @@ def fixture_xpi(target, original, version, scenario="full"):
         payload["background.js"] = payload["background.js"].replace(
             b"}, SCAN_INPUT_TIMEOUT_MS);",
             b"}, record.locator.subject === 'Synthetic slow input' ? 2000 : SCAN_INPUT_TIMEOUT_MS);")
+        payload["background.js"] = payload["background.js"].replace(
+            b"}, REVIEW_FINGERPRINT_TIMEOUT_MS);",
+            b"}, record.locator.subject === 'Synthetic reviewed oversized' ? 2000 : REVIEW_FINGERPRINT_TIMEOUT_MS);")
     if scenario == "recovery":
         # Faults exist only in instrumented, disposable-profile XPIs.
         payload["fixture/seed.js"] = payload["fixture/seed.js"].replace(

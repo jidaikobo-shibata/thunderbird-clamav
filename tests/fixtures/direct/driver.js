@@ -253,6 +253,43 @@ try {
     state = await settled(state => state.records.find(record => record.key === slowKey)?.status === "clean");
     report.inputDeadlineIsolation = true;
     report.inputDeadlineRecovery = true;
+    report.stage = "review-carry-deadline";
+    await messenger.testFixture.report(JSON.stringify({...report,running:true}));
+    const beforeReviewSettings = structuredClone(state.settings);
+    await request("settings", {settings:{...state.settings,scanSettings:{...(state.settings.scanSettings || {}),mailMiB:5}}});
+    const reviewCarryRaw = fixture.mails.plain.replace(/Subject: [^\r\n]+/, "Subject: Synthetic reviewed oversized").replace(/Message-ID: [^\r\n]+/i, "Message-ID: <review-carry@example.invalid>") +
+      ("x".repeat(76)+"\r\n").repeat(Math.ceil((6*1024*1024)/78));
+    const largeReview = await messenger.messages.import(new File([reviewCarryRaw], "large-review.eml", {type:"message/rfc822"}), fixture.history.id, {read:true,new:false});
+    await messenger.storage.local.set({fixtureReviewReplayId:largeReview.id});
+    state = await settled(state => state.records.some(record => record.messageId === largeReview.id && record.status === "incomplete"));
+    await wait(200);
+    let reviewRecord = state.records.find(record => record.messageId === largeReview.id);
+    await request("reviewMany", {keys:[reviewRecord.key],reviewed:true,note:"",stamps:{[reviewRecord.key]:reviewStamp(reviewRecord)}});
+    await messenger.storage.local.set({fixtureHoldReviewCarry:true});
+    await request("retry", {key:reviewRecord.key});
+    state = await settled(state => {const record=state.records.find(record => record.key === reviewRecord.key);return record?.status === "incomplete" && !record.review && !record.reviewBeforeScan;});
+    check((await messenger.storage.local.get('fixtureReviewCarryStarted')).fixtureReviewCarryStarted, "Review carry proof was held until its deadline");
+    const afterReviewRaw = fixture.mails.plain.replace(/Subject: [^\r\n]+/, "Subject: Synthetic after review deadline").replace(/Message-ID: [^\r\n]+/i, "Message-ID: <after-review@example.invalid>");
+    const afterReview = await messenger.messages.import(new File([afterReviewRaw], "after-review.eml", {type:"message/rfc822"}), fixture.source.id, {read:true,new:false});
+    await messenger.testFixture.inject(afterReview.id);
+    state = await settled(state => state.records.some(record => record.messageId === afterReview.id && record.status === "clean"));
+    await wait(200);
+    reviewRecord = state.records.find(record => record.key === reviewRecord.key);
+    await request("reviewMany", {keys:[reviewRecord.key],reviewed:true,note:"",stamps:{[reviewRecord.key]:reviewStamp(reviewRecord)}});
+    state = await request("state");
+    const newReviewSnapshot = JSON.stringify(state.records.find(record => record.key === reviewRecord.key));
+    await messenger.storage.local.set({fixtureReleaseReviewCarry:true});
+    for (let attempt=0;attempt<400;attempt++) {
+      if ((await messenger.storage.local.get('fixtureReviewCarryReturned')).fixtureReviewCarryReturned) break;
+      await wait(25);
+    }
+    check((await messenger.storage.local.get('fixtureReviewCarryReturned')).fixtureReviewCarryReturned, "The late real body response was delivered");
+    await wait(100);
+    state = await request("state");
+    check(JSON.stringify(state.records.find(record => record.key === reviewRecord.key)) === newReviewSnapshot, "Expired carry proof cannot change a later human review");
+    await request("settings", {settings:beforeReviewSettings});
+    report.reviewCarryDeadlineIsolation = true;
+    report.reviewCarryHumanDecisionPreserved = true;
     report.stage = "draft-exclusion";
     check(fixture.drafts.specialUse.includes("drafts"), "Thunderbird exposes the real draft folder attribute");
     const draftRaw = fixture.mails.plain.replace(/Subject: [^\r\n]+/, "Subject: Synthetic draft excluded").replace(/Message-ID: [^\r\n]+/i, "Message-ID: <draft-excluded@example.invalid>");
