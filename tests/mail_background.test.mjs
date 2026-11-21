@@ -2,7 +2,7 @@ import { readStoredState } from "../thunderbird/state-storage.mjs";
 import { SCAN_IDLE_MS } from "../thunderbird/scan-connection.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { sha256, locator } from "../thunderbird/core.mjs";
+import { sha256, locator, SCAN_INPUT_TIMEOUT_MS } from "../thunderbird/core.mjs";
 
 function event() {
   const listeners = [];
@@ -11,7 +11,7 @@ function event() {
 
 let caseId = 0;
 async function harness({ failReads = [], failWrites = [], direct = false, backupFailure = false, saved = {}, mails = [], nativeFailure = false, oversized = false, deleteAllowed = false, deleteFailure = false, deleteFailureIds = [], scanResult = {}, scanGate = null,
-  manageInfo = null, healthResult = null, folderRefs = [{ id: "inbox", accountId: "one", path: "/Inbox", name: "受信トレイ" }] } = {}) {
+  manageInfo = null, healthResult = null, configureMessages = null, folderRefs = [{ id: "inbox", accountId: "one", path: "/Inbox", name: "受信トレイ" }] } = {}) {
   let stored = structuredClone(saved);
   const storageCounts = { reads: 0, writes: 0 };
   const notifications = [], opened = [], rawReads = [], timers = [], deleted = [], nativePorts = [];
@@ -101,16 +101,20 @@ async function harness({ failReads = [], failWrites = [], direct = false, backup
       }
     };
   }
+  configureMessages?.(api.messages);
   globalThis.messenger = api;
-  const idleTimers = [];
+  const idleTimers = [], inputTimers = [];
   const realTimeout = globalThis.setTimeout, realClearTimeout = globalThis.clearTimeout;
   globalThis.setTimeout = (callback, ms, ...args) => {
+    if (ms === SCAN_INPUT_TIMEOUT_MS) {
+      const timer = { callback, active: true }; inputTimers.push(timer); return timer;
+    }
     if (ms !== SCAN_IDLE_MS) return realTimeout(callback, ms, ...args);
     if (idleTimers.failNext) { idleTimers.failNext = false; throw new Error("synthetic idle timer failure"); }
     const timer = { callback, active: true, unref() {} }; idleTimers.push(timer); return timer;
   };
   globalThis.clearTimeout = timer => {
-    if (idleTimers.includes(timer)) timer.active = false;
+    if (idleTimers.includes(timer) || inputTimers.includes(timer)) timer.active = false;
     else realClearTimeout(timer);
   };
   const realInterval = globalThis.setInterval;
@@ -121,7 +125,8 @@ async function harness({ failReads = [], failWrites = [], direct = false, backup
     events.message.listeners[0]({ type, ...values }, sender);
   await send("state");
   nativePorts.length = 0; // Startup installation check is separate from scan connections.
-  return { api, send, events, notifications, opened, rawReads, timers, deleted, nativePorts, directRequests, migrationBackups, storageCounts, idleTimers,
+  return { api, send, events, notifications, opened, rawReads, timers, deleted, nativePorts, directRequests, migrationBackups, storageCounts, idleTimers, inputTimers,
+    expireInput: () => { const timer = inputTimers.find(timer => timer.active); assert.ok(timer, "active input deadline"); timer.active = false; timer.callback(); },
     expireIdle: () => { for (const timer of idleTimers) if (timer.active) { timer.active = false; timer.callback(); } },
     stored: () => {
     const data=readStoredState(structuredClone(stored));
@@ -1432,6 +1437,7 @@ test("unverifiable incomplete mail can be acknowledged, but a rescan clears the 
   const h = await harness({ mails: [mail(1)], oversized: true });
   await h.send("scanSelection");
   let state = await settle(h, value => value.records[0]?.status === "incomplete"), r = state.records[0];
+  await new Promise(resolve => setImmediate(resolve)); // Finish verdict persistence/queue cleanup.
   assert.equal((await h.send("reviewMany", { keys: [r.key], reviewed: true, note: "", stamps: { [r.key]: reviewStamp(r) } })).ok, true);
   state = await h.send("state"); assert.equal(state.records[0].review.fingerprint, null);
   await h.send("retry", { key: r.key });
@@ -1505,6 +1511,7 @@ test("oversized mail retains review only when its streamed content fingerprint i
   } });
   await h.send("scanSelection");
   let state = await settle(h, state => state.records[0]?.status === "incomplete"), r = state.records[0];
+  await new Promise(resolve => setImmediate(resolve)); // Finish verdict persistence/queue cleanup.
   assert.equal((await h.send("reviewMany", { keys: [r.key], reviewed: true, note: "expected large mail", stamps: { [r.key]: reviewStamp(r) } })).ok, true);
   assert.match((await h.send("state")).records[0].review.fingerprint, /^chunked-sha256-v1:/);
   async function rescan() {
@@ -3640,5 +3647,193 @@ for (const changed of [false, true]) test(`account exclusion during the proof-re
   await settle(h, state => state.records.find(record => record.messageId === incoming.id)?.unscannedReason === "automaticExcluded" &&
     h.stored().records.find(record => record.messageId === incoming.id)?.unscannedReason === "automaticExcluded");
   assert.equal(h.directRequests.filter(request => request.op === "end").length, 0);
+  h.expireIdle();
+});
+
+for (const phase of ["headers", "raw", "buffer"]) test(`input deadline releases later work and ignores late ${phase} after a successful retry`, async () => {
+  const blocked = mail(1801), fresh = mail(1802), manual = mail(1803);
+  const h = await harness({ direct: true, mails: [blocked, fresh, manual], saved: { settings: { enabled: true, accountIds: ["one"], notifications: true } } });
+  let release, enter, first = true, oldBuffers = 0;
+  const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { enter = resolve; });
+  const get = h.api.messages.get, raw = h.api.messages.getRaw;
+  h.api.messages.get = async id => {
+    const message = await get(id);
+    if (phase === "headers" && id === blocked.id && first) { first = false; enter(); await gate; }
+    return message;
+  };
+  h.api.messages.getRaw = async (id, options) => {
+    const file = await raw(id, options);
+    if (id === blocked.id && first && phase !== "headers") {
+      first = false;
+      if (phase === "raw") { enter(); await gate; return { size: file.size, arrayBuffer: async () => { oldBuffers++; return file.arrayBuffer(); } }; }
+      return { size: file.size, arrayBuffer: async () => { oldBuffers++; enter(); await gate; return file.arrayBuffer(); } };
+    }
+    return file;
+  };
+  h.events.newMail.listeners[0](blocked.folder, { messages: [blocked] });
+  await started;
+  h.events.newMail.listeners[0](fresh.folder, { messages: [fresh] });
+  h.api.mailTabs.getSelectedMessages = async () => ({ messages: [manual] });
+  await h.send("scanSelection");
+  h.expireInput();
+  const done = await settle(h, state => state.records.length === 3 && state.records.find(record => record.messageId === blocked.id)?.status === "error" &&
+    [fresh.id, manual.id].every(id => state.records.some(record => record.messageId === id && record.status === "clean")));
+  await new Promise(resolve => setImmediate(resolve));
+  const failed = done.records.find(record => record.messageId === blocked.id);
+  assert.equal(failed.sha256, null);
+  assert.ok(failed.nextRetry);
+  assert.equal(h.notifications.length, 0);
+  assert.equal(h.directRequests.filter(request => request.op === "end").length, 2);
+  blocked.raw = "Subject: replacement\r\n\r\nnew contents";
+  assert.equal((await h.send("retry", { key: failed.key })).ok, true);
+  const retried = await settle(h, state => state.records.find(record => record.key === failed.key)?.status === "clean");
+  await new Promise(resolve => setImmediate(resolve));
+  const before = structuredClone(retried.records.find(record => record.key === failed.key));
+  assert.equal(before.sha256, await sha256(new TextEncoder().encode(blocked.raw)));
+  release(); await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual((await h.send("state")).records.find(record => record.key === failed.key), before);
+  assert.equal(oldBuffers, phase === "buffer" ? 1 : 0);
+  assert.equal(h.directRequests.filter(request => request.op === "end").length, 3);
+  assert.ok(h.inputTimers.every(timer => !timer.active));
+  h.expireIdle();
+});
+
+for (const paged of [false, true]) test(`late restart lookup cannot overwrite a recovered locator or keep fetching pages (paged=${paged})`, async () => {
+  const old = mail(1811), current = { ...old, id: 1812, folder: { id: "current", accountId: "one", path: "/Current" } };
+  let release, enter, queries = 0, continued = 0, aborted = 0;
+  const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { enter = resolve; });
+  const h = await harness({ direct: true, mails: [current], saved: { settings: { enabled: true, accountIds: ["one"], notifications: true },
+    records: [{ key: "restore-input", status: "queued", source: "automatic", attempts: 0, sha256: null, locator: locator(old) }] },
+    configureMessages: api => {
+      api.query = async () => {
+        if (++queries === 1) {
+          if (paged) return { messages: [], id: "first-page" };
+          enter(); await gate; return { messages: [old] };
+        }
+        return { messages: [current] };
+      };
+      api.continueList = async () => { continued++; enter(); await gate; return { messages: [], id: "late-page" }; };
+      api.abortList = async () => { aborted++; };
+    } });
+  await started;
+  h.expireInput();
+  await settle(h, state => state.records[0].status === "error");
+  assert.equal((await h.send("retry", { key: "restore-input" })).ok, true);
+  const state = await settle(h, state => state.records[0].status === "clean");
+  await new Promise(resolve => setImmediate(resolve));
+  const before = structuredClone(state.records[0]);
+  assert.equal(before.messageId, current.id);
+  release(); await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual((await h.send("state")).records[0], before);
+  assert.ok(!h.rawReads.includes(old.id));
+  assert.equal(continued, paged ? 1 : 0);
+  assert.equal(aborted, paged ? 1 : 0);
+  h.expireIdle();
+});
+
+test("move-destination verification shares the input deadline and cannot overwrite a later retry", async () => {
+  const old = mail(1821), moved = { ...old, id: 1822, folder: { id: "moved", accountId: "one", path: "/Moved" } };
+  const h = await harness({ direct: true, mails: [old, moved], saved: { settings: { enabled: true, accountIds: ["one"], notifications: true } } });
+  let releaseOld, enterOld, releaseVerify, enterVerify, firstVerify = true;
+  const oldGate = new Promise(resolve => { releaseOld = resolve; }), oldStarted = new Promise(resolve => { enterOld = resolve; });
+  const verifyGate = new Promise(resolve => { releaseVerify = resolve; }), verifyStarted = new Promise(resolve => { enterVerify = resolve; });
+  const raw = h.api.messages.getRaw;
+  h.api.messages.getRaw = async (id, options) => {
+    const file = await raw(id, options);
+    if (id === old.id) { enterOld(); await oldGate; }
+    if (id === moved.id && firstVerify) { firstVerify = false; enterVerify(); await verifyGate; }
+    return file;
+  };
+  h.events.newMail.listeners[0](old.folder, { messages: [old] });
+  await oldStarted;
+  await h.events.moved.listeners[0]({ messages: [old] }, { messages: [moved] });
+  releaseOld(); await verifyStarted;
+  assert.equal(h.inputTimers.length, 1);
+  h.expireInput();
+  const failed = (await settle(h, state => state.records[0].status === "error")).records[0];
+  assert.equal(failed.messageId, moved.id);
+  assert.equal(failed.sha256, await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello")));
+  assert.equal(h.directRequests.filter(request => request.op === "end").length, 0);
+  moved.raw = "Subject: newest\r\n\r\nnew location data";
+  await h.send("retry", { key: failed.key });
+  const state = await settle(h, state => state.records[0].status === "clean");
+  await new Promise(resolve => setImmediate(resolve));
+  const before = structuredClone(state.records[0]);
+  releaseVerify(); await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual((await h.send("state")).records[0], before);
+  assert.equal(before.sha256, await sha256(new TextEncoder().encode(moved.raw)));
+  h.expireIdle();
+});
+
+test("two input timeouts preserve the single delayed retry and notify only after the final failure", async () => {
+  const target = mail(1831);
+  const h = await harness({ direct: true, mails: [target], saved: { settings: { enabled: true, accountIds: ["one"], notifications: true } } });
+  let release, entered = 0; const gate = new Promise(resolve => { release = resolve; });
+  h.api.messages.getRaw = async () => { entered++; await gate; throw new Error("late underlying retrieval rejection"); };
+  h.events.newMail.listeners[0](target.folder, { messages: [target] });
+  await settle(h, () => entered === 1);
+  h.expireInput();
+  await settle(h, state => state.records[0].status === "error" && state.records[0].nextRetry);
+  assert.equal(h.notifications.length, 0);
+  const now = Date.now;
+  try { Date.now = () => now() + 61000; h.timers[0](); await new Promise(resolve => setImmediate(resolve)); }
+  finally { Date.now = now; }
+  await settle(h, () => entered === 2);
+  h.expireInput();
+  const state = await settle(h, state => state.records[0].status === "error" && state.records[0].attempts === 2);
+  await new Promise(resolve => setImmediate(resolve));
+  const before = structuredClone(state.records[0]);
+  assert.equal(before.nextRetry, null);
+  assert.equal(h.notifications.length, 1);
+  release(); await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual((await h.send("state")).records[0], before);
+  assert.equal((await h.send("state")).issue, "");
+  h.timers[0](); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(entered, 2);
+  h.expireIdle();
+});
+
+test("a folder stop finishes its timed-out input and releases incoming inspection", async () => {
+  const blocked = mail(1841), spare = mail(1842), fresh = { ...mail(1843), folder: { id: "other", accountId: "one", path: "/Other" } };
+  blocked.folder.id = spare.folder.id = "inbox";
+  const h = await harness({ direct: true, mails: [blocked, spare, fresh], folderRefs: [blocked.folder, fresh.folder],
+    saved: { settings: { enabled: true, accountIds: ["one"], notifications: false } } });
+  let release, enter; const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { enter = resolve; });
+  const raw = h.api.messages.getRaw;
+  h.api.messages.getRaw = async (id, options) => { const file = await raw(id, options); if (id === blocked.id) { enter(); await gate; } return file; };
+  const context = await h.send("folderContext", { folderId: "inbox" });
+  await h.send("folderStart", { token: context.token, includeSubfolders: false });
+  await started;
+  h.events.newMail.listeners[0](fresh.folder, { messages: [fresh] });
+  const jobId = (await h.send("state")).folderJob.id;
+  assert.equal((await h.send("folderStop", { jobId })).ok, true);
+  h.expireInput();
+  const state = await settle(h, state => state.folderJob?.status === "stopped" && state.records.some(record => record.messageId === fresh.id && record.status === "clean"));
+  assert.equal(state.folderJob.completed, 1);
+  assert.equal(state.folderJob.counts.error, 1);
+  const before = structuredClone(state.folderJob);
+  release(); await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual((await h.send("state")).folderJob, before);
+  assert.ok(!h.rawReads.includes(spare.id));
+  h.expireIdle();
+});
+
+test("input timeout preserves a previous threat and a late lookup cannot replace it", async () => {
+  const target = mail(1851), digest = await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello"));
+  const h = await harness({ direct: true, mails: [target], saved: { records: [{ key: "previous-threat", status: "detected", sha256: digest,
+    signatures: ["Synthetic.PreviousThreat"], locator: locator(target) }] } });
+  let release, enter; const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { enter = resolve; });
+  const raw = h.api.messages.getRaw;
+  h.api.messages.getRaw = async (...args) => { const file = await raw(...args); enter(); await gate; return file; };
+  await h.send("retry", { key: "previous-threat" });
+  await started;
+  h.expireInput();
+  const state = await settle(h, state => state.records[0].lastAttempt?.status === "error");
+  assert.equal(state.records[0].status, "detected");
+  assert.deepEqual(state.records[0].signatures, ["Synthetic.PreviousThreat"]);
+  assert.equal(state.records[0].sha256, digest);
+  const before = structuredClone(state.records[0]);
+  release(); await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual((await h.send("state")).records[0], before);
   h.expireIdle();
 });

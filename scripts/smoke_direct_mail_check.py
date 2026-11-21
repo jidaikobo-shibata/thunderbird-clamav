@@ -76,7 +76,7 @@ def fixture_xpi(target, original, version, scenario="full"):
         const api = messenger;
         const testStorageSet = api.storage.local.set.bind(api.storage.local);
         const testRaw = api.messages.getRaw.bind(api.messages);
-        let failedEarlyInput = false, failedLateInput = false, holdEarlyMove = false;
+        let failedEarlyInput = false, failedLateInput = false, holdEarlyMove = false, failedSlowInput = false;
         const testAddNew = api.messages.onNewMailReceived.addListener.bind(api.messages.onNewMailReceived);
         let testNewListener;
         api.messages.onNewMailReceived.addListener = (listener, ...args) => {
@@ -131,6 +131,14 @@ def fixture_xpi(target, original, version, scenario="full"):
               await new Promise(resolve => setTimeout(resolve,25));
             }
           }
+          if (!failedSlowInput && header.subject === 'Synthetic slow input') {
+            failedSlowInput = true;
+            await testStorageSet({fixtureSlowInputStarted:true});
+            for (let attempt=0;attempt<4800;attempt++) {
+              if ((await api.storage.local.get('fixtureReleaseSlowInput')).fixtureReleaseSlowInput) break;
+              await new Promise(resolve => setTimeout(resolve,25));
+            }
+          }
           if (!failedEarlyInput && header.subject === 'Synthetic early raw move') {
             failedEarlyInput = true; holdEarlyMove = true;
             await testStorageSet({fixtureRawGateStarted:true});
@@ -161,6 +169,11 @@ def fixture_xpi(target, original, version, scenario="full"):
             await messenger.storage.local.set({fixtureValidStorage:valid, records:{format:99, keys:['preserved-review']}});
             await messenger.testFixture.update();
             """)
+    if scenario in ("full", "quit", "uninstall"):
+        # Exercise the real timer at a short deadline only for this synthetic mail.
+        payload["background.js"] = payload["background.js"].replace(
+            b"}, SCAN_INPUT_TIMEOUT_MS);",
+            b"}, record.locator.subject === 'Synthetic slow input' ? 2000 : SCAN_INPUT_TIMEOUT_MS);")
     if scenario == "recovery":
         # Faults exist only in instrumented, disposable-profile XPIs.
         payload["fixture/seed.js"] = payload["fixture/seed.js"].replace(

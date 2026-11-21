@@ -9,7 +9,7 @@ import { validateQuarantine, moveToQuarantine, inQuarantine, quarantineCandidate
 import { t } from "./i18n.mjs";
 import { toolbarNotice } from "./installation.mjs";
 import {
-  MAX_BYTES, MAX_TRANSFER_BYTES, DEFAULTS, LABELS, NativeClient, accountOf, locator, sameEnvelope,
+  MAX_BYTES, MAX_TRANSFER_BYTES, SCAN_INPUT_TIMEOUT_MS, DEFAULTS, LABELS, NativeClient, accountOf, locator, sameEnvelope,
   validateSettings, messagePages, sha256, needsAttention, pausedAutomatic, normalizeAutomaticSettings
 } from "./core.mjs";
 import { canDelete, canForget, canRetry } from "./results.mjs";
@@ -22,6 +22,7 @@ const scanConnection = new ScanConnection(() => new NativeClient(api.runtime), D
 let directMigrationBackup = null, incrementalMigrationBackup = null;
 const session = crypto.randomUUID();
 const MAX_RECORDS = 1000;
+const inputTimers = { set: globalThis.setTimeout.bind(globalThis), clear: globalThis.clearTimeout.bind(globalThis) };
 let settings = { ...DEFAULTS };
 let records = [];
 let overflowPending = null, overflowReport = null;
@@ -586,10 +587,12 @@ async function openDashboard() {
   }
 }
 
-async function rawBytes(messageId, maxBytes = MAX_TRANSFER_BYTES) {
+async function rawBytes(messageId, maxBytes = MAX_TRANSFER_BYTES, check = () => {}) {
+  check();
   // Never request decryption: this version must not prompt for keys or store
   // decrypted mail. Encrypted MIME is explicitly marked incomplete by the host.
   const raw = await api.messages.getRaw(messageId, { data_format: "File", decrypt: false });
+  check();
   if (!raw || typeof raw.arrayBuffer !== "function") {
     throw new Error(t("mail032", "メールデータをFile形式で取得できませんでした。"));
   }
@@ -598,32 +601,38 @@ async function rawBytes(messageId, maxBytes = MAX_TRANSFER_BYTES) {
     error.incomplete = true;
     throw error;
   }
-  return new Uint8Array(await raw.arrayBuffer());
+  const buffer = await raw.arrayBuffer();
+  check();
+  return new Uint8Array(buffer);
 }
 
-async function resolveRecord(record) {
+async function resolveRecord(record, check = () => {}) {
   // A persisted Thunderbird numeric ID must never be reused after restart.
   if (record.session === session && Number.isInteger(record.messageId)) {
     try {
       const message = await api.messages.get(record.messageId);
+      check();
       if (sameEnvelope(message, record.locator)) return message;
-    } catch { /* Moved/deleted messages are resolved below. */ }
+    } catch { check(); /* Moved/deleted messages are resolved below. */ }
   }
   if (!record.locator.headerMessageId) {
     throw new Error(t("mail034", "対象を再特定できません。Thunderbirdで選択して再検査してください。"));
   }
   const candidates = [];
+  check();
   const first = await api.messages.query({ headerMessageId: record.locator.headerMessageId });
-  for await (const message of messagePages(api.messages, first)) {
+  check();
+  for await (const message of messagePages(api.messages, first, check)) {
     if (sameEnvelope(message, record.locator)) candidates.push(message);
     if (candidates.length > 20) throw new Error(t("mail035", "同じ識別情報のメールが多いため、対象を特定できません。"));
   }
   const matches = [];
   for (const candidate of candidates) {
-    if (!record.sha256 || await sha256(await rawBytes(candidate.id)) === record.sha256) {
+    if (!record.sha256 || await sha256(await rawBytes(candidate.id, MAX_TRANSFER_BYTES, check)) === record.sha256) {
       matches.push(candidate);
     }
   }
+  check();
   if (matches.length !== 1) {
     throw new Error(t("mail036", "対象メールが存在しないか、複数候補があり特定できません。選択して再検査してください。"));
   }
@@ -675,19 +684,69 @@ function recoverMovedInput(record, expectedPosition) {
   return recordChanges;
 }
 
-async function readScanInput(record, maxBytes) {
+async function readScanInput(record, maxBytes, check) {
   for (let retry = 0; ; retry++) {
+    check();
     const revision = moveRevisions.get(record) || 0;
+    const before = moveLocationStamp(record);
+    const lookup = { ...record };
     try {
-      const message = await resolveRecord(record);
+      // resolveRecord may reconstruct IDs after restart. Its late completion
+      // must never modify the live history belonging to another attempt.
+      const message = await resolveRecord(lookup, check);
+      check();
+      if (before === moveLocationStamp(record) && revision === (moveRevisions.get(record) || 0)) {
+        record.messageId = lookup.messageId; record.session = lookup.session; record.locator = lookup.locator;
+      }
       if (message.headersOnly) throw new Error(t("mail043", "ヘッダーのみ取得されたメールです。本文をダウンロードして再検査してください。"));
-      return { message, bytes: await rawBytes(message.id, maxBytes) };
+      const bytes = await rawBytes(message.id, maxBytes, check);
+      check();
+      return { message, bytes };
     } catch (error) {
-      // Retry retrieval, not a verdict: only when an explicit move changed the
-      // target during this read, and at most twice in one scan attempt.
+      check();
+      // Explicit moves may redirect retrieval, within the same overall deadline.
       if (error.incomplete || retry >= 2 || revision === (moveRevisions.get(record) || 0)) throw error;
     }
   }
+}
+
+async function prepareScanInput(record, maxBytes) {
+  let active = true, timer, inputDigest = null;
+  const expired = () => new Error(t("scanInputTimeout", "メールの特定・本文の取得または照合が60秒以内に完了しませんでした。時間をおいて再検査してください。"));
+  const check = () => { if (!active) throw expired(); };
+  const work = async () => {
+    const { message, bytes } = await readScanInput(record, maxBytes, check);
+    const digest = await sha256(bytes);
+    check();
+    inputDigest = digest;
+    record.sha256 = digest;
+    // Input redirected by a move must still match the bytes to be inspected.
+    let current = message;
+    for (let attempt = 0; position(current) !== position({ id: record.messageId, folder: record.locator.folder }); attempt++) {
+      if (attempt >= 3) throw new Error(t("mail036", "対象メールが存在しないか、複数候補があり特定できません。選択して再検査してください。"));
+      current = await api.messages.get(record.messageId);
+      check();
+      if (!sameEnvelope(current, record.locator) || await sha256(await rawBytes(current.id, maxBytes, check)) !== digest) {
+        check();
+        throw new Error(t("mail036", "対象メールが存在しないか、複数候補があり特定できません。選択して再検査してください。"));
+      }
+      check();
+    }
+    check();
+    refreshQuarantineLocation(record, current);
+    return { bytes, digest };
+  };
+  try {
+    const deadline = new Promise((resolve, reject) => {
+      timer = inputTimers.set(() => { active = false; reject(expired()); }, SCAN_INPUT_TIMEOUT_MS);
+    });
+    return await Promise.race([work(), deadline]);
+  } catch (error) {
+    const failure = new Error(error?.message || String(error), { cause: error });
+    if (error?.incomplete) failure.incomplete = true;
+    if (inputDigest) failure.scanInputDigest = inputDigest;
+    throw failure;
+  } finally { active = false; inputTimers.clear(timer); }
 }
 
 function quarantineHistory() {
@@ -962,21 +1021,9 @@ async function drain() {
       await save();
       let currentDigest = null, scannerTouched = false;
       try {
-        const { message, bytes } = await readScanInput(record, policy.mailMiB * 1024 * 1024);
-        record.sha256 = await sha256(bytes);
-        currentDigest = record.sha256;
-        // A move event may have redirected this record while the original raw
-        // bytes were being fetched. Never overwrite the new locator with stale
-        // headers, or attach that verdict to different destination contents.
-        let current = message;
-        for (let attempt = 0; position(current) !== position({ id: record.messageId, folder: record.locator.folder }); attempt++) {
-          if (attempt >= 3) throw new Error(t("mail036", "対象メールが存在しないか、複数候補があり特定できません。選択して再検査してください。"));
-          current = await api.messages.get(record.messageId);
-          if (!sameEnvelope(current, record.locator) || await sha256(await rawBytes(current.id, policy.mailMiB * 1024 * 1024)) !== currentDigest) {
-            throw new Error(t("mail036", "対象メールが存在しないか、複数候補があり特定できません。選択して再検査してください。"));
-          }
-        }
-        refreshQuarantineLocation(record, current);
+        const { bytes, digest } = await prepareScanInput(record, policy.mailMiB * 1024 * 1024);
+        record.sha256 = digest;
+        currentDigest = digest;
         scannerTouched = true;
         if (!client || client.closed) {
           connection = scanConnection.acquire();
@@ -1008,6 +1055,7 @@ async function drain() {
           connection = client = null;
         }
       } catch (error) {
+        currentDigest = error.scanInputDigest || currentDigest;
         if (scannerTouched || client?.closed) {
           if (connection) scanConnection.discard(connection);
           connection = client = null;

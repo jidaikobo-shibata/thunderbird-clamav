@@ -3001,5 +3001,8 @@
   },
   "qReceiptChecking": {
     "message": "Inspection is pending while checking whether this message is already quarantined."
+  },
+  "scanInputTimeout": {
+    "message": "Message lookup, retrieval, or verification did not finish within 60 seconds. Try scanning again later."
   }
 }

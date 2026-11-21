@@ -5,6 +5,7 @@ import { t, uiLanguage, localizeDetail } from "./i18n.mjs";
 export const MAX_BYTES = 25 * 1024 * 1024;
 export const MAX_TRANSFER_BYTES = 100 * 1024 * 1024;
 export const CHUNK_BYTES = 64 * 1024;
+export const SCAN_INPUT_TIMEOUT_MS = 60000;
 export const HOST = "local.clam_mail_check";
 export const DEFAULTS = Object.freeze({
   enabled: false, accountIds: [], notifications: true
@@ -75,14 +76,16 @@ export async function sha256(bytes) {
   return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-export async function* messagePages(api, first) {
+export async function* messagePages(api, first, check) {
   let page = first;
   let complete = false;
   try {
     while (page) {
-      for (const message of page.messages) yield message;
+      check?.();
+      for (const message of page.messages) { check?.(); yield message; }
       if (!page.id) { complete = true; break; }
       page = await api.continueList(page.id);
+      check?.();
     }
   } finally {
     if (!complete && page?.id && api.abortList) {
