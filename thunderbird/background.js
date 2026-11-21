@@ -141,9 +141,9 @@ async function requireFolderScanner() {
 }
 
 const folderScan = new FolderScan(api, {
-  digestOf: async message => {
+  digestOf: async (message, check) => {
     if (message.headersOnly || message.external) return null;
-    return sha256(await rawBytes(message.id));
+    return sha256(await rawBytes(message.id, MAX_TRANSFER_BYTES, check));
   },
   changed: () => save(), wake: () => { void drain().catch(report); },
   finished: async job => {
@@ -1527,8 +1527,19 @@ function moveEnvelope(message) {
 async function moveDigest(messageId) {
   if (activeMoveProofs >= 4) await new Promise(resolve => moveProofWaiters.push(resolve));
   else activeMoveProofs++;
-  try { return await sha256(await rawBytes(messageId)); }
-  finally {
+  let active = true, timer;
+  const expired = () => new Error("Move verification expired");
+  const check = () => { if (!active) throw expired(); };
+  try {
+    const work = async () => {
+      const digest = await sha256(await rawBytes(messageId, MAX_TRANSFER_BYTES, check));
+      check(); return digest;
+    };
+    return await Promise.race([work(), new Promise((resolve, reject) => {
+      timer = inputTimers.set(() => { active = false; reject(expired()); }, 10000);
+    })]);
+  } finally {
+    active = false; inputTimers.clear(timer);
     const next = moveProofWaiters.shift();
     if (next) next();
     else activeMoveProofs--;

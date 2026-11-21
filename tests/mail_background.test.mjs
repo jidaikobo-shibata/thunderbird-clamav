@@ -4103,3 +4103,32 @@ test("automatic quarantine queue performs the next move after the first proof ex
   assert.equal(moves, 1);
   h.expireIdle();
 });
+
+test('expired move proofs release all four slots and never change history late',async()=>{
+ const originals=Array.from({length:5},(_,i)=>({...mail(1900+i),folder:{id:'inbox',accountId:'one',path:'/Inbox'}}));
+ const moved=originals.map((m,i)=>({...m,id:2000+i,folder:{id:'dest',accountId:'one',path:'/Dest'}}));
+ const fresh=mail(3000), h=await harness({direct:true,mails:[...originals,...moved,fresh]});
+ h.api.mailTabs.getSelectedMessages=async()=>({messages:originals});await h.send('scanSelection');
+ await settle(h,s=>s.records.length===5&&s.records.every(r=>r.status==='clean'));
+ let release;const gate=new Promise(r=>release=r), raw=h.api.messages.getRaw,reads=[];
+ h.api.messages.getRaw=async(id,opt)=>{if(id>=2000&&id<2005){reads.push(id);if(id<2004)await gate;}return raw(id,opt);};
+ const jobs=[];
+ for(let i=0;i<4;i++)jobs.push(h.events.moved.listeners[0]({messages:[originals[i]]},{messages:[moved[i]]}));
+ await settle(h,()=>reads.length===4);
+ jobs.push(h.events.moved.listeners[0]({messages:[originals[4]]},{messages:[moved[4]]}));
+ await h.send('settings',{settings:{enabled:true,accountIds:['one'],notifications:false}});
+ h.events.newMail.listeners[0](fresh.folder,{messages:[fresh]});
+ await settle(h,s=>s.records.some(r=>r.messageId===fresh.id&&r.status==='clean'));
+ for(let i=0;i<3;i++)await h.timers[0]();
+ const state=await h.send('state');
+ assert.deepEqual(reads,[2000,2001,2002,2003]);
+ for(let i=0;i<4;i++)h.expireReview();
+ await Promise.all(jobs);
+ const after = await h.send('state');
+ assert.equal(after.records.find(r=>r.locator.headerMessageId===originals[4].headerMessageId).messageId,2004);
+ const before = structuredClone(after.records);
+ release();await new Promise(resolve=>setTimeout(resolve,20));
+ assert.deepEqual((await h.send('state')).records,before);
+ assert.equal(h.reviewTimers.filter(t=>t.active).length,0);
+ h.expireIdle();
+});

@@ -52,7 +52,7 @@ test("stopping during enumeration is idempotent and finalizes the message list",
   await scan.start(root, false);
   while (scan.job.discovered < 100) await new Promise(resolve => setImmediate(resolve));
   await scan.stop(); await scan.stop();
-  assert.equal(scan.job.status, "stopping");
+  assert.equal(scan.job.status, "stopped");
   assert.equal(scan.take(), null);
   resume(); await scan.collecting;
   assert.equal(scan.job.status, "stopped");
@@ -214,7 +214,7 @@ test("resume re-enumeration can be cancelled and rejects a moved root", async ()
   api.messages.list = async () => { await gate; return { messages: [mail(5)], id: "resume-page" }; };
   await scan.resume(root);
   await scan.stop();
-  assert.equal(scan.job.status, "stopping");
+  assert.equal(scan.job.status, "stopped");
   release(); await scan.collecting;
   assert.equal(scan.job.status, "stopped");
 });
@@ -297,4 +297,57 @@ test("failed new folder start restores the prior job, checkpoints and pending ta
   scan.changed = async () => {};
   await scan.resume(root); await scan.collecting;
   assert.equal(scan.job.id, job.id);
+});
+
+for (const expire of [false, true]) test(`resume proof is bounded and late digest cannot change a newer job (expire=${expire})`, async () => {
+  const { scan, api } = fixture();
+  const originals = [mail(1), mail(2)];
+  api.messages.list = async () => ({ messages: originals });
+  await scan.start(root, false); await scan.collecting;
+  scan.take(); await scan.stop();
+  await scan.complete("clean", { hint: await checkpointHint(locator(originals[0])), digest: "a".repeat(64) });
+  let enter, release;
+  const started = new Promise(resolve => { enter = resolve; }), gate = new Promise(resolve => { release = resolve; });
+  let guard;
+  scan.proofTimeout = 15;
+  scan.digestOf = async (message, check) => { guard = check; enter(); await gate; check(); return "a".repeat(64); };
+  await scan.resume(root); await started;
+  if (expire) {
+    await scan.collecting;
+    assert.equal(scan.job.resumedMatched, 0);
+    assert.equal(scan.job.total, 3);
+    assert.equal(scan.take().id, 1);
+    await scan.stop(); await scan.complete("clean");
+  } else {
+    await scan.stop();
+    assert.equal(scan.job.status, "stopped");
+    assert.equal(scan.active, false);
+  }
+  assert.throws(guard);
+  await scan.remove();
+  api.messages.list = async () => ({ messages: [mail(90)] });
+  await scan.start(root, false); await scan.collecting;
+  const before = scan.snapshot();
+  release(); await new Promise(resolve => setTimeout(resolve, 10));
+  assert.deepEqual(scan.snapshot(), before);
+  assert.equal(scan.take().id, 90);
+});
+
+for (const phase of ["list", "page", "subfolder"]) test(`collection stop does not wait for ${phase} and discards late lists`, async () => {
+  const { scan, api, aborted } = fixture();
+  let enter, release;
+  const started = new Promise(resolve => { enter = resolve; }), gate = new Promise(resolve => { release = resolve; });
+  api.messages.list = async () => {
+    if (phase === "list") { enter(); await gate; return { messages: [mail(1)], id: "late" }; }
+    return phase === "page" ? { messages: [], id: "early" } : { messages: [] };
+  };
+  api.messages.continueList = async () => { enter(); await gate; return { messages: [mail(2)], id: "late" }; };
+  api.folders.getSubFolders = async () => { enter(); await gate; return [child]; };
+  await scan.start(root, phase === "subfolder"); await started;
+  await scan.stop();
+  assert.equal(scan.job.status, "stopped");
+  await scan.remove();
+  release(); await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(scan.job, null);
+  if (phase !== "subfolder") assert.ok(aborted.includes("late"));
 });

@@ -39,9 +39,9 @@ const RESUMABLE = ["stopped", "interrupted", "blocked", "error"];
 /** Runtime targets are never persisted: Thunderbird IDs are session-scoped. */
 export class FolderScan {
   constructor(api, { changed = async () => {}, wake = () => {}, finished = async () => {},
-    digestOf = async () => null,
+    digestOf = async () => null, proofTimeout = 10000,
     pause = () => new Promise(resolve => setTimeout(resolve, 0)), maxTargets = 100000 } = {}) {
-    Object.assign(this, { api, changed, wake, finished, pause, maxTargets, digestOf });
+    Object.assign(this, { api, changed, wake, finished, pause, maxTargets, digestOf, proofTimeout });
     this.job = null;
     this.targets = [];
     this.cursor = 0;
@@ -108,7 +108,14 @@ export class FolderScan {
   }
   launch(folder, resume = false) {
     const job = this.job;
-    this.collecting = this.collect(folder, resume).catch(error => this.job === job ? this.finish("error", error.message || t("mail184", "対象一覧の取得に失敗しました。")) : undefined);
+    const token = { cancelled: false, waiters: new Set() };
+    token.cancel = () => { token.cancelled = true; for (const cancel of token.waiters) cancel(); };
+    this.collection = token;
+    this.collecting = this.collect(folder, resume, token).catch(error => {
+      if (this.collection !== token || this.job !== job) return;
+      return token.cancelled ? this.finish("stopped", t("mail188", "対象一覧の取得中に中止しました。")) :
+        this.finish("error", error.message || t("mail184", "対象一覧の取得に失敗しました。"));
+    });
   }
   async resume(folder) {
     if (!this.resumable || this.active) throw new Error(t("mail185", "このフォルダー検査は再開できません。"));
@@ -138,7 +145,29 @@ export class FolderScan {
     catch (error) { this.job = previous; this.checkpoints = checkpoints; throw error; }
     finally { this.removing = false; }
   }
-  async collect(root, resume = false) {
+  async collect(root, resume = false, token) {
+    const job = this.job;
+    const check = () => {
+      if (token.cancelled || this.collection !== token || this.job !== job) throw new Error("Collection cancelled");
+    };
+    const wait = async work => {
+      check();
+      let cancel;
+      const stopped = new Promise((resolve, reject) => { cancel = () => reject(new Error("Collection cancelled")); });
+      token.waiters.add(cancel);
+      try {
+        const result = await Promise.race([work(), stopped]);
+        check(); return result;
+      } finally { token.waiters.delete(cancel); }
+    };
+    const discard = page => {
+      if (page?.id) try { void this.api.messages.abortList?.(page.id)?.catch(() => {}); } catch { /* Already closed. */ }
+    };
+    const page = work => wait(async () => {
+      const result = await work();
+      if (token.cancelled || this.collection !== token || this.job !== job) discard(result);
+      check(); return result;
+    });
     const remaining = resume ? new Map(this.checkpoints) : new Map();
     const hints = new Set([...remaining.keys()].map(key => key.slice(0, 64)));
     const roots = Array.isArray(root) ? root : [root];
@@ -150,8 +179,8 @@ export class FolderScan {
       seenFolders.add(identity);
       if (seenFolders.size > 5000) return this.finish("blocked", t("mail189", "対象フォルダーが多いため停止しました。範囲を分けてください。"));
       if (!realFolder(folder) || folder.accountId !== roots[0].accountId) { this.job.skippedFolders++; continue; }
-      const first = await this.api.messages.list(ref(folder));
-      for await (const message of messagePages(this.api.messages, first)) {
+      const first = await page(() => this.api.messages.list(ref(folder)));
+      for await (const message of messagePages({ continueList: id => page(() => this.api.messages.continueList(id)), abortList: id => discard({ id }) }, first, check)) {
         if (this.job.status === "stopping") return this.finish("stopped", t("mail188", "対象一覧の取得中に中止しました。"));
         if (message.external || !message.folder || keyOf(message.folder) !== identity || seenMessages.has(message.id)) {
           this.job.ignored++; continue;
@@ -163,10 +192,19 @@ export class FolderScan {
         this.job.discovered++;
         let matched = false;
         if (resume && hints.size) {
-          const hint = await checkpointHint(locator(message));
+          const hint = await wait(() => checkpointHint(locator(message)));
           if (hints.has(hint)) {
             try {
-              const digest = await this.digestOf(message);
+              let active = true, timer;
+              const proofCheck = () => { check(); if (!active) throw new Error("Resume proof expired"); };
+              let digest;
+              try {
+                digest = await wait(() => Promise.race([
+                  this.digestOf(message, proofCheck),
+                  new Promise((resolve, reject) => { timer = setTimeout(() => { active = false; reject(new Error("Resume proof expired")); }, this.proofTimeout); })
+                ]));
+                proofCheck();
+              } finally { active = false; clearTimeout(timer); }
               const key = hint + ":" + digest, count = remaining.get(key) || 0;
               if (count > 0) {
                 remaining.set(key, count - 1);
@@ -176,11 +214,12 @@ export class FolderScan {
             } catch { /* Unverifiable mail must be scanned, never silently skipped. */ }
           }
         }
+        check();
         if (!matched) this.targets.push(targetOf(message));
-        if (this.job.discovered % 100 === 0) { await this.changed(); await this.pause(); }
+        if (this.job.discovered % 100 === 0) { await wait(() => this.changed()); await wait(() => this.pause()); }
       }
       if (this.job.includeSubfolders && this.job.status !== "stopping") {
-        folders.push(...await this.api.folders.getSubFolders(ref(folder), false));
+        folders.push(...await wait(() => this.api.folders.getSubFolders(ref(folder), false)));
       }
     }
     if (this.job.status === "stopping") return this.finish("stopped", t("mail188", "対象一覧の取得中に中止しました。"));
@@ -216,7 +255,8 @@ export class FolderScan {
     this.job.status = "stopping";
     this.job.detail = t("mail197", "実行中の処理を終えて中止します。");
     if (!collecting && !this.job.scanning) return this.finish("stopped", t("mail198", "検査待ちのメールを残して中止しました。"));
-    await this.changed();
+    if (collecting) { this.collection?.cancel(); await this.collecting; }
+    else await this.changed();
   }
   async finish(status, detail) {
     if (!this.job) return;
