@@ -1,4 +1,7 @@
 {
+  "moveIntakeExpired": {
+    "message": "The moved-message list could not be verified. History locations have been left unchanged. If needed, rescan the messages from Thunderbird’s message list."
+  },
   "qDeadline": {
     "message": "Quarantine verification timed out. Check the source and quarantine folders in Thunderbird. The message will not be moved again automatically."
   },
@@ -2997,7 +3000,7 @@
     "message": "Initialization failed. Check that storage is available, then click Check connection again to retry."
   },
   "incomingReceiptPending": {
-    "message": "Incoming mail reception is paused and will resume after storage recovers. Keep Thunderbird open until recovery because this pending reception is not saved. $1"
+    "message": "Incoming mail reception is paused and will resume after message listing or storage recovers. Keep Thunderbird open until recovery because this pending reception is not saved. $1"
   },
   "draftAutoScanHelp": {
     "message": "Drafts are excluded from automatic scanning of new mail. You can still scan them manually by selecting messages or scanning their folder."

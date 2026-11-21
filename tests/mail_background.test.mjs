@@ -4132,3 +4132,149 @@ test('expired move proofs release all four slots and never change history late',
  assert.equal(h.reviewTimers.filter(t=>t.active).length,0);
  h.expireIdle();
 });
+
+test('paged receipt does not hold unrelated new-mail admission or manual inspection',async()=>{
+ const a=mail(4101),b=mail(4102),manual=mail(4103);
+ const h=await harness({direct:true,mails:[a,b,manual],saved:{settings:{enabled:true,accountIds:['one'],notifications:true}}});
+ let enter,release;const started=new Promise(r=>enter=r),gate=new Promise(r=>release=r);
+ h.api.messages.continueList=async id=>{assert.equal(id,'held-receipt');enter();await gate;return{messages:[a]};};
+ h.events.newMail.listeners[0](a.folder,{messages:[],id:'held-receipt'});await started;
+ h.events.newMail.listeners[0](b.folder,{messages:[b]});
+ h.api.mailTabs.getSelectedMessages=async()=>({messages:[manual]});await h.send('scanSelection');
+ for(let i=0;i<3;i++){await h.timers[0]();await new Promise(r=>setTimeout(r,5));}
+ let state=await h.send('state');
+ assert.equal(state.records.find(r=>r.messageId===b.id).status,'clean');
+ assert.equal(state.records.find(r=>r.messageId===manual.id).status,'clean');
+ assert.equal(h.inputTimers.filter(t=>t.active).length+h.reviewTimers.filter(t=>t.active).length,0);
+
+ release();await settle(h,s=>[a.id,b.id].every(id=>s.records.some(r=>r.messageId===id)));
+ await h.timers[0]();await settle(h,s=>s.records.every(r=>r.status==='clean'));h.expireIdle();
+});
+test('paged move intake does not hold unrelated later move tracking',async()=>{
+ const originals=[mail(4201),mail(4202)], moved=originals.map((m,i)=>({...m,id:4301+i,folder:{id:'dest',accountId:'one',path:'/Dest'}}));
+ const h=await harness({direct:true,mails:[...originals,...moved]});
+ h.api.mailTabs.getSelectedMessages=async()=>({messages:originals});await h.send('scanSelection');await h.timers[0]();
+ await settle(h,s=>s.records.length===2&&s.records.every(r=>r.status==='clean'));
+ let enter,release;const started=new Promise(r=>enter=r),gate=new Promise(r=>release=r);
+ h.api.messages.continueList=async id=>{assert.equal(id,'held-move');enter();await gate;return{messages:[originals[0]]};};
+ const first=h.events.moved.listeners[0]({messages:[],id:'held-move'},{messages:[moved[0]]});await started;
+ const second=h.events.moved.listeners[0]({messages:[originals[1]]},{messages:[moved[1]]});
+ for(let i=0;i<3;i++){await h.timers[0]();await new Promise(r=>setTimeout(r,5));}
+ await second;
+ const state=await h.send('state');assert.equal(state.records.find(r=>r.messageId===moved[1].id).locator.folder.path,'/Dest');
+ assert.equal(h.rawReads.includes(moved[1].id),true);
+ assert.equal(h.reviewTimers.filter(t=>t.active).length,0);
+
+ release();await Promise.all([first,second]);
+ assert.equal((await h.send('state')).records.find(r=>r.messageId===moved[1].id).locator.folder.path,'/Dest');h.expireIdle();
+});
+
+for (const overflow of [false, true]) test(`pending receipt page holds no manual overflow priority (overflow=${overflow})`, async () => {
+  const fresh = mail(4401), manual = mail(4402);
+  const records = overflow ? Array.from({length:1000}, (_,i) => ({key:'held-'+i,status:'detected',locator:{accountId:'one'}})) : [];
+  const h = await harness({ direct:true, mails:[fresh,manual], saved:{records,settings:{enabled:true,accountIds:['one'],notifications:false}} });
+  let enter, release;
+  const started = new Promise(resolve => { enter=resolve; }), gate = new Promise(resolve => { release=resolve; });
+  h.api.messages.continueList = async () => { enter(); await gate; return {messages:[fresh]}; };
+  h.events.newMail.listeners[0](fresh.folder,{messages:[],id:'held'}); await started;
+  h.api.mailTabs.getSelectedMessages = async () => ({messages:[manual]});
+  const accepted = h.send('scanSelection');
+  for(let i=0;i<4;i++) { await h.timers[0](); await new Promise(resolve => setTimeout(resolve,5)); }
+  assert.ok(h.rawReads.includes(manual.id));
+  release();
+  assert.equal((await accepted).ok,true);
+  await settle(h,s=>overflow?s.overflowReport?.total===2:s.records.length===2);
+  h.expireIdle();
+});
+
+test('a rejected continuation retains its page and retries once per tick without duplicate delivery',async()=>{
+  const a=mail(4501),b=mail(4502),fresh=mail(4503);
+  const h=await harness({direct:true,mails:[a,b,fresh],saved:{settings:{enabled:true,accountIds:['one'],notifications:false}}});
+  let attempts=0;
+  h.api.messages.continueList=async id=>{assert.equal(id,'retry-page');if(++attempts===1)throw Error('synthetic page unavailable');return{messages:[b]};};
+  h.events.newMail.listeners[0](a.folder,{messages:[a],id:'retry-page'});
+  await settle(h,s=>s.issue.includes('synthetic page unavailable'));
+  h.events.newMail.listeners[0](fresh.folder,{messages:[fresh]});
+  await h.timers[0]();
+  await settle(h,s=>s.records.length===3&&!s.issue&&s.records.every(r=>r.status==='clean'));
+  assert.equal(attempts,2);
+  assert.deepEqual([...h.rawReads].sort((a,b)=>a-b),[4501,4502,4503]);
+  h.expireIdle();
+});
+
+for(const phase of ['original','destination']) for(const unavailable of [false,true]) test(`late move metadata replays a continuous chain (phase=${phase}, unavailable=${unavailable})`,async()=>{
+  const a=mail(4601),b={...a,id:4602,folder:{id:'b',accountId:'one',path:'/B'}},c={...a,id:4603,folder:{id:'c',accountId:'one',path:'/C'}},d={...a,id:4604,folder:{id:'d',accountId:'one',path:'/D'}};
+  const h=await harness({direct:true,mails:[a,b,c,d]});
+  h.api.mailTabs.getSelectedMessages=async()=>({messages:[a]});await h.send('scanSelection');await h.timers[0]();
+  await settle(h,s=>s.records[0]?.status==='clean');
+  let enter,release;const started=new Promise(r=>enter=r),gate=new Promise(r=>release=r);
+  h.api.messages.continueList=async id=>{assert.equal(id,'chain-page');enter();await gate;return{messages:[phase==='original'?a:b]};};
+  if(unavailable){const raw=h.api.messages.getRaw;h.api.messages.getRaw=async(id,opt)=>{if(id===b.id||id===c.id)throw Error('intermediate gone');return raw(id,opt);};}
+  const first=h.events.moved.listeners[0](phase==='original'?{messages:[],id:'chain-page'}:{messages:[a]},phase==='destination'?{messages:[],id:'chain-page'}:{messages:[b]});
+  await started;
+  await h.events.moved.listeners[0]({messages:[b]},{messages:[c]});
+  await h.events.moved.listeners[0]({messages:[c]},{messages:[d]});
+  assert.equal((await h.send('state')).records[0].messageId,a.id);
+  release();await first;
+  assert.equal((await h.send('state')).records[0].messageId,d.id);
+  assert.equal((await h.send('state')).records.length,1);
+  h.expireIdle();
+});
+
+test('expired incomplete move metadata cannot rewind a more recent verified location',async()=>{
+  const a=mail(4701),b={...a,id:4702,folder:{id:'b',accountId:'one',path:'/B'}},c={...a,id:4703,folder:{id:'c',accountId:'one',path:'/C'}};
+  const h=await harness({direct:true,mails:[a,b,c]});
+  h.api.mailTabs.getSelectedMessages=async()=>({messages:[a]});await h.send('scanSelection');await h.timers[0]();await settle(h,s=>s.records[0]?.status==='clean');
+  let enter,release;const started=new Promise(r=>enter=r),gate=new Promise(r=>release=r);const aborted=[];
+  h.api.messages.continueList=async()=>{enter();await gate;return{messages:[a],id:'late-list'};};
+  h.api.messages.abortList=async id=>aborted.push(id);
+  const first=h.events.moved.listeners[0]({messages:[],id:'held'},{messages:[b]});await started;
+  const now=Date.now;Date.now=()=>now()+61000;
+  try{await h.events.moved.listeners[0]({messages:[a]},{messages:[c]});}finally{Date.now=now;}
+  const before=structuredClone((await h.send('state')).records[0]);assert.equal(before.messageId,c.id);
+  release();await first;
+  assert.deepEqual((await h.send('state')).records[0],before);assert.ok(aborted.includes('late-list'));
+  h.expireIdle();
+});
+
+for(const reverse of [false,true]) test(`multiple incomplete move notices preserve chronological replay (reverse=${reverse})`,async()=>{
+ const mails=Array.from({length:4},(_,i)=>({...mail(4801),id:4801+i,folder:{id:'stage'+i,accountId:'one',path:'/Stage'+i}}));
+ const h=await harness({direct:true,mails});h.api.mailTabs.getSelectedMessages=async()=>({messages:[mails[0]]});await h.send('scanSelection');await h.timers[0]();await settle(h,s=>s.records[0]?.status==='clean');
+ const releases=[],started=[];
+ for(let i=0;i<2;i++){let enter;const ready=new Promise(r=>enter=r),gate=new Promise(r=>releases.push(r));started.push({ready,enter,gate});}
+ h.api.messages.continueList=async id=>{const i=Number(id);started[i].enter();await started[i].gate;return{messages:[mails[i]]};};
+ const first=h.events.moved.listeners[0]({messages:[],id:'0'},{messages:[mails[1]]});await started[0].ready;
+ const second=h.events.moved.listeners[0]({messages:[],id:'1'},{messages:[mails[2]]});await started[1].ready;
+ await h.events.moved.listeners[0]({messages:[mails[2]]},{messages:[mails[3]]});
+ releases[reverse?1:0]();await (reverse?second:first);
+ releases[reverse?0:1]();await Promise.all([first,second]);
+ assert.equal((await h.send('state')).records[0].messageId,mails[3].id);h.expireIdle();
+});
+
+test('replayed move metadata does not adopt a new history created after the original event',async()=>{
+ const a=mail(4901),b={...a,id:4902,folder:{id:'b',accountId:'one',path:'/B'}};
+ const x=mail(4911),y={...x,id:4912,folder:{id:'y',accountId:'one',path:'/Y'}};
+ const h=await harness({direct:true,mails:[a,b,x,y]});h.api.mailTabs.getSelectedMessages=async()=>({messages:[a,x]});await h.send('scanSelection');await h.timers[0]();await settle(h,s=>s.records.length===2&&s.records.every(r=>r.status==='clean'));
+ let enter,release;const started=new Promise(r=>enter=r),gate=new Promise(r=>release=r);
+ h.api.messages.continueList=async()=>{enter();await gate;return{messages:[a]};};
+ const first=h.events.moved.listeners[0]({messages:[],id:'held'},{messages:[b]});await started;
+ await h.events.moved.listeners[0]({messages:[x]},{messages:[y]});
+ const old=(await h.send('state')).records.find(r=>r.messageId===y.id);
+ const ticket=await h.send('prepareForget',{keys:[old.key]});assert.equal(ticket.ok,true);assert.equal((await h.send('forgetMany',{token:ticket.token})).ok,true);
+ h.api.mailTabs.getSelectedMessages=async()=>({messages:[x]});await h.send('scanSelection');await h.timers[0]();
+ const before=structuredClone((await settle(h,s=>s.records.some(r=>r.messageId===x.id&&r.status==='clean'))).records.find(r=>r.messageId===x.id));
+ release();await first;
+ assert.deepEqual((await h.send('state')).records.find(r=>r.key===before.key),before);h.expireIdle();
+});
+
+test('move replay retention limit retires the oldest incomplete notice safely',async()=>{
+ const a=mail(4951),b={...a,id:4952,folder:{id:'b',accountId:'one',path:'/B'}};
+ const h=await harness({direct:true,mails:[a,b]});h.api.mailTabs.getSelectedMessages=async()=>({messages:[a]});await h.send('scanSelection');await h.timers[0]();await settle(h,s=>s.records[0]?.status==='clean');
+ let enter,release;const started=new Promise(r=>enter=r),gate=new Promise(r=>release=r);
+ h.api.messages.continueList=async()=>{enter();await gate;return{messages:[a]};};
+ const first=h.events.moved.listeners[0]({messages:[],id:'held'},{messages:[b]});await started;
+ for(let i=0;i<1000;i++)await h.events.moved.listeners[0]({messages:[]},{messages:[]});
+ assert.match((await h.send('state')).issue,/移動通知/);
+ release();await first;
+ assert.equal((await h.send('state')).records[0].messageId,a.id);h.expireIdle();
+});

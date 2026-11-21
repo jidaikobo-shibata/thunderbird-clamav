@@ -53,7 +53,7 @@ let lastMailTab;
 let writes = Promise.resolve();
 let settingsChanges = Promise.resolve();
 let recordChanges = Promise.resolve(), recordStaging = null;
-let mutations = Promise.resolve(), manualMutations = Promise.resolve();
+let manualMutations = Promise.resolve();
 let automaticReceipts = 0;
 const pendingReceipts = new Set();
 let receiptIssue = null;
@@ -62,7 +62,8 @@ let automaticQuarantines = Promise.resolve();
 const QUARANTINE_TIMEOUT_MS = 60000;
 const QUARANTINE_RECEIPT_TIMEOUT_MS = 10000;
 const quarantineCheckFailures = new WeakMap();
-let moves = Promise.resolve(); // Header intake only; never waits for body I/O.
+let moves = Promise.resolve(); // Scheduling only; never waits for list/body I/O.
+const moveIntakes = new Set();
 const moveJobs = new Map();
 let activeMoveProofs = 0;
 const moveProofWaiters = [];
@@ -1007,9 +1008,24 @@ function stageMessage(message, source) {
   return recordChanges;
 }
 
+// Keep page state on errors: a rejected continuation may be retried without
+// closing the generator and losing the unaccepted remainder of the notification.
+function receiptPages(first) {
+  let page = first, offset = 0;
+  return { async next() {
+    while (page) {
+      if (offset < page.messages.length) return { value: page.messages[offset++], done: false };
+      if (!page.id) { page = null; break; }
+      const next = await api.messages.continueList(page.id);
+      page = next; offset = 0;
+    }
+    return { done: true };
+  } };
+}
+
 function enqueueReceipt(receipt) {
+  if (receipt.retryQueued) return receipt.work;
   receipt.retryQueued = true;
-  automaticReceipts++;
   const work = async () => {
     try {
       while (true) {
@@ -1020,18 +1036,15 @@ function enqueueReceipt(receipt) {
         }
         const message = receipt.current;
         if (!message.external && message.folder) {
+          automaticReceipts++;
           try {
             let outcome;
-            do { outcome = await stageMessage(message, "automatic"); if (outcome.wait) await outcome.wait; } while (outcome.retry);
-          } catch (error) {
-            // Keep this message AND the still-open iterator. Breaking a
-            // for-await loop here would abort Thunderbird's remaining pages.
-            pendingReceipts.delete(receipt);
-            pendingReceipts.add(receipt);
-            receiptIssue = t("incomingReceiptPending", "新着メールの受付を保留しています。保存の復旧後に再開します。未保存の受付を保持するため、復旧するまでThunderbirdを終了しないでください。 $1", [String(error.message || error)]);
-            report(receiptIssue);
-            return;
-          }
+            do {
+              outcome = await stageMessage(message, "automatic");
+              void drain().catch(report);
+              if (outcome.wait) await outcome.wait;
+            } while (outcome.retry);
+          } finally { automaticReceipts--; wakeOverflow(); }
         }
         receipt.current = null;
       }
@@ -1041,18 +1054,20 @@ function enqueueReceipt(receipt) {
         receiptIssue = null;
       }
       await save().catch(report);
-    } finally {
-      receipt.retryQueued = false;
-      automaticReceipts--;
-      wakeOverflow();
-    }
+    } catch (error) {
+      pendingReceipts.delete(receipt);
+      pendingReceipts.add(receipt);
+      receiptIssue = t("incomingReceiptPending", "新着メールの受付を保留しています。一覧取得または保存の復旧後に再開します。未保存の受付を保持するため、復旧するまでThunderbirdを終了しないでください。 $1", [String(error.message || error)]);
+      report(receiptIssue);
+    } finally { receipt.retryQueued = false; wakeOverflow(); }
   };
-  mutations = mutations.catch(() => {}).then(work);
-  return mutations;
+  // Each notification owns its page wait. Only durable admission is serialized.
+  receipt.work = work();
+  return receipt.work;
 }
 
 function enqueue(first, source) {
-  if (source === "automatic") return enqueueReceipt({ iterator: messagePages(api.messages, first)[Symbol.asyncIterator](), current: null });
+  if (source === "automatic") return enqueueReceipt({ iterator: receiptPages(first), current: null });
   const work = async () => {
     for await (const message of messagePages(api.messages, first)) {
       if (message.external || !message.folder) continue;
@@ -1548,10 +1563,11 @@ async function moveDigest(messageId) {
 
 // External moves (including Undo) update the display only after content
 // verification. Our own quarantine/deletion operations retain their own locks.
-async function applyMove(oldMessages, newMessages, digests) {
+async function applyMove(oldMessages, newMessages, digests, allowed = null) {
   const envelope = moveEnvelope;
   const tracked = new Map(), destinations = new Map();
   for (const record of new Set([...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : [])])) {
+    if (allowed && !allowed.has(record)) continue;
     const locations = [ { id: record.messageId, folder: record.locator.folder, ...record.locator }, moveHint(record) ].filter(Boolean);
     for (const location of locations) {
       const key = JSON.stringify([accountOf(location), location.folder?.path, envelope(location)]);
@@ -1665,50 +1681,115 @@ function unscannedMoveSource(old, currentById) {
     (["queued", "scanning"].includes(record.status) || canRecoverMovedInput(record)));
 }
 
+// Only completed metadata enters the scheduling gate. Retain later metadata
+// while an earlier notification is incomplete so A→B→C can be replayed in order.
+function moveIntakeError() {
+  return new Error(t("moveIntakeExpired", "移動通知の一覧を確認できませんでした。履歴の場所は自動更新せずに残しています。必要ならThunderbirdのメール一覧から再検査してください。"));
+}
+function pruneMoveIntakes() {
+  // Header scheduling contains only brief cooperative yields. Do not remove
+  // replay edges halfway through registering their ordered dependencies.
+  if ([...moveIntakes].some(intake => intake.scheduling)) return;
+  const now = Date.now();
+  const expire = intake => {
+    intake.expired = true;
+    moveIntakes.delete(intake);
+    if (!intake.scheduled) report(moveIntakeError());
+  };
+  for (const intake of moveIntakes) if (now - intake.startedAt >= 60000) expire(intake);
+  const trim = () => {
+    let pending = false, headers = 0;
+    for (const intake of moveIntakes) {
+      if (!intake.scheduled) pending = true;
+      else if (!pending) { moveIntakes.delete(intake); continue; }
+      headers += (intake.oldMessages?.length || 0) + (intake.newMessages?.length || 0);
+    }
+    return headers;
+  };
+  let headers = trim();
+  while (moveIntakes.size > 1000 || headers > 100000) {
+    expire(moveIntakes.values().next().value);
+    headers = trim();
+  }
+}
+
+async function scheduleMove(oldMessages, newMessages, allowed = null) {
+  const destinations = new Map();
+  for (const message of newMessages) {
+    const key = moveEnvelope(message);
+    if (!destinations.has(key)) destinations.set(key, []);
+    destinations.get(key).push(message);
+  }
+  const currentById = new Map();
+  for (const record of [...records, ...(overflowPending ? [overflowPending] : [])]) {
+    if (!currentById.has(record.messageId)) currentById.set(record.messageId, []);
+    currentById.get(record.messageId).push(record);
+  }
+  const jobs = [], digests = new Map(), known = [], groups = [];
+  for (const old of oldMessages) {
+    if (unscannedMoveSource(old, currentById)) groups.push([old]);
+    else known.push(old);
+  }
+  // Keep bulk, already-scanned work together so its history index and durable
+  // refresh are built once. Digest-free recoveries in the same event bypass it.
+  if (known.length) groups.push(known);
+  for (const group of groups) {
+    const targets = [...new Set(group.flatMap(old => destinations.get(moveEnvelope(old)) || []))];
+    // Reserve both ends before the next notification is accepted. A→B→C
+    // stays ordered even when A→B has not established a verified location.
+    const keys = new Set([...group.map(position), ...targets.map(position)]);
+    const prior = [...new Set([...keys].map(key => moveJobs.get(key)).filter(Boolean))];
+    const job = Promise.all(prior).then(() => applyMove(group, targets, digests, allowed)).catch(report);
+    for (const key of keys) moveJobs.set(key, job);
+    void job.then(() => {
+      for (const key of keys) if (moveJobs.get(key) === job) moveJobs.delete(key);
+    });
+    jobs.push(job);
+    if (jobs.length % 100 === 0) await yieldBatch();
+  }
+  return jobs;
+}
+
 api.messages.onMoved?.addListener((originals, moved) => {
-  const intake = moves.catch(() => {}).then(async () => {
+  const receipt = { startedAt: Date.now(), scheduled: false, expired: false };
+  moveIntakes.add(receipt);
+  pruneMoveIntakes();
+  const check = () => {
+    if (receipt.expired || Date.now() - receipt.startedAt >= 60000) throw moveIntakeError();
+  };
+  const read = async () => {
     await ready;
     const oldMessages = [], newMessages = [];
-    for await (const message of messagePages(api.messages, originals)) oldMessages.push(message);
-    for await (const message of messagePages(api.messages, moved)) newMessages.push(message);
-    const destinations = new Map();
-    for (const message of newMessages) {
-      const key = moveEnvelope(message);
-      if (!destinations.has(key)) destinations.set(key, []);
-      destinations.get(key).push(message);
-    }
-    const currentById = new Map();
-    for (const record of [...records, ...(overflowPending ? [overflowPending] : [])]) {
-      if (!currentById.has(record.messageId)) currentById.set(record.messageId, []);
-      currentById.get(record.messageId).push(record);
-    }
-    const jobs = [], digests = new Map(), known = [], groups = [];
-    for (const old of oldMessages) {
-      if (unscannedMoveSource(old, currentById)) groups.push([old]);
-      else known.push(old);
-    }
-    // Keep bulk, already-scanned work together so its history index and durable
-    // refresh are built once. Digest-free recoveries in the same event bypass it.
-    if (known.length) groups.push(known);
-    for (const group of groups) {
-      const targets = [...new Set(group.flatMap(old => destinations.get(moveEnvelope(old)) || []))];
-      // Reserve both ends before the next notification is accepted. A→B→C
-      // stays ordered even when A→B has not established a verified location.
-      const keys = new Set([...group.map(position), ...targets.map(position)]);
-      const prior = [...new Set([...keys].map(key => moveJobs.get(key)).filter(Boolean))];
-      const job = Promise.all(prior).then(() => applyMove(group, targets, digests)).catch(report);
-      for (const key of keys) moveJobs.set(key, job);
-      void job.then(() => {
-        for (const key of keys) if (moveJobs.get(key) === job) moveJobs.delete(key);
-      });
-      jobs.push(job);
-      if (jobs.length % 100 === 0) await yieldBatch();
-    }
-    return jobs;
+    for await (const message of messagePages(api.messages, originals, check)) oldMessages.push(message);
+    for await (const message of messagePages(api.messages, moved, check)) newMessages.push(message);
+    check();
+    const intake = moves.catch(() => {}).then(async () => {
+      check();
+      receipt.scheduling = true;
+      try {
+        receipt.oldMessages = oldMessages; receipt.newMessages = newMessages;
+        receipt.candidates = new Set(quarantineHistory());
+        const jobs = await scheduleMove(oldMessages, newMessages);
+        // A later notification may already have been attempted before this
+        // event exposed its source. Replay only later metadata, never old verdicts.
+        let later = false;
+        for (const other of moveIntakes) {
+          if (other === receipt) { later = true; continue; }
+          if (later && other.scheduled && !other.expired) jobs.push(...await scheduleMove(other.oldMessages, other.newMessages, other.candidates));
+        }
+        receipt.scheduled = true;
+        return jobs;
+      } finally { receipt.scheduling = false; pruneMoveIntakes(); }
+    });
+    moves = intake.then(() => {}, report);
+    return intake.then(jobs => Promise.all(jobs));
+  };
+  return read().catch(error => {
+    receipt.scheduled = true;
+    moveIntakes.delete(receipt);
+    pruneMoveIntakes();
+    report(error);
   });
-  moves = intake.then(() => {}, report);
-  // Test callers can still await completion; subsequent intake never does.
-  return intake.then(jobs => Promise.all(jobs)).catch(report);
 });
 api.mailTabs.onSelectedMessagesChanged.addListener(tab => { lastMailTab = tab.id; });
 api.menus.onClicked.addListener((info, tab) => {
@@ -2089,6 +2170,7 @@ setInterval(() => {
   void ready.then(async () => {
     if (pendingMaintenance && !pendingMaintenance.applying && Date.now() > pendingMaintenance.expires) releaseMaintenance();
     if (maintenanceActive() || helperRemoved) return;
+    pruneMoveIntakes();
     // At most one retained receipt is scheduled per tick; new deliveries keep
     // their independent queue and repeated ticks cannot enqueue duplicates.
     const receipt = [...pendingReceipts].find(item => !item.retryQueued);

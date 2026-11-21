@@ -184,6 +184,45 @@ try {
     check(state.records.length === historyCount, "Moved mail notification does not duplicate history");
     check(state.records.find(record => record.key === incomplete.key)?.review.note === "Synthetic reviewed encryption", "Move round trip retains human notes");
     report.ordinaryMoves = true;
+    report.stage = "paged-notification-isolation";
+    await messenger.testFixture.report(JSON.stringify({...report,running:true}));
+    const pagedRaw = fixture.mails.plain.replace(/Subject: [^\r\n]+/, "Subject: Synthetic paged receipt").replace(/Message-ID: [^\r\n]+/i, "Message-ID: <paged-receipt@example.invalid>");
+    const pagedMail = await messenger.messages.import(new File([pagedRaw], "paged.eml", {type:"message/rfc822"}), fixture.source.id, {read:true,new:false});
+    await messenger.storage.local.set({fixtureReceiptPageId:pagedMail.id});
+    for(let attempt=0;attempt<200;attempt++) {
+      if((await messenger.storage.local.get('fixtureReceiptPageStarted')).fixtureReceiptPageStarted) break;
+      await wait(25);
+    }
+    check((await messenger.storage.local.get('fixtureReceiptPageStarted')).fixtureReceiptPageStarted, "Real-header receipt page held");
+    const separateRaw = fixture.mails.plain.replace(/Subject: [^\r\n]+/, "Subject: Synthetic separate receipt").replace(/Message-ID: [^\r\n]+/i, "Message-ID: <separate-receipt@example.invalid>");
+    const separateMail = await messenger.messages.import(new File([separateRaw], "separate.eml", {type:"message/rfc822"}), fixture.source.id, {read:true,new:false});
+    await messenger.testFixture.inject(separateMail.id);
+    state = await settled(state=>state.records.some(r=>r.messageId===separateMail.id&&r.status==="clean"));
+    check(!state.records.some(r=>r.messageId===pagedMail.id), "Other receipt scanned before the held page returns");
+    await messenger.storage.local.set({fixtureReceiptPageRelease:true});
+    await settled(state=>state.records.some(r=>r.messageId===pagedMail.id&&r.status==="clean"));
+    report.pagedReceiptIsolation = true;
+    const plainMove = (await request("state")).records.find(r=>r.key===plainKey);
+    await messenger.storage.local.set({fixtureMovePageSourceId:plainMove.messageId});
+    await messenger.messages.move([plainMove.messageId],fixture.history.id,{isUserAction:true});
+    for(let attempt=0;attempt<200;attempt++) {
+      if((await messenger.storage.local.get('fixtureMovePageStarted')).fixtureMovePageStarted) break;
+      await wait(25);
+    }
+    check((await messenger.storage.local.get('fixtureMovePageStarted')).fixtureMovePageStarted, "Real move metadata page held");
+    await messenger.messages.move([incomplete.messageId],fixture.history.id,{isUserAction:true});
+    state = await settled(state=>state.records.find(r=>r.key===incomplete.key)?.locator.folder.id===fixture.history.id);
+    incomplete = state.records.find(r=>r.key===incomplete.key);
+    check(state.records.find(r=>r.key===plainKey).locator.folder.id===fixture.source.id, "Other move completes before held metadata returns");
+    const movedPlain = (await messenger.messages.list(fixture.history.id)).messages.find(m=>m.subject==="Synthetic plain");
+    check(movedPlain, "Physically moved real mail located");
+    await messenger.messages.move([movedPlain.id],fixture.quarantine.id,{isUserAction:true});
+    await wait(200);
+    await messenger.storage.local.set({fixtureMovePageRelease:true});
+    state = await settled(state=>state.records.find(r=>r.key===plainKey)?.locator.folder.id===fixture.quarantine.id);
+    check(state.records.find(r=>r.key===incomplete.key).review?.note==="Synthetic reviewed encryption", "Unrelated human review survives replay");
+    report.pagedMoveIsolation = true;
+    report.pagedMoveReplay = true;
     let threat = state.records.find(record => record.locator.subject === "Synthetic attachment");
     report.stage = "quarantine";
     const moved = await request("quarantineMany", { keys: [threat.key], hashes: { [threat.key]: threat.sha256 }, destinations: state.settings.quarantine });

@@ -76,6 +76,22 @@ def fixture_xpi(target, original, version, scenario="full"):
         const api = messenger;
         const testStorageSet = api.storage.local.set.bind(api.storage.local);
         const testRaw = api.messages.getRaw.bind(api.messages);
+        const testContinue = api.messages.continueList.bind(api.messages);
+        let testPagedReceipt = null, testPagedMove = null;
+        api.messages.continueList = async id => {
+          if (id === 'fixture-receipt-page' || id === 'fixture-move-page') {
+            const receipt = id === 'fixture-receipt-page';
+            await testStorageSet({[receipt ? 'fixtureReceiptPageStarted' : 'fixtureMovePageStarted']:true});
+            for (let attempt=0;attempt<4800;attempt++) {
+              if ((await api.storage.local.get(receipt ? 'fixtureReceiptPageRelease' : 'fixtureMovePageRelease'))[receipt ? 'fixtureReceiptPageRelease' : 'fixtureMovePageRelease']) break;
+              await new Promise(resolve => setTimeout(resolve,25));
+            }
+            const messages = receipt ? [await api.messages.get(testPagedReceipt)] : testPagedMove.messages;
+            await testStorageSet({[receipt ? 'fixtureReceiptPageReturned' : 'fixtureMovePageReturned']:true});
+            return {messages};
+          }
+          return testContinue(id);
+        };
         let failedEarlyInput = false, failedLateInput = false, holdEarlyMove = false, failedSlowInput = false, reviewCarryReads = 0;
         const testAddNew = api.messages.onNewMailReceived.addListener.bind(api.messages.onNewMailReceived);
         let testNewListener;
@@ -85,6 +101,12 @@ def fixture_xpi(target, original, version, scenario="full"):
         const testAddMoved = api.messages.onMoved.addListener.bind(api.messages.onMoved);
         api.messages.onMoved.addListener = listener => testAddMoved((before,after) => {
           void (async () => {
+            const hold = await api.storage.local.get('fixtureMovePageSourceId');
+            if (!testPagedMove && before.messages.some(message => message.id === hold.fixtureMovePageSourceId)) {
+              testPagedMove = before;
+              await listener({messages:[],id:'fixture-move-page'},after);
+              return;
+            }
             if (holdEarlyMove) {
               holdEarlyMove = false;
               const target = after.messages.find(message => message.subject === 'Synthetic early raw move');
@@ -106,6 +128,11 @@ def fixture_xpi(target, original, version, scenario="full"):
           })().catch(console.error);
         });
         api.storage.onChanged.addListener((changes, area) => {
+          const paged = changes.fixtureReceiptPageId?.newValue;
+          if (area === 'local' && Number.isInteger(paged)) {
+            testPagedReceipt = paged;
+            void api.messages.get(paged).then(message => testNewListener(message.folder,{messages:[],id:'fixture-receipt-page'})).catch(console.error);
+          }
           const replay = changes.fixtureQuarantineReplayId?.newValue ?? changes.fixtureReviewReplayId?.newValue;
           if (area === 'local' && Number.isInteger(replay)) {
             // Replay a resync notification using the real current header. The
