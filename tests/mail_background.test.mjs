@@ -1680,7 +1680,7 @@ test("full protected history does not disable automatic quarantine", async () =>
   let moves = 0;
   h.api.messages.move = async () => { moves++; original.folder = destination; };
   h.events.newMail.listeners[0](original.folder, { messages: [original] });
-  const state = await settle(h, state => state.overflowReport?.total === 1);
+  const state = await settle(h, state => state.overflowReport?.total === 1 && state.overflowReport.recent[0]?.quarantine?.status === "moved");
   assert.equal(state.overflowReport.recent[0].quarantine.status, "moved");
   assert.equal(moves, 1);
   h.events.newMail.listeners[0](destination, { messages: [original] });
@@ -3508,7 +3508,7 @@ for (const mode of ["review", "forget", "differentBody", "differentVerdict"]) te
   h.expireIdle();
 });
 
-async function waitingQuarantineReceipt({ changed = false, failRead = false, page = false } = {}) {
+async function waitingQuarantineReceipt({ changed = false, failRead = false, page = false, phase = "raw" } = {}) {
   const isolation = { id: "isolation", accountId: "one", path: "/Isolation" };
   const old = { ...mail(1701), folder: isolation }, incoming = { ...old, id: 1702,
     ...(changed ? { raw: "Subject: changed\r\n\r\ndifferent body" } : {}) };
@@ -3520,11 +3520,17 @@ async function waitingQuarantineReceipt({ changed = false, failRead = false, pag
     saved: { records: [record], settings: { enabled: true, accountIds: ["one"], notifications: false } } });
   let enter, release;
   const started = new Promise(resolve => { enter = resolve; }), gate = new Promise(resolve => { release = resolve; });
-  const raw = h.api.messages.getRaw; let first = true;
+  const raw = h.api.messages.getRaw, get = h.api.messages.get; let first = true;
+  h.api.messages.get = async id => {
+    if (id === incoming.id && first && phase === "lookup") { first = false; enter(); await gate; }
+    return get(id);
+  };
   h.api.messages.getRaw = async (id, options) => {
     const file = await raw(id, options);
     if (id === incoming.id && first) {
-      first = false; enter(); await gate;
+      first = false;
+      if (phase === "buffer") return { size: file.size, arrayBuffer: async () => { enter(); await gate; return file.arrayBuffer(); } };
+      enter(); await gate;
       if (failRead) throw new Error("quarantine identity proof unavailable");
     }
     return file;
@@ -3977,5 +3983,123 @@ test("history forgotten before the carry deadline is not notified or restored", 
   release(); await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
   assert.equal(h.stored().records.length, 0);
   assert.equal(h.notifications.length, 0);
+  h.expireIdle();
+});
+
+async function waitingAutomaticQuarantine(phase) {
+  const original = mail(1801); original.folder.id = "inbox";
+  const fresh = mail(1802), manual = mail(1803);
+  const destination = { id: "isolation", accountId: "one", path: "/Isolation" };
+  const h = await harness({ direct: true, mails: [original, fresh, manual], folderRefs: [original.folder, destination],
+    scanResult: id => ({ status: id === original.id ? "detected" : "clean", signatures: id === original.id ? ["Synthetic"] : [] }),
+    saved: { settings: { enabled: true, accountIds: ["one"], notifications: true,
+      quarantine: { one: { folderId: destination.id, path: destination.path, auto: true } } } } });
+  h.api.permissions.contains = async () => true;
+  h.api.folders.getFolderCapabilities = async () => ({ canAddMessages: true, canDeleteMessages: true });
+  let enter, release, reads = 0, moves = 0, queries = 0;
+  const started = new Promise(resolve => { enter = resolve; }), gate = new Promise(resolve => { release = resolve; });
+  const raw = h.api.messages.getRaw, getFolder = h.api.folders.get, query = h.api.messages.query;
+  h.api.messages.getRaw = async (id, options) => {
+    if (id === original.id && ++reads === 2 && phase === "raw") { enter(); await gate; }
+    return raw(id, options);
+  };
+  h.api.folders.get = async (...args) => {
+    if (args[0] === destination.id && phase === "folder") { enter(); await gate; }
+    return getFolder(...args);
+  };
+  h.api.messages.move = async () => { moves++; original.folder = destination; if (phase === "move") { enter(); await gate; } };
+  h.api.messages.query = async (...args) => { queries++; if (phase === "query" && queries === 1) { enter(); await gate; } return query(...args); };
+  h.events.newMail.listeners[0](original.folder, { messages: [original] });
+  await started;
+  return { h, original, fresh, manual, release, moves: () => moves, queries: () => queries };
+}
+
+for (const phase of ["folder", "raw", "move", "query"]) test(`automatic quarantine does not hold inspections or alerts and invalidates expired ${phase}`, async () => {
+  const f = await waitingAutomaticQuarantine(phase), { h, original, fresh, manual, release } = f;
+  try {
+    h.events.newMail.listeners[0](fresh.folder, { messages: [fresh] });
+    h.api.mailTabs.getSelectedMessages = async () => ({ messages: [manual] });
+    assert.equal((await h.send("scanSelection")).ok, true);
+    await settle(h, state => [fresh.id, manual.id].every(id => state.records.some(r => r.messageId === id && r.status === "clean")));
+    assert.equal(h.notifications.length, 1);
+    assert.equal((await h.send("retry", { key: (await h.send("state")).records[0].key })).ok, false);
+    h.expireInput();
+    let state = await settle(h, state => state.records[0].quarantine?.status === "error");
+    const before = structuredClone(state.records[0]);
+    assert.equal(before.status, "detected");
+    assert.match(before.quarantine.detail, /時間切れ/);
+    release();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    state = await h.send("state");
+    assert.deepEqual(state.records[0], before);
+    assert.equal(f.moves(), ["move", "query"].includes(phase) ? 1 : 0);
+    assert.equal(f.queries(), phase === "query" ? 1 : 0);
+    for (let i = 0; i < 2; i++) await h.timers[0]();
+    assert.equal(f.moves(), ["move", "query"].includes(phase) ? 1 : 0);
+  } finally { release(); h.expireIdle(); }
+});
+
+for (const phase of ["lookup", "raw", "buffer"]) for (const changed of [false, true]) test(`quarantine receipt timeout releases following candidates and ignores late proof (phase=${phase}, changed=${changed})`, async () => {
+  const { h, incoming, fresh, release } = await waitingQuarantineReceipt({ changed, phase });
+  const second = { ...incoming, id: 1805, raw: "Subject: changed\r\n\r\nanother body" };
+  const get = h.api.messages.get, raw = h.api.messages.getRaw;
+  h.api.messages.get = async id => id === second.id ? second : get(id);
+  h.api.messages.getRaw = async (id, options) => id === second.id ? new File([second.raw], "mail.eml") : raw(id, options);
+  h.events.newMail.listeners[0](second.folder, { messages: [second] });
+  await settle(h, state => state.records.some(r => r.messageId === second.id && r.quarantineCheckPending));
+  h.expireReview();
+  let state = await settle(h, state => [incoming.id, second.id].every(id => state.records.some(r => r.messageId === id && r.status === "clean")));
+  const before = structuredClone(state.records);
+  release();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  state = await h.send("state");
+  assert.deepEqual(state.records, before);
+  assert.ok(state.records.some(r => r.key === "known-quarantined"));
+  assert.equal(state.records.filter(r => r.quarantineCheckPending).length, 0);
+  h.expireIdle();
+});
+
+test("automatic quarantine queue advances after timeout and rechecks a disabled target", async () => {
+  const { h, fresh, release, moves } = await waitingAutomaticQuarantine("raw");
+  // A second detection must wait for the bounded move worker, not hold scanning.
+  const post = h.api.clamDirect.request;
+  h.api.clamDirect.request = async (token, value) => {
+    const result = JSON.parse(await post(token, value));
+    if (JSON.parse(value).op === "end") Object.assign(result, { status: "detected", signatures: ["Synthetic"] });
+    return JSON.stringify(result);
+  };
+  h.events.newMail.listeners[0](fresh.folder, { messages: [fresh] });
+  await settle(h, state => state.records.some(r => r.messageId === fresh.id && r.status === "detected" && r.quarantine?.status === "moving"));
+  assert.equal(moves(), 0);
+  const settings = (await h.send("state")).settings;
+  settings.quarantine.one.auto = false;
+  assert.equal((await h.send("settings", { settings })).ok, true);
+  h.expireInput();
+  await settle(h, state => state.records.filter(r => r.status === "detected").every(r => r.quarantine?.status === "error"));
+  release();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(moves(), 0);
+  h.expireIdle();
+});
+
+test("automatic quarantine queue performs the next move after the first proof expires", async () => {
+  const { h, fresh, release } = await waitingAutomaticQuarantine("raw");
+  fresh.folder.id = "inbox";
+  const destination = { id: "isolation", accountId: "one", path: "/Isolation" };
+  const post = h.api.clamDirect.request;
+  h.api.clamDirect.request = async (token, value) => {
+    const result = JSON.parse(await post(token, value));
+    if (JSON.parse(value).op === "end") Object.assign(result, { status: "detected", signatures: ["Synthetic"] });
+    return JSON.stringify(result);
+  };
+  let moves = 0;
+  h.api.messages.move = async ids => { assert.deepEqual(ids, [fresh.id]); moves++; fresh.folder = destination; };
+  h.events.newMail.listeners[0](fresh.folder, { messages: [fresh] });
+  await settle(h, state => state.records.some(r => r.messageId === fresh.id && r.status === "detected" && r.quarantine?.status === "moving"));
+  h.expireInput();
+  await settle(h, state => state.records.some(r => r.messageId === fresh.id && r.quarantine?.status === "moved"));
+  release();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(moves, 1);
   h.expireIdle();
 });

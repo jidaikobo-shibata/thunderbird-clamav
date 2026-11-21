@@ -124,12 +124,29 @@ def fixture_xpi(target, original, version, scenario="full"):
         api.messages.getRaw = async (id, options) => {
           const header = await api.messages.get(id);
           let reviewCarryHeld = false;
+          let automaticHeld = false, receiptHeld = false;
           const quarantineGate = await api.storage.local.get('fixtureQuarantinePendingId');
-          if (quarantineGate.fixtureQuarantinePendingId === id) {
+          const alreadyHeld = await api.storage.local.get('fixtureQuarantineHeldId');
+          if (quarantineGate.fixtureQuarantinePendingId === id && alreadyHeld.fixtureQuarantineHeldId !== id) {
+            receiptHeld = true;
+            await testStorageSet({fixtureQuarantineHeldId:id});
             await testStorageSet({fixtureQuarantineProofStarted:true});
             for (let attempt=0;attempt<4800;attempt++) {
               if ((await api.storage.local.get('fixtureQuarantineProofRelease')).fixtureQuarantineProofRelease) break;
               await new Promise(resolve => setTimeout(resolve,25));
+            }
+          }
+          if (header.subject === 'Synthetic slow quarantine') {
+            const state = await api.storage.local.get('fixtureAutoRawCount');
+            const count = (state.fixtureAutoRawCount || 0) + 1;
+            await testStorageSet({fixtureAutoRawCount:count});
+            if (count === 2) {
+              automaticHeld = true;
+              await testStorageSet({fixtureAutoStarted:true});
+              for (let attempt=0;attempt<4800;attempt++) {
+                if ((await api.storage.local.get('fixtureAutoRelease')).fixtureAutoRelease) break;
+                await new Promise(resolve => setTimeout(resolve,25));
+              }
             }
           }
           if (header.subject === 'Synthetic reviewed oversized') {
@@ -164,6 +181,8 @@ def fixture_xpi(target, original, version, scenario="full"):
             failedLateInput = true; throw new Error('synthetic late-body move failure');
           }
           const file = await testRaw(id,options);
+          if (receiptHeld) await testStorageSet({fixtureQuarantineProofReturned:true});
+          if (automaticHeld) await testStorageSet({fixtureAutoReturned:true});
           if (reviewCarryHeld) await testStorageSet({fixtureReviewCarryReturned:true});
           return file;
         };
@@ -191,6 +210,13 @@ def fixture_xpi(target, original, version, scenario="full"):
         payload["background.js"] = payload["background.js"].replace(
             b"}, REVIEW_FINGERPRINT_TIMEOUT_MS);",
             b"}, record.locator.subject === 'Synthetic reviewed oversized' ? 2000 : REVIEW_FINGERPRINT_TIMEOUT_MS);")
+    if scenario in ("full", "quit", "uninstall"):
+        payload["background.js"] = payload["background.js"].replace(
+            b"}, QUARANTINE_TIMEOUT_MS);",
+            b"}, copy.locator.subject === 'Synthetic slow quarantine' ? 2000 : QUARANTINE_TIMEOUT_MS);")
+        payload["background.js"] = payload["background.js"].replace(
+            b"}, QUARANTINE_RECEIPT_TIMEOUT_MS);",
+            b"}, (await api.storage.local.get('fixtureReceiptDeadline')).fixtureReceiptDeadline ? 2000 : QUARANTINE_RECEIPT_TIMEOUT_MS);")
     if scenario == "recovery":
         # Faults exist only in instrumented, disposable-profile XPIs.
         payload["fixture/seed.js"] = payload["fixture/seed.js"].replace(

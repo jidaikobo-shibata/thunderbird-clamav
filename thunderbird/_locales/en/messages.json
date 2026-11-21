@@ -1,4 +1,7 @@
 {
+  "qDeadline": {
+    "message": "Quarantine verification timed out. Check the source and quarantine folders in Thunderbird. The message will not be moved again automatically."
+  },
   "mail001": {
     "message": "An update is required for integration.",
     "description": "連携用の更新が必要です。"

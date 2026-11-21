@@ -1,6 +1,6 @@
 # ClamAV Mail Check
 
-This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a34**, a prerelease of the integrated Ubuntu/macOS scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a34 has not been published.
+This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a35**, a prerelease of the integrated Ubuntu/macOS scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a35 has not been published.
 
 ## Requirements
 
@@ -53,7 +53,7 @@ No additional Python or npm packages are needed:
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-Install `dist/clam-mail-check-direct-0.20.0a34.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
+Install `dist/clam-mail-check-direct-0.20.0a35.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
 
 Open Settings and choose Check connection again. Start with a small manual folder scan. Automatic scanning is disabled for a new installation; select accounts only after checking results.
 
@@ -70,6 +70,8 @@ Remove the extension through Thunderbird's Add-ons Manager. Normal extension set
 ## Results and privacy
 
 Encrypted content, scan limits, missing software and communication failures are reported as incomplete or failed, never as a clean scan. A previous malware detection is retained when a rescan fails. A clean result does not guarantee safety.
+
+Automatic quarantine runs separately from scanning, one message at a time, with a 60-second deadline per attempt. Detection alerts and later scans continue while it waits. If completion cannot be confirmed, check both folders in Thunderbird; no automatic repeat move is attempted. Quarantine receipt identity checks wait at most 10 seconds, then fall back to normal scanning. Late replies cannot remove or overwrite newer results.
 
 Automatic carry-forward checks for a previous acknowledgement wait at most 10 seconds. If the message contents cannot be verified in time, the result requires review again and later inspections continue. Late responses cannot replace a later human decision.
 

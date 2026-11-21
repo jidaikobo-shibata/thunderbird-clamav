@@ -132,3 +132,27 @@ test("verified location changes and legacy display stop claiming mail is still q
   refreshQuarantineLocation(record, { ...restored, id: 8, folder: destination });
   assert.equal(record.quarantine.status, "moved");
 });
+
+for (const phase of ["destination", "source"]) test(`expired automatic proof cannot continue after ${phase} list cleanup`, async () => {
+  const { api, record, hooks } = await fixture({ duplicate: phase === "destination", copy: phase === "source" });
+  let active = true, enter, release, queries = 0, gets = 0;
+  const started = new Promise(resolve => { enter = resolve; }), gate = new Promise(resolve => { release = resolve; });
+  const query = api.messages.query, get = api.messages.get;
+  api.messages.query = async input => {
+    queries++;
+    const page = await query(input);
+    if (input.folderId === (phase === "destination" ? destination.id : source.id)) page.id = "cleanup-held";
+    return page;
+  };
+  api.messages.abortList = async id => { assert.equal(id, "cleanup-held"); enter(); await gate; };
+  api.messages.get = async id => { gets++; return get(id); };
+  const work = moveToQuarantine(api, record, config, { ...hooks, check: () => { if (!active) throw new Error("expired"); } });
+  await started;
+  active = false;
+  release();
+  await assert.rejects(work, /expired/);
+  assert.equal(queries, phase === "destination" ? 1 : 2);
+  // The only get is the guarded pre-move identity check.
+  assert.equal(gets, 1);
+  assert.equal(record.quarantine.status, "moving");
+});

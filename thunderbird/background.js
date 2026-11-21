@@ -58,6 +58,9 @@ let automaticReceipts = 0;
 const pendingReceipts = new Set();
 let receiptIssue = null;
 let checkingQuarantineReceipts = false;
+let automaticQuarantines = Promise.resolve();
+const QUARANTINE_TIMEOUT_MS = 60000;
+const QUARANTINE_RECEIPT_TIMEOUT_MS = 10000;
 const quarantineCheckFailures = new WeakMap();
 let moves = Promise.resolve(); // Header intake only; never waits for body I/O.
 const moveJobs = new Map();
@@ -304,6 +307,72 @@ async function quarantineRecord(record, config, automatic = false) {
     await save();
     return false;
   } finally { deleting.delete(record.key); }
+}
+
+// Bound optional background I/O, and invalidate every continuation after expiry.
+async function quarantineDeadline(operation, ms) {
+  let active = true, timer;
+  const expired = () => new Error(t("qDeadline", "隔離の確認が時間切れになりました。Thunderbirdで元のフォルダーと隔離先を確認してください。自動で再移動はしません。"));
+  const check = () => { if (!active) throw expired(); };
+  try {
+    const deadline = new Promise((resolve, reject) => {
+      timer = inputTimers.set(() => { active = false; reject(expired()); }, ms);
+    });
+    return await Promise.race([operation(check), deadline]);
+  } finally { active = false; inputTimers.clear(timer); }
+}
+
+function startAutomaticQuarantine(record, config) {
+  let identity;
+  const digest = record.sha256;
+  const target = structuredClone(config);
+  deleting.add(record.key); // Protect queued work as well as the active move.
+  record.quarantine = { status: "moving", destination: target, updatedAt: new Date().toISOString() };
+  identity = moveIdentity(record);
+  const admitted = save();
+  void admitted.catch(() => {});
+  const work = async () => {
+    const current = () => {
+      const selected = settings.quarantine?.[record.locator.accountId];
+      if (!quarantineHistory().includes(record) || record.status !== "detected" || record.sha256 !== digest ||
+          moveIdentity(record) !== identity || maintenanceActive() || helperRemoved ||
+          !settings.enabled || !settings.accountIds.includes(record.locator.accountId) ||
+          !selected?.auto || selected.folderId !== target.folderId || selected.path !== target.path ||
+          selected.activation !== target.activation) {
+        throw new Error(t("qChanged", "対象または隔離先が変わりました。もう一度確認してください。"));
+      }
+    };
+    try {
+      await admitted;
+      current();
+      const copy = structuredClone(record);
+      await quarantineDeadline(async deadlineCheck => {
+        const check = () => { deadlineCheck(); current(); };
+        const commit = async () => {
+          check();
+          // No body I/O modifies the live record; only a current operation may commit.
+          record.quarantine = structuredClone(copy.quarantine);
+          if (copy.quarantine?.status === "moved") {
+            record.locator = copy.locator; record.messageId = copy.messageId; record.session = copy.session;
+          }
+          identity = moveIdentity(record);
+          await save();
+          deadlineCheck();
+        };
+        await moveToQuarantine(api, copy, target, { verified, rawBytes, save: commit, session, automatic: true, check });
+      }, QUARANTINE_TIMEOUT_MS);
+    } catch (error) {
+      if (quarantineHistory().includes(record)) {
+        record.quarantine = { ...record.quarantine, status: "error", detail: error.message, updatedAt: new Date().toISOString() };
+        await save();
+      }
+    } finally {
+      deleting.delete(record.key);
+      void drain().catch(report);
+    }
+  };
+  automaticQuarantines = automaticQuarantines.catch(report).then(work);
+  void automaticQuarantines.catch(report);
 }
 
 function requestedKeys(keys) {
@@ -805,21 +874,22 @@ async function checkQuarantineReceipts() {
       const identity = moveIdentity(record);
       let message, digest = null, known = false;
       try {
-        message = await resolveRecord({ ...record });
-        known = await inQuarantine(message, settings, quarantineHistory(), { session, digestOf: async message => {
-          digest = await sha256(await rawBytes(message.id));
-          return digest;
-        } });
-      } catch { /* Unverifiable mail remains subject to normal inspection/retry. */ }
-      if (message) {
-        try {
-          // The body read may span a move that has not updated the history yet.
-          // A proof of the old quarantine folder cannot suppress mail now outside.
-          const current = await resolveRecord({ ...record });
-          if (position(current) !== position(message)) known = false;
-          message = current;
-        } catch { known = false; message = null; }
-      }
+        const proof = await quarantineDeadline(async check => {
+          const copy = structuredClone(record);
+          const message = await resolveRecord(copy, check);
+          check();
+          let digest = null;
+          const known = await inQuarantine(message, settings, quarantineHistory(), { session, digestOf: async message => {
+            const hash = await sha256(await rawBytes(message.id, MAX_TRANSFER_BYTES, check));
+            check(); digest = hash; return hash;
+          } });
+          check();
+          const current = await resolveRecord(structuredClone(record), check);
+          check();
+          return { message: current, digest, known: known && position(current) === position(message) };
+        }, QUARANTINE_RECEIPT_TIMEOUT_MS);
+        ({ message, digest, known } = proof);
+      } catch { /* Timeout/uncertain identity falls back to ordinary inspection. */ }
       const commit = async () => {
         if ((!records.includes(record) && overflowPending !== record) || !pendingQuarantineCheck(record) ||
             moveIdentity(record) !== identity || maintenanceActive() || helperRemoved) return;
@@ -1125,11 +1195,9 @@ async function drain() {
       }
       if (pendingMoveDuplicates.has(record) || pendingMoveOrigin.has(record)) await settlePendingMove(record);
       const quarantineConfig = settings.quarantine?.[record.locator.accountId];
-      if (record.status === "detected" && !record.lastAttempt && record.source === "automatic" && quarantineConfig?.auto && record.quarantineIntent &&
+      const autoQuarantine = record.status === "detected" && !record.lastAttempt && record.source === "automatic" && quarantineConfig?.auto && record.quarantineIntent &&
           record.quarantineIntent.folderId === quarantineConfig.folderId && record.quarantineIntent.path === quarantineConfig.path &&
-          record.quarantineIntent.activation === quarantineConfig.activation) {
-        await quarantineRecord(record, settings.quarantine[record.locator.accountId], true);
-      }
+          record.quarantineIntent.activation === quarantineConfig.activation;
       record.updatedAt = new Date().toISOString();
       // Two automatic attempts total; no endless retry loop on bad mail/host.
       if (!fromFolder && record !== overflowPending && !record.bulkRetryId && scanFailed(record) && record.attempts < 2) {
@@ -1147,6 +1215,8 @@ async function drain() {
           hint: await checkpointHint(record.locator), digest: record.sha256
         } : null);
       }
+      // Reserve the detected result before yielding to storage/notification UI.
+      if (autoQuarantine) startAutomaticQuarantine(record, quarantineConfig);
       await save();
       if (!fromFolder) await notify(record, coalescedMove);
       if (record === overflowPending) await finishOverflow(record);

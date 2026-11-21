@@ -232,6 +232,47 @@ try {
     state = await settled(state => !state.records.some(record => record.messageId === repeatedQuarantine.id && (record.quarantineCheckPending || ["queued","scanning"].includes(record.status))));
     report.quarantineReceiptIsolation = true;
     report.quarantineReceiptDeduplicated = !state.records.some(record => record.messageId === repeatedQuarantine.id);
+    report.stage = "automatic-quarantine-deadline";
+    const slowQuarantineRaw = fixture.mails.attachment.replace(/Subject: [^\r\n]+/, "Subject: Synthetic slow quarantine").replace(/Message-ID: [^\r\n]+/i, "Message-ID: <slow-quarantine@example.invalid>");
+    const slowQuarantine = await messenger.messages.import(new File([slowQuarantineRaw], "slow-quarantine.eml", {type:"message/rfc822"}), fixture.source.id, {read:true,new:false});
+    await messenger.testFixture.inject(slowQuarantine.id);
+    for (let attempt=0;attempt<200;attempt++) {
+      if ((await messenger.storage.local.get('fixtureAutoStarted')).fixtureAutoStarted) break;
+      await wait(25);
+    }
+    check((await messenger.storage.local.get('fixtureAutoStarted')).fixtureAutoStarted, "Automatic quarantine proof held");
+    const independentRaw = fixture.mails.plain.replace(/Subject: [^\r\n]+/, "Subject: Synthetic during auto quarantine").replace(/Message-ID: [^\r\n]+/i, "Message-ID: <during-auto@example.invalid>");
+    const independent = await messenger.messages.import(new File([independentRaw], "independent.eml", {type:"message/rfc822"}), fixture.source.id, {read:true,new:false});
+    await messenger.testFixture.inject(independent.id);
+    await settled(state => state.records.some(r => r.messageId === independent.id && r.status === "clean"));
+    state = await settled(state => state.records.some(r => r.messageId === slowQuarantine.id && r.quarantine?.status === "error"));
+    const expiredQuarantine = JSON.stringify(state.records.find(r => r.messageId === slowQuarantine.id));
+    await messenger.storage.local.set({fixtureAutoRelease:true});
+    for (let attempt=0;attempt<200;attempt++) {
+      if ((await messenger.storage.local.get('fixtureAutoReturned')).fixtureAutoReturned) break;
+      await wait(25);
+    }
+    check((await messenger.storage.local.get('fixtureAutoReturned')).fixtureAutoReturned, "Expired automatic proof actually returned");
+    state = await request("state");
+    check(JSON.stringify(state.records.find(r => r.messageId === slowQuarantine.id)) === expiredQuarantine, "Late automatic proof cannot move or overwrite history");
+    check((await messenger.messages.get(slowQuarantine.id)).folder.id === fixture.source.id, "No late automatic move");
+    report.automaticQuarantineDeadline = true;
+    // Repeat the known quarantined message, now deliberately expire its proof.
+    await messenger.storage.local.set({fixtureQuarantineProofRelease:false,fixtureQuarantineHeldId:null,fixtureQuarantineProofStarted:false,fixtureQuarantineProofReturned:false,fixtureReceiptDeadline:true});
+    await messenger.storage.local.set({fixtureQuarantineReplayId:null});
+    await messenger.storage.local.set({fixtureQuarantineReplayId:repeatedQuarantine.id});
+    state = await settled(state => state.records.some(r => r.messageId === repeatedQuarantine.id && r.status === "detected" && !r.quarantineCheckPending));
+    const receiptKeys = state.records.filter(r => r.messageId === repeatedQuarantine.id).map(r => r.key).sort().join();
+    await messenger.storage.local.set({fixtureQuarantineProofRelease:true});
+    for (let attempt=0;attempt<200;attempt++) {
+      if ((await messenger.storage.local.get('fixtureQuarantineProofReturned')).fixtureQuarantineProofReturned) break;
+      await wait(25);
+    }
+    check((await messenger.storage.local.get('fixtureQuarantineProofReturned')).fixtureQuarantineProofReturned, "Expired receipt proof actually returned");
+    state = await request("state");
+    check(state.records.filter(r => r.messageId === repeatedQuarantine.id).map(r => r.key).sort().join() === receiptKeys, "Late receipt proof cannot erase inspected mail");
+    await messenger.storage.local.set({fixtureReceiptDeadline:false});
+    report.quarantineReceiptDeadline = true;
     report.stage = "input-deadline";
     await messenger.testFixture.report(JSON.stringify({...report,running:true}));
     const slowRaw = fixture.mails.plain.replace(/Subject: [^\r\n]+/, "Subject: Synthetic slow input").replace(/Message-ID: [^\r\n]+/i, "Message-ID: <slow-input@example.invalid>");
