@@ -1247,6 +1247,10 @@ function moveHint(record) {
   }
   return hint.message;
 }
+function moveLocationStamp(record) {
+  return JSON.stringify([record.messageId, record.session, record.locator, record.quarantine]);
+}
+
 function pendingMoveFollower(record, primary) {
   return pendingMoveOrigin.get(record) === primary && !deleting.has(record.key) &&
     pristineAutomaticPending(record) && (!record.sha256 || record.sha256 === primary.sha256);
@@ -1313,6 +1317,13 @@ async function applyMove(oldMessages, newMessages, digests) {
     const hash = record.sha256 || record.lastResult?.sha256;
     if (!hash && !["queued", "scanning"].includes(record.status) && !canRecoverMovedInput(record)) continue;
     const before = JSON.stringify([record.locator, record.messageId, record.session, record.quarantine?.status]);
+    const groupLocations = linkedGroup ? new Map(eligible.map(item => [item, moveLocationStamp(item)])) : null;
+    // The original move already linked these records. A finishing scan can
+    // verify the shared current location independently of the next move proof.
+    // Register that reconciliation before I/O lets it finish and drop the link.
+    if (linkedGroup && hash) for (const duplicate of eligible) {
+      if (duplicate !== record && !movedScans.has(duplicate)) movedScans.set(duplicate, { original: record, hash });
+    }
     const candidates = destinations.get(envelope(record.locator)) || [];
     if (candidates.length > 20) continue;
     // Pending work with no prior digest has no verdict to transfer. A unique
@@ -1335,13 +1346,17 @@ async function applyMove(oldMessages, newMessages, digests) {
       }
       continue;
     }
-    if (linkedGroup && !eligible.every(item => item === record || pendingMoveFollower(item, record))) continue;
     unverifiedMoves.delete(record);
     refreshQuarantineLocation(record, matches[0]);
     record.session = session;
     moveRevisions.set(record, (moveRevisions.get(record) || 0) + 1);
     if (linkedGroup) for (const duplicate of eligible) {
-      if (duplicate !== record) {
+      if (duplicate !== record && records.includes(duplicate) && !deleting.has(duplicate.key) && duplicate.status !== "deleted" &&
+          moveLocationStamp(duplicate) === groupLocations.get(duplicate) &&
+          (hash && duplicate.sha256 === hash || pristineAutomaticPending(duplicate) && !duplicate.sha256)) {
+        // Completion may have removed the pending relationship. The captured
+        // location plus matching bytes still prove this explicit move; retain
+        // any human judgment and let coalesceMovedScan enforce merge guards.
         refreshQuarantineLocation(duplicate, matches[0]);
         duplicate.session = session;
         moveRevisions.set(duplicate, (moveRevisions.get(duplicate) || 0) + 1);

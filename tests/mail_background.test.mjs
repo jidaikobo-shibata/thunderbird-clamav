@@ -3103,7 +3103,7 @@ test("failed duplicate-removal persistence retains the pending scan", async () =
   assert.match((await h.send("state")).issue, /synthetic duplicate-removal save failure/);
 });
 
-async function blockedMoveProof(header = false, quarantine = false) {
+async function blockedMoveProof(header = false, quarantine = false, scanResult = { status: "detected", signatures: ["Synthetic.Threat"] }) {
   const original = { ...mail(901), headerMessageId: header ? "proof@example.invalid" : "",
     folder: { id: "inbox", accountId: "one", path: "/Inbox" } };
   const middle = { ...original, id: 902, folder: { id: "middle", accountId: "one", path: "/Middle" } };
@@ -3111,7 +3111,7 @@ async function blockedMoveProof(header = false, quarantine = false) {
   const isolation = { id: "isolation", accountId: "one", path: "/Isolation" };
   const h = await harness({ direct: true, mails: [original, middle, final, fresh],
     folderRefs: [original.folder, middle.folder, final.folder, isolation],
-    scanResult: { status: "detected", signatures: ["Synthetic.Threat"] },
+    scanResult,
     saved: { settings: { enabled: true, accountIds: ["one"], notifications: true,
       ...(quarantine ? { quarantine: { one: { folderId: isolation.id, path: isolation.path, auto: true } } } : {}) } } });
   const moves = [];
@@ -3410,5 +3410,89 @@ test("known bulk moves retain one durable refresh instead of per-mail saves", as
   assert.equal(h.storageCounts.writes - writes, 1);
   assert.ok((await h.send("state")).records.every((record, i) => record.messageId === targets[i].id));
   assert.equal(h.rawReads.length, origins.length);
+  h.expireIdle();
+});
+
+async function scanFinishesDuringMove({ header = false, mode = "normal" } = {}) {
+  const result = mode === "review" ? { status: "incomplete", detail: "encrypted", signatures: [] } :
+    { status: "detected", signatures: ["Synthetic.Threat"] };
+  const { h, middle, final, releaseProof } = await blockedMoveProof(header, false, result);
+  let releaseFallback, enterFallback, releaseMove, enterMove;
+  const fallbackGate = new Promise(resolve => { releaseFallback = resolve; });
+  const fallbackStarted = new Promise(resolve => { enterFallback = resolve; });
+  const moveGate = new Promise(resolve => { releaseMove = resolve; });
+  const moveStarted = new Promise(resolve => { enterMove = resolve; });
+  const raw = h.api.messages.getRaw;
+  if (mode === "differentBody") final.raw = "Subject: changed\r\n\r\ndifferent final destination bytes";
+  h.api.messages.getRaw = async (id, options) => {
+    const file = await raw(id, options);
+    if (id === middle.id) { enterFallback(); await fallbackGate; }
+    if (id === final.id) { enterMove(); await moveGate; }
+    return file;
+  };
+  if (mode === "differentVerdict") {
+    const request = h.api.clamDirect.request;
+    h.api.clamDirect.request = async (token, value) => {
+      const response = JSON.parse(await request(token, value));
+      if (JSON.parse(value).op === "end") response.signatures = ["Synthetic.NewThreat"];
+      return JSON.stringify(response);
+    };
+  }
+  await fallbackStarted;
+  h.api.messages.get = async id => { if (id !== final.id) throw new Error("old position gone"); return final; };
+  h.api.messages.query = async () => ({ messages: [final] });
+  const moving = h.events.moved.listeners[0]({ messages: [middle] }, { messages: [final] });
+  try {
+    await moveStarted;
+    releaseFallback(); releaseProof();
+    let state = await settle(h, state => state.records.length === 1 && state.records[0].status === result.status);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(state.records[0].messageId, middle.id); // No unverified location is exposed.
+    if (mode === "review") {
+      const record = state.records[0], { reviewStamp } = await import("../thunderbird/review.mjs");
+      assert.equal((await h.send("reviewMany", { keys: [record.key], reviewed: true, note: "preserved while move proof waits",
+        stamps: { [record.key]: reviewStamp(record) } })).ok, true);
+    }
+    if (mode === "forget") {
+      const prepared = await h.send("prepareForget", { keys: [state.records[0].key] });
+      assert.equal(prepared.ok, true);
+      assert.equal((await h.send("forgetMany", { token: prepared.token })).ok, true);
+    }
+  } finally { releaseFallback(); releaseProof(); releaseMove(); await moving; }
+  return { h, middle, final, state: await h.send("state") };
+}
+
+for (const header of [false, true]) test(`scan completion during a move proof retains one current history and alert (header=${header})`, async () => {
+  const { h, final, state } = await scanFinishesDuringMove({ header });
+  assert.equal(state.records.length, 1);
+  assert.equal(state.records[0].messageId, final.id);
+  assert.equal(state.records[0].locator.folder.path, final.folder.path);
+  assert.equal((await h.send("open", { key: state.records[0].key })).ok, true);
+  h.events.newMail.listeners[0](final.folder, { messages: [final] });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal((await h.send("state")).records.length, 1);
+  assert.equal(h.notifications.length, 1);
+  assert.equal(h.stored().records[0].messageId, final.id);
+  h.expireIdle();
+});
+
+for (const mode of ["review", "forget", "differentBody", "differentVerdict"]) test(`scan completion during a move proof preserves ${mode}`, async () => {
+  const { h, middle, final, state } = await scanFinishesDuringMove({ header: true, mode });
+  if (mode === "forget") {
+    assert.equal(state.records.length, 0);
+    assert.equal(h.stored().records.length, 0);
+  } else if (mode === "differentBody") {
+    assert.equal(state.records[0].messageId, middle.id);
+    h.events.newMail.listeners[0](final.folder, { messages: [final] });
+    await settle(h, state => state.records.length === 2 && state.records.every(record => record.status === "detected"));
+    assert.equal((await h.send("state")).records[0].messageId, middle.id);
+  } else {
+    assert.equal(state.records[0].messageId, final.id);
+    if (mode === "review") assert.equal(state.records[0].review.note, "preserved while move proof waits");
+    if (mode === "differentVerdict") {
+      assert.deepEqual(state.records[0].signatures, ["Synthetic.NewThreat"]);
+      assert.equal(h.notifications.length, 2);
+    }
+  }
   h.expireIdle();
 });
