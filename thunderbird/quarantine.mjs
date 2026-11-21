@@ -7,13 +7,16 @@ export function quarantineFolder(folder) {
     (folder.specialUse || []).length === 0;
 }
 export function canQuarantine(record) { return record?.status === "detected" && Boolean(record.sha256); }
-export async function inQuarantine(message, settings, records = [], { session, digestOf } = {}) {
-  // A quarantine destination must never exclude an entire folder. Suppress only a
-  // known detected message, identified by its current session ID or contents.
-  const candidates = records.filter(record => record.status === "detected" && record.sha256 &&
+export function quarantineCandidates(message, records = []) {
+  return records.filter(record => record.status === "detected" && record.sha256 &&
     ["moving", "moved", "error"].includes(record.quarantine?.status) &&
     record.quarantine.destination?.accountId === message.folder?.accountId &&
     record.quarantine.destination?.path === message.folder?.path && sameEnvelope(message, record.locator));
+}
+export async function inQuarantine(message, settings, records = [], { session, digestOf } = {}) {
+  // A quarantine destination must never exclude an entire folder. Suppress only
+  // a known detected message identified by its current session ID or contents.
+  const candidates = quarantineCandidates(message, records);
   if (session && candidates.some(record => record.session === session && record.messageId === message.id)) return true;
   if (!candidates.length || !digestOf) return false;
   try {

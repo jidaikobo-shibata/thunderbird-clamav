@@ -3496,3 +3496,149 @@ for (const mode of ["review", "forget", "differentBody", "differentVerdict"]) te
   }
   h.expireIdle();
 });
+
+async function waitingQuarantineReceipt({ changed = false, failRead = false, page = false } = {}) {
+  const isolation = { id: "isolation", accountId: "one", path: "/Isolation" };
+  const old = { ...mail(1701), folder: isolation }, incoming = { ...old, id: 1702,
+    ...(changed ? { raw: "Subject: changed\r\n\r\ndifferent body" } : {}) };
+  const fresh = { ...mail(1703), ...(page ? { folder: isolation } : {}) }, manual = mail(1704);
+  const digest = await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello"));
+  const record = { key: "known-quarantined", status: "detected", sha256: digest, locator: locator(old),
+    quarantine: { status: "moved", destination: isolation } };
+  const h = await harness({ direct: true, mails: [incoming, fresh, manual], folderRefs: [fresh.folder, isolation],
+    saved: { records: [record], settings: { enabled: true, accountIds: ["one"], notifications: false } } });
+  let enter, release;
+  const started = new Promise(resolve => { enter = resolve; }), gate = new Promise(resolve => { release = resolve; });
+  const raw = h.api.messages.getRaw; let first = true;
+  h.api.messages.getRaw = async (id, options) => {
+    const file = await raw(id, options);
+    if (id === incoming.id && first) {
+      first = false; enter(); await gate;
+      if (failRead) throw new Error("quarantine identity proof unavailable");
+    }
+    return file;
+  };
+  if (page) h.api.messages.continueList = async id => { assert.equal(id, "pending-page"); return { messages: [fresh] }; };
+  h.events.newMail.listeners[0](isolation, { messages: [incoming], ...(page ? { id: "pending-page" } : {}) });
+  await started;
+  return { h, incoming, fresh, manual, release };
+}
+
+for (const page of [false, true]) test(`quarantine proof holds only its durable pending record, not unrelated automatic or manual work (page=${page})`, async () => {
+  const { h, incoming, fresh, manual, release } = await waitingQuarantineReceipt({ page });
+  try {
+    assert.equal(h.stored().records.find(record => record.messageId === incoming.id).quarantineCheckPending, true);
+    if (!page) h.events.newMail.listeners[0](fresh.folder, { messages: [fresh] });
+    h.api.mailTabs.getSelectedMessages = async () => ({ messages: [manual] });
+    assert.equal((await h.send("scanSelection")).ok, true);
+    const state = await settle(h, state => [fresh.id, manual.id].every(id => state.records.some(record => record.messageId === id && record.status === "clean")));
+    const pending = state.records.find(record => record.messageId === incoming.id);
+    assert.equal(pending.status, "queued");
+    assert.equal(pending.quarantineCheckPending, true);
+    assert.equal(h.directRequests.filter(request => request.op === "end").length, 2);
+  } finally { release(); }
+  await settle(h, state => !state.records.some(record => record.messageId === incoming.id));
+  assert.ok(h.stored().records.some(record => record.key === "known-quarantined"));
+  h.expireIdle();
+});
+
+for (const option of ["changed", "failRead"]) test(`unconfirmed quarantine receipt remains eligible for ordinary inspection (${option})`, async () => {
+  const { h, incoming, release } = await waitingQuarantineReceipt({ [option]: true });
+  release();
+  const state = await settle(h, state => state.records.some(record => record.messageId === incoming.id && record.status === "clean"));
+  assert.equal(state.records.find(record => record.messageId === incoming.id).quarantineCheckPending, undefined);
+  assert.ok(state.records.some(record => record.key === "known-quarantined"));
+  assert.equal(h.directRequests.filter(request => request.op === "end").length, 1);
+  h.expireIdle();
+});
+
+test("quarantine proof rechecks a forgotten supporting history before removing pending mail", async () => {
+  const { h, incoming, release } = await waitingQuarantineReceipt();
+  const prepared = await h.send("prepareForget", { keys: ["known-quarantined"] });
+  assert.equal(prepared.ok, true);
+  assert.equal((await h.send("forgetMany", { token: prepared.token })).ok, true);
+  release();
+  const state = await settle(h, state => state.records.some(record => record.messageId === incoming.id && record.status === "clean"));
+  assert.equal(state.records.length, 1);
+  h.expireIdle();
+});
+
+test("disabling automatic inspection while quarantine proof waits preserves the excluded receipt", async () => {
+  const { h, incoming, release } = await waitingQuarantineReceipt();
+  assert.equal((await h.send("settings", { settings: { enabled: false, accountIds: [], notifications: false } })).ok, true);
+  release();
+  const state = await settle(h, state => state.records.find(record => record.messageId === incoming.id)?.unscannedReason === "automaticExcluded");
+  assert.equal(state.records.find(record => record.messageId === incoming.id).status, "incomplete");
+  assert.equal(h.directRequests.filter(request => request.op === "end").length, 0);
+  h.expireIdle();
+});
+
+test("pending quarantine identities survive restart and resume without raw mail persistence", async () => {
+  const { h, incoming, release } = await waitingQuarantineReceipt();
+  const saved = structuredClone(h.rawStored());
+  assert.equal(JSON.stringify(saved).includes("Subject: example"), false);
+  assert.equal(h.stored().records.find(record => record.messageId === incoming.id).quarantineCheckPending, true);
+  const resumed = await harness({ direct: true, mails: [incoming], saved });
+  await settle(resumed, state => state.records.length === 1 && state.records[0].key === "known-quarantined");
+  assert.equal(resumed.directRequests.filter(request => request.op === "end").length, 0);
+  release();
+  await settle(h, state => state.records.length === 1);
+  h.expireIdle(); resumed.expireIdle();
+});
+
+test("failed quarantine deduplication save keeps a durable pending receipt for retry", async () => {
+  const { h, incoming, release } = await waitingQuarantineReceipt();
+  const pending = h.stored().records.find(record => record.messageId === incoming.id), write = h.api.storage.local.set;
+  let failed = false;
+  h.api.storage.local.set = async value => {
+    if (!failed && value.records?.format === 2 && !value.records.keys.includes(pending.key)) {
+      failed = true; throw new Error("synthetic quarantine proof save failure");
+    }
+    return write(value);
+  };
+  release();
+  await settle(h, state => state.issue.includes("synthetic quarantine proof save failure"));
+  assert.equal(h.stored().records.find(record => record.key === pending.key).quarantineCheckPending, true);
+  await new Promise(resolve => setImmediate(resolve));
+  h.timers[0]();
+  await settle(h, state => !state.records.some(record => record.key === pending.key) && state.issue === "" && h.stored().issue === "");
+  assert.equal(h.directRequests.filter(request => request.op === "end").length, 0);
+  h.expireIdle();
+});
+
+test("mail moved out of quarantine while identity proof waits is inspected at its current position", async () => {
+  const { h, incoming, fresh, release } = await waitingQuarantineReceipt();
+  const moved = { ...incoming, id: 1705, folder: fresh.folder };
+  h.api.messages.get = async id => { if (id !== moved.id) throw new Error("old quarantine id gone"); return moved; };
+  h.api.messages.query = async () => ({ messages: [moved] });
+  const raw = h.api.messages.getRaw;
+  h.api.messages.getRaw = async (id, options) => id === moved.id ? new File(["Subject: example\r\n\r\nhello"], "current.eml") : raw(id, options);
+  await h.events.moved.listeners[0]({ messages: [incoming] }, { messages: [moved] });
+  release();
+  const state = await settle(h, state => state.records.some(record => record.messageId === moved.id && record.status === "clean"));
+  assert.equal(state.records.length, 2);
+  assert.ok(state.records.some(record => record.key === "known-quarantined"));
+  assert.equal(h.directRequests.filter(request => request.op === "end").length, 1);
+  h.expireIdle();
+});
+
+for (const changed of [false, true]) test(`account exclusion during the proof-result save is not overwritten (changed=${changed})`, async () => {
+  const { h, incoming, release } = await waitingQuarantineReceipt({ changed });
+  const write = h.api.storage.local.set;
+  let enterSettings, releaseSettings;
+  const settingsStarted = new Promise(resolve => { enterSettings = resolve; }), settingsGate = new Promise(resolve => { releaseSettings = resolve; });
+  h.api.storage.local.set = async value => {
+    if (value.settings && Object.keys(value).length === 1) { enterSettings(); await settingsGate; }
+    return write(value);
+  };
+  const changing = h.send("settings", { settings: { enabled: false, accountIds: [], notifications: false } });
+  await settingsStarted;
+  release();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  releaseSettings();
+  assert.equal((await changing).ok, true);
+  await settle(h, state => state.records.find(record => record.messageId === incoming.id)?.unscannedReason === "automaticExcluded" &&
+    h.stored().records.find(record => record.messageId === incoming.id)?.unscannedReason === "automaticExcluded");
+  assert.equal(h.directRequests.filter(request => request.op === "end").length, 0);
+  h.expireIdle();
+});

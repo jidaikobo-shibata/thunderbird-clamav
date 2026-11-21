@@ -5,7 +5,7 @@ import { rememberResult, finishScanAttempt, retainKnownDetection, scanFailed } f
 import { directRuntime } from "./direct-transport.mjs";
 import { scanPolicy, defaultScanPolicy, advisoryNotifies } from "./scan-policy.mjs";
 import { canReview, canUnreview, reviewReason, reviewStamp, reconcileReview } from "./review.mjs";
-import { validateQuarantine, moveToQuarantine, inQuarantine, canQuarantine, refreshQuarantineLocation } from "./quarantine.mjs";
+import { validateQuarantine, moveToQuarantine, inQuarantine, quarantineCandidates, canQuarantine, refreshQuarantineLocation } from "./quarantine.mjs";
 import { t } from "./i18n.mjs";
 import { toolbarNotice } from "./installation.mjs";
 import {
@@ -56,6 +56,8 @@ let mutations = Promise.resolve(), manualMutations = Promise.resolve();
 let automaticReceipts = 0;
 const pendingReceipts = new Set();
 let receiptIssue = null;
+let checkingQuarantineReceipts = false;
+const quarantineCheckFailures = new WeakMap();
 let moves = Promise.resolve(); // Header intake only; never waits for body I/O.
 const moveJobs = new Map();
 let activeMoveProofs = 0;
@@ -688,16 +690,106 @@ async function readScanInput(record, maxBytes) {
   }
 }
 
+function quarantineHistory() {
+  return [...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : [])];
+}
+function pendingQuarantineCheck(record) {
+  return record?.quarantineCheckPending === true && record.source === "automatic" && record.status === "queued" &&
+    !deleting.has(record.key) && settings.enabled && settings.accountIds.includes(record.locator.accountId);
+}
+
+// The queued locator is durable before body I/O. Only this independent worker
+// waits for quarantine identity proofs; admission, manual work and drain do not.
+async function checkQuarantineReceipts() {
+  if (checkingQuarantineReceipts || maintenanceActive() || helperRemoved) return;
+  checkingQuarantineReceipts = true;
+  const attempted = new Set();
+  try {
+    while (!maintenanceActive() && !helperRemoved) {
+      const record = [...records, ...(overflowPending ? [overflowPending] : [])].find(item =>
+        pendingQuarantineCheck(item) && !attempted.has(item));
+      if (!record) break;
+      attempted.add(record);
+      const identity = moveIdentity(record);
+      let message, digest = null, known = false;
+      try {
+        message = await resolveRecord({ ...record });
+        known = await inQuarantine(message, settings, quarantineHistory(), { session, digestOf: async message => {
+          digest = await sha256(await rawBytes(message.id));
+          return digest;
+        } });
+      } catch { /* Unverifiable mail remains subject to normal inspection/retry. */ }
+      if (message) {
+        try {
+          // The body read may span a move that has not updated the history yet.
+          // A proof of the old quarantine folder cannot suppress mail now outside.
+          const current = await resolveRecord({ ...record });
+          if (position(current) !== position(message)) known = false;
+          message = current;
+        } catch { known = false; message = null; }
+      }
+      const commit = async () => {
+        if ((!records.includes(record) && overflowPending !== record) || !pendingQuarantineCheck(record) ||
+            moveIdentity(record) !== identity || maintenanceActive() || helperRemoved) return;
+        // The supporting history may have been removed/moved while I/O waited.
+        // Re-evaluate using only the already-read digest: no body I/O in this gate.
+        const suppress = known && message && quarantineCandidates(message, quarantineHistory()).some(item =>
+          item.session === session && item.messageId === message.id || digest && item.sha256 === digest);
+        await reserveRecords([record], async () => {
+          if (suppress) {
+            await persistState(records.filter(item => item !== record), overflowPending === record ? null : overflowPending);
+            // Settings writes have their own queue and may finish during ours.
+            // Keep the excluded receipt if its account was disabled meanwhile.
+            if (!settings.enabled || !settings.accountIds.includes(record.locator.accountId)) {
+              excludePausedAutomatic();
+              await persistState();
+            } else {
+              records = records.filter(item => item !== record);
+              if (overflowPending === record) overflowPending = null;
+            }
+          } else {
+            const candidate = { ...record, detail: t("mail038", "検査を待っています。") };
+            delete candidate.quarantineCheckPending;
+            if (message && sameEnvelope(message, record.locator)) {
+              candidate.locator = locator(message); candidate.messageId = message.id; candidate.session = session;
+            }
+            await persistState(records.map(item => item === record ? candidate : item), overflowPending === record ? candidate : overflowPending);
+            Object.assign(record, candidate);
+            delete record.quarantineCheckPending;
+            excludePausedAutomatic();
+            if (record.status !== "queued") await persistState();
+          }
+        });
+        wakeOverflow();
+        return true;
+      };
+      recordChanges = recordChanges.catch(() => {}).then(commit);
+      const committed = await recordChanges.catch(error => {
+        const detail = error instanceof Error ? error.message : String(error);
+        quarantineCheckFailures.set(record, detail);
+        report(error);
+        return false; // A failed save retains the queued proof.
+      });
+      if (committed && quarantineCheckFailures.has(record)) {
+        const previous = quarantineCheckFailures.get(record);
+        quarantineCheckFailures.delete(record);
+        if (issue === previous) { issue = ""; await save().catch(report); }
+      }
+    }
+  } finally { checkingQuarantineReceipts = false; }
+}
+
 // Admission shares the same commit gate as retries and history changes.
 // Overflow waits happen outside the gate so the scanner can free its slot.
 function stageMessage(message, source) {
   const work = async () => {
+    let quarantineCheckPending = false;
     if (source === "automatic") {
       if (isDraftFolder(message.folder)) return {};
       if (!settings.enabled || !settings.accountIds.includes(accountOf(message))) return {};
-      if (await inQuarantine(message, settings, [...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : [])],
-        { session, digestOf: async message => sha256(await rawBytes(message.id)) })) return {};
-      if (!settings.enabled || !settings.accountIds.includes(accountOf(message))) return {};
+      const candidates = quarantineCandidates(message, quarantineHistory());
+      if (candidates.some(record => record.session === session && record.messageId === message.id)) return {};
+      quarantineCheckPending = candidates.length > 0;
       if ((overflowReport?.recent || []).some(record => record.session === session && record.messageId === message.id)) return {};
     } else {
       if (maintenanceActive() || helperRemoved) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
@@ -719,6 +811,11 @@ function stageMessage(message, source) {
       } : null,
       unscannedReason: null, status: "queued", detail: t("mail038", "検査を待っています。"), signatures: [],
       sha256: null, engine: null, attempts: 0, nextRetry: null, folderJobId: null, updatedAt: new Date().toISOString() });
+    delete candidate.quarantineCheckPending;
+    if (quarantineCheckPending) {
+      candidate.quarantineCheckPending = true;
+      candidate.detail = t("qReceiptChecking", "隔離済みのメールか確認するため、検査を保留しています。");
+    }
     let wait;
     await reserveRecords([existing, evicted].filter(Boolean), async () => {
       const history = existing ? records.map(record => record === existing ? candidate : record) :
@@ -810,6 +907,7 @@ function enqueue(first, source) {
 }
 
 async function drain() {
+  void checkQuarantineReceipts().catch(report);
   if (running || recordStaging || maintenanceActive() || helperRemoved || batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation)) return;
   running = true;
   let client, connection, engine, configurable = false, completed = false;
@@ -821,9 +919,9 @@ async function drain() {
         await finishOverflow(overflowPending);
       }
       // Folder work is fed one at a time, after fresh mail and manual work.
-      let record = records.find(item => !deleting.has(item.key) && item.status === "queued" && item.source === "automatic" &&
+      let record = records.find(item => !deleting.has(item.key) && item.status === "queued" && item.source === "automatic" && !item.quarantineCheckPending &&
         settings.enabled && settings.accountIds.includes(item.locator.accountId)) ||
-        (overflowPending?.status === "queued" && overflowPending.source === "automatic" &&
+        (overflowPending?.status === "queued" && overflowPending.source === "automatic" && !overflowPending.quarantineCheckPending &&
           settings.enabled && settings.accountIds.includes(overflowPending.locator.accountId) ? overflowPending : null) ||
         records.find(item => !deleting.has(item.key) && item.status === "queued" && item.source === "manual") ||
         (overflowPending?.status === "queued" && overflowPending.source === "manual" ? overflowPending : null);
@@ -847,6 +945,7 @@ async function drain() {
       if (!record) break;
       const fromFolder = record.source === "folder";
       const policy = scanPolicy(settings.scanSettings);
+      delete record.quarantineCheckPending;
       record.scanSettings = policy;
       record.advisories = [];
       delete record.lastAttempt;

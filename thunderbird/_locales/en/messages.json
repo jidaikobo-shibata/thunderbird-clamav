@@ -2998,5 +2998,8 @@
   },
   "draftAutoScanHelp": {
     "message": "Drafts are excluded from automatic scanning of new mail. You can still scan them manually by selecting messages or scanning their folder."
+  },
+  "qReceiptChecking": {
+    "message": "Inspection is pending while checking whether this message is already quarantined."
   }
 }

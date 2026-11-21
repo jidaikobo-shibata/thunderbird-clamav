@@ -105,8 +105,32 @@ def fixture_xpi(target, original, version, scenario="full"):
             await listener(before,after);
           })().catch(console.error);
         });
+        api.storage.onChanged.addListener((changes, area) => {
+          const replay = changes.fixtureQuarantineReplayId?.newValue;
+          if (area === 'local' && Number.isInteger(replay)) {
+            // Replay a resync notification using the real current header. The
+            // local-folder notifier does not resend an already-known message.
+            void api.messages.get(replay).then(message => testNewListener(message.folder,{messages:[message]})).catch(console.error);
+          }
+          const id = changes.fixtureQuarantineInvalidateId?.newValue;
+          if (area !== 'local' || !Number.isInteger(id)) return;
+          const record = records.find(record => record.messageId === id && record.quarantine?.status === 'moved');
+          if (!record) return;
+          // Model a stored quarantine identity before resynchronization. Keep
+          // the real message and folder intact; production code never does this.
+          record.messageId = null; record.session = null;
+          void save().then(() => testStorageSet({fixtureQuarantineInvalidated:true})).catch(console.error);
+        });
         api.messages.getRaw = async (id, options) => {
           const header = await api.messages.get(id);
+          const quarantineGate = await api.storage.local.get('fixtureQuarantinePendingId');
+          if (quarantineGate.fixtureQuarantinePendingId === id) {
+            await testStorageSet({fixtureQuarantineProofStarted:true});
+            for (let attempt=0;attempt<4800;attempt++) {
+              if ((await api.storage.local.get('fixtureQuarantineProofRelease')).fixtureQuarantineProofRelease) break;
+              await new Promise(resolve => setTimeout(resolve,25));
+            }
+          }
           if (!failedEarlyInput && header.subject === 'Synthetic early raw move') {
             failedEarlyInput = true; holdEarlyMove = true;
             await testStorageSet({fixtureRawGateStarted:true});

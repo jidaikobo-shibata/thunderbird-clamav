@@ -206,6 +206,32 @@ try {
     await messenger.testFixture.inject(incoming.id);
     state = await settled(state => state.records.some(record => record.source === "automatic" && record.locator.subject === "Synthetic incoming attachment" && record.quarantine?.status === "moved"));
     report.automaticQuarantine = true;
+    report.stage = "quarantine-receipt-isolation";
+    await messenger.testFixture.report(JSON.stringify({...report,running:true}));
+    const repeatedQuarantine = {id:state.records.find(record => record.locator.subject === "Synthetic incoming attachment" && record.quarantine?.status === "moved").messageId};
+    await messenger.storage.local.set({fixtureQuarantinePendingId:repeatedQuarantine.id,fixtureQuarantineInvalidateId:repeatedQuarantine.id});
+    for (let attempt=0;attempt<200;attempt++) {
+      if ((await messenger.storage.local.get('fixtureQuarantineInvalidated')).fixtureQuarantineInvalidated) break;
+      await wait(25);
+    }
+    check((await messenger.storage.local.get('fixtureQuarantineInvalidated')).fixtureQuarantineInvalidated, "Stored quarantine identity was made stale for the resync test");
+    await messenger.storage.local.set({fixtureQuarantineReplayId:repeatedQuarantine.id});
+    for (let attempt=0;attempt<200;attempt++) {
+      if ((await messenger.storage.local.get('fixtureQuarantineProofStarted')).fixtureQuarantineProofStarted) break;
+      await wait(25);
+    }
+    check((await messenger.storage.local.get('fixtureQuarantineProofStarted')).fixtureQuarantineProofStarted, "Quarantine proof is held in the separate worker");
+    state = await request("state");
+    check(state.records.some(record => record.messageId === repeatedQuarantine.id && record.quarantineCheckPending), "Pending quarantine proof is in durable history");
+    const duringProofRaw = fixture.mails.plain.replace(/Subject: [^\r\n]+/, "Subject: Synthetic receipt during quarantine proof").replace(/Message-ID: [^\r\n]+/i, "Message-ID: <during-proof@example.invalid>");
+    const duringProof = await messenger.messages.import(new File([duringProofRaw], "during.eml", {type:"message/rfc822"}), fixture.source.id, {read:true,new:false});
+    await messenger.testFixture.inject(duringProof.id);
+    state = await settled(state => state.records.some(record => record.messageId === duringProof.id && record.status === "clean"));
+    check(state.records.some(record => record.messageId === repeatedQuarantine.id && record.quarantineCheckPending), "Unrelated real mail finishes while proof remains held");
+    await messenger.storage.local.set({fixtureQuarantineProofRelease:true});
+    state = await settled(state => !state.records.some(record => record.messageId === repeatedQuarantine.id && (record.quarantineCheckPending || ["queued","scanning"].includes(record.status))));
+    report.quarantineReceiptIsolation = true;
+    report.quarantineReceiptDeduplicated = !state.records.some(record => record.messageId === repeatedQuarantine.id);
     report.stage = "draft-exclusion";
     check(fixture.drafts.specialUse.includes("drafts"), "Thunderbird exposes the real draft folder attribute");
     const draftRaw = fixture.mails.plain.replace(/Subject: [^\r\n]+/, "Subject: Synthetic draft excluded").replace(/Message-ID: [^\r\n]+/i, "Message-ID: <draft-excluded@example.invalid>");
