@@ -3318,3 +3318,97 @@ test("human review invalidates an unverified intermediate location", async () =>
   assert.equal(h.stored().records[0].review.note, "preserved judgment");
   h.expireIdle();
 });
+
+for (const header of [false, true]) for (const batch of [false, true]) test(`unrelated slow move proofs cannot consume incoming retries (header=${header}, batch=${batch})`, async () => {
+  const origins = Array.from({ length: 5 }, (_, i) => mail(1101 + i));
+  const targets = origins.map((mail, i) => ({ ...mail, id: 1201 + i, folder: { id: "archive", accountId: "one", path: "/Archive" } }));
+  const incoming = { ...mail(1301), headerMessageId: header ? "incoming-move@example.invalid" : "" };
+  const filtered = { ...incoming, id: 1302, folder: { id: "filtered", accountId: "one", path: "/Filtered" } };
+  const h = await harness({ direct: true, mails: [...origins, ...targets, incoming, filtered],
+    saved: { settings: { enabled: true, accountIds: ["one"], notifications: true } } });
+  h.events.newMail.listeners[0](origins[0].folder, { messages: origins });
+  await settle(h, state => state.records.length === 5 && state.records.every(record => record.status === "clean"));
+  let release, active = 0, maximum = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const raw = h.api.messages.getRaw;
+  h.api.messages.getRaw = async (id, options) => {
+    if (targets.some(mail => mail.id === id)) {
+      active++; maximum = Math.max(maximum, active);
+      try { await gate; } finally { active--; }
+    }
+    if (id === incoming.id) throw new Error("incoming body moved before retrieval completed");
+    return raw(id, options);
+  };
+  const moves = [];
+  if (!batch) for (let i = 0; i < origins.length; i++) moves.push(h.events.moved.listeners[0]({ messages: [origins[i]] }, { messages: [targets[i]] }));
+  try {
+    if (!batch) await settle(h, () => active === 4);
+    h.events.newMail.listeners[0](incoming.folder, { messages: [incoming] });
+    await settle(h, state => state.records.find(record => record.messageId === incoming.id)?.status === "error");
+    const get = h.api.messages.get;
+    h.api.messages.get = async id => { if (id === incoming.id) throw new Error("old incoming id gone"); return get(id); };
+    h.api.messages.query = async () => ({ messages: [filtered] });
+    let moved;
+    if (batch) {
+      // A single bulk notification must not serialize these unrelated messages.
+      moves.push(h.events.moved.listeners[0]({ messages: [...origins, incoming] }, { messages: [...targets, filtered] }));
+    } else moved = h.events.moved.listeners[0]({ messages: [incoming] }, { messages: [filtered] });
+    const state = await settle(h, state => state.records.find(record => record.messageId === filtered.id)?.status === "clean");
+    if (moved) await moved;
+    assert.equal(state.records.find(record => record.messageId === filtered.id).attempts, 2);
+    assert.ok(state.records.slice(0, 5).every((record, i) => record.messageId === origins[i].id));
+    assert.equal(h.notifications.length, 0);
+    assert.equal(active, batch ? 1 : 4);
+    assert.equal(maximum, batch ? 1 : 4);
+    const now = Date.now;
+    try { Date.now = () => now() + 61000; h.timers[0](); await new Promise(resolve => setImmediate(resolve)); }
+    finally { Date.now = now; }
+    assert.equal((await h.send("state")).records.find(record => record.messageId === filtered.id).attempts, 2);
+  } finally { release(); await Promise.all(moves); h.expireIdle(); }
+  assert.equal(maximum, batch ? 1 : 4);
+  assert.ok((await h.send("state")).records.slice(0, 5).every((record, i) => record.messageId === targets[i].id));
+});
+
+test("connected moves retain ordering while unrelated recovery overtakes them", async () => {
+  const a = mail(1401), b = { ...a, id: 1402, folder: { id: "b", accountId: "one", path: "/B" } };
+  const c = { ...a, id: 1403, folder: { id: "c", accountId: "one", path: "/C" } };
+  const x = { ...mail(1404), headerMessageId: "" }, y = { ...x, id: 1405, folder: { id: "y", accountId: "one", path: "/Y" } };
+  const h = await harness({ direct: true, mails: [a, b, c, x, y], saved: { settings: { enabled: true, accountIds: ["one"], notifications: false } } });
+  h.events.newMail.listeners[0](a.folder, { messages: [a] });
+  await settle(h, state => state.records[0]?.status === "clean");
+  let release, enter; const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { enter = resolve; });
+  const raw = h.api.messages.getRaw; let finalReads = 0;
+  h.api.messages.getRaw = async (id, options) => {
+    if (id === b.id) { enter(); await gate; }
+    if (id === c.id) finalReads++;
+    if (id === x.id) throw new Error("old input unavailable");
+    return raw(id, options);
+  };
+  const first = h.events.moved.listeners[0]({ messages: [a] }, { messages: [b] });
+  await started;
+  const second = h.events.moved.listeners[0]({ messages: [b] }, { messages: [c] });
+  try {
+    h.events.newMail.listeners[0](x.folder, { messages: [x] });
+    await settle(h, state => state.records[1]?.status === "error");
+    await h.events.moved.listeners[0]({ messages: [x] }, { messages: [y] });
+    await settle(h, state => state.records[1]?.messageId === y.id && state.records[1]?.status === "clean");
+    assert.equal(finalReads, 0);
+    assert.equal((await h.send("state")).records[0].messageId, a.id);
+  } finally { release(); await first; await second; h.expireIdle(); }
+  assert.equal(finalReads, 1);
+  assert.equal((await h.send("state")).records[0].messageId, c.id);
+});
+
+test("known bulk moves retain one durable refresh instead of per-mail saves", async () => {
+  const origins = Array.from({ length: 20 }, (_, i) => mail(1501 + i));
+  const targets = origins.map((mail, i) => ({ ...mail, id: 1601 + i, folder: { id: "archive", accountId: "one", path: "/Archive" } }));
+  const digest = await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello"));
+  const records = origins.map(mail => ({ key: "bulk-" + mail.id, status: "clean", sha256: digest, locator: locator(mail) }));
+  const h = await harness({ direct: true, mails: [...origins, ...targets], saved: { records } });
+  const writes = h.storageCounts.writes;
+  await h.events.moved.listeners[0]({ messages: origins }, { messages: targets });
+  assert.equal(h.storageCounts.writes - writes, 1);
+  assert.ok((await h.send("state")).records.every((record, i) => record.messageId === targets[i].id));
+  assert.equal(h.rawReads.length, origins.length);
+  h.expireIdle();
+});

@@ -56,7 +56,10 @@ let mutations = Promise.resolve(), manualMutations = Promise.resolve();
 let automaticReceipts = 0;
 const pendingReceipts = new Set();
 let receiptIssue = null;
-let moves = Promise.resolve();
+let moves = Promise.resolve(); // Header intake only; never waits for body I/O.
+const moveJobs = new Map();
+let activeMoveProofs = 0;
+const moveProofWaiters = [];
 const deletionTickets = new Map();
 const deleting = new Set();
 const batchTickets = new Map();
@@ -1249,114 +1252,175 @@ function pendingMoveFollower(record, primary) {
     pristineAutomaticPending(record) && (!record.sha256 || record.sha256 === primary.sha256);
 }
 
+function moveEnvelope(message) {
+  return JSON.stringify([message.headerMessageId || "", message.author || "", message.subject || "",
+    message.date ? new Date(message.date).toISOString() : ""]);
+}
+
+// Bound body I/O without making digest-free input recovery wait for a slot.
+async function moveDigest(messageId) {
+  if (activeMoveProofs >= 4) await new Promise(resolve => moveProofWaiters.push(resolve));
+  else activeMoveProofs++;
+  try { return await sha256(await rawBytes(messageId)); }
+  finally {
+    const next = moveProofWaiters.shift();
+    if (next) next();
+    else activeMoveProofs--;
+  }
+}
+
 // External moves (including Undo) update the display only after content
 // verification. Our own quarantine/deletion operations retain their own locks.
+async function applyMove(oldMessages, newMessages, digests) {
+  const envelope = moveEnvelope;
+  const tracked = new Map(), destinations = new Map();
+  for (const record of new Set([...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : [])])) {
+    const locations = [ { id: record.messageId, folder: record.locator.folder, ...record.locator }, moveHint(record) ].filter(Boolean);
+    for (const location of locations) {
+      const key = JSON.stringify([accountOf(location), location.folder?.path, envelope(location)]);
+      if (!tracked.has(key)) tracked.set(key, []);
+      if (!tracked.get(key).includes(record)) tracked.get(key).push(record);
+    }
+  }
+  for (const message of newMessages) {
+    if (!realFolder(message.folder) || message.external) continue;
+    const key = envelope(message);
+    if (!destinations.has(key)) destinations.set(key, []);
+    destinations.get(key).push(message);
+  }
+  let changed = false, examined = 0;
+  const recoveries = [];
+  for (const old of oldMessages) {
+    const key = JSON.stringify([accountOf(old), old.folder?.path, envelope(old)]);
+    const possible = tracked.get(key) || [];
+    // Yield for tracked work, but do not add a timer for every untracked mail.
+    if (possible.length || ++examined % 100 === 0) await yieldBatch();
+    const eligible = possible.filter(record => {
+      const hinted = moveHint(record);
+      const source = hinted && position(hinted) === position(old) ? hinted :
+        { id: record.messageId, folder: record.locator.folder };
+      return sameEnvelope(old, record.locator) && old.folder?.path === source.folder?.path &&
+        (record.session !== session || !Number.isInteger(source.id) || source.id === old.id);
+    });
+    const canonical = eligible.map(item => pendingMoveOrigin.get(item) || item);
+    const primary = canonical[0];
+    const linkedGroup = eligible.length > 1 && primary && eligible.includes(primary) && canonical.every(item => item === primary) &&
+      (pristineAutomaticPending(primary) || canRecoverMovedInput(primary) || canSettlePendingMove(primary)) &&
+      eligible.every(item => item === primary || pendingMoveFollower(item, primary));
+    if (eligible.length !== 1 && !linkedGroup) continue;
+    const record = linkedGroup ? primary : eligible[0];
+    if (deleting.has(record.key) || record.status === "deleted") continue;
+    const hash = record.sha256 || record.lastResult?.sha256;
+    if (!hash && !["queued", "scanning"].includes(record.status) && !canRecoverMovedInput(record)) continue;
+    const before = JSON.stringify([record.locator, record.messageId, record.session, record.quarantine?.status]);
+    const candidates = destinations.get(envelope(record.locator)) || [];
+    if (candidates.length > 20) continue;
+    // Pending work with no prior digest has no verdict to transfer. A unique
+    // move-event target can redirect it; drain still reads/verifies its bytes.
+    const matches = !hash && candidates.length === 1 ? [...candidates] : [];
+    if (hash) for (const candidate of candidates) {
+      try {
+        if (!digests.has(candidate.id)) digests.set(candidate.id, moveDigest(candidate.id));
+        if (await digests.get(candidate.id) === hash) matches.push(candidate);
+      }
+      catch { /* An unreadable move cannot transfer a prior verdict. */ }
+    }
+    if ((record.sha256 || record.lastResult?.sha256) !== hash || deleting.has(record.key) || record.status === "deleted" ||
+        JSON.stringify([record.locator, record.messageId, record.session, record.quarantine?.status]) !== before) continue;
+    if (matches.length !== 1) {
+      if (hash && candidates.length === 1 && sameEnvelope(candidates[0], record.locator)) {
+        for (const item of linkedGroup ? eligible : [record]) {
+          unverifiedMoves.set(item, { message: structuredClone(candidates[0]), identity: moveIdentity(item), expires: Date.now() + 60000 });
+        }
+      }
+      continue;
+    }
+    if (linkedGroup && !eligible.every(item => item === record || pendingMoveFollower(item, record))) continue;
+    unverifiedMoves.delete(record);
+    refreshQuarantineLocation(record, matches[0]);
+    record.session = session;
+    moveRevisions.set(record, (moveRevisions.get(record) || 0) + 1);
+    if (linkedGroup) for (const duplicate of eligible) {
+      if (duplicate !== record) {
+        refreshQuarantineLocation(duplicate, matches[0]);
+        duplicate.session = session;
+        moveRevisions.set(duplicate, (moveRevisions.get(duplicate) || 0) + 1);
+        unverifiedMoves.delete(duplicate);
+      }
+    }
+    if ((!hash && pristineAutomaticPending(record)) || pendingMoveDuplicates.has(record)) {
+      const pending = records.filter(item => item !== record && item.session === session && item.messageId === record.messageId &&
+        JSON.stringify(item.locator) === JSON.stringify(record.locator));
+      if (pending.length === 1) linkPendingMove(record, pending[0]);
+      else if (linkedGroup) for (const duplicate of pending) linkPendingMove(record, duplicate);
+    }
+    if (canRecoverMovedInput(record)) recoveries.push([record, position(matches[0])]);
+    if (hash) {
+      const duplicates = records.filter(item => item !== record && item.session === session &&
+        item.messageId === record.messageId && JSON.stringify(item.locator) === JSON.stringify(record.locator));
+      if (duplicates.length === 1) {
+        const duplicate = duplicates[0];
+        if (["queued", "scanning"].includes(duplicate.status)) movedScans.set(duplicate, { original: record, hash });
+        else coalesceMovedScan(record, duplicate, hash);
+      }
+    }
+    changed = true;
+  }
+  if (changed) await save();
+  for (const [record, expectedPosition] of recoveries) await recoverMovedInput(record, expectedPosition);
+}
+
+function unscannedMoveSource(old, currentById) {
+  const matching = (currentById.get(old.id) || []).filter(record => sameEnvelope(old, record.locator) &&
+    record.session === session && record.messageId === old.id && record.locator.folder?.path === old.folder?.path);
+  return matching.length > 0 && matching.every(record => !record.sha256 && !record.lastResult?.sha256 &&
+    (["queued", "scanning"].includes(record.status) || canRecoverMovedInput(record)));
+}
+
 api.messages.onMoved?.addListener((originals, moved) => {
-  const work = async () => {
+  const intake = moves.catch(() => {}).then(async () => {
     await ready;
     const oldMessages = [], newMessages = [];
     for await (const message of messagePages(api.messages, originals)) oldMessages.push(message);
     for await (const message of messagePages(api.messages, moved)) newMessages.push(message);
-    const envelope = message => JSON.stringify([message.headerMessageId || "", message.author || "", message.subject || "",
-      message.date ? new Date(message.date).toISOString() : ""]);
-    const tracked = new Map(), destinations = new Map(), digests = new Map();
-    for (const record of new Set([...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : [])])) {
-      const locations = [ { id: record.messageId, folder: record.locator.folder, ...record.locator }, moveHint(record) ].filter(Boolean);
-      for (const location of locations) {
-        const key = JSON.stringify([accountOf(location), location.folder?.path, envelope(location)]);
-        if (!tracked.has(key)) tracked.set(key, []);
-        if (!tracked.get(key).includes(record)) tracked.get(key).push(record);
-      }
-    }
+    const destinations = new Map();
     for (const message of newMessages) {
-      if (!realFolder(message.folder) || message.external) continue;
-      const key = envelope(message);
+      const key = moveEnvelope(message);
       if (!destinations.has(key)) destinations.set(key, []);
       destinations.get(key).push(message);
     }
-    let changed = false, examined = 0;
-    const recoveries = [];
-    for (const old of oldMessages) {
-      const key = JSON.stringify([accountOf(old), old.folder?.path, envelope(old)]);
-      const possible = tracked.get(key) || [];
-      // Yield for tracked work, but do not add a timer for every untracked mail.
-      if (possible.length || ++examined % 100 === 0) await yieldBatch();
-      const eligible = possible.filter(record => {
-        const hinted = moveHint(record);
-        const source = hinted && position(hinted) === position(old) ? hinted :
-          { id: record.messageId, folder: record.locator.folder };
-        return sameEnvelope(old, record.locator) && old.folder?.path === source.folder?.path &&
-          (record.session !== session || !Number.isInteger(source.id) || source.id === old.id);
-      });
-      const canonical = eligible.map(item => pendingMoveOrigin.get(item) || item);
-      const primary = canonical[0];
-      const linkedGroup = eligible.length > 1 && primary && eligible.includes(primary) && canonical.every(item => item === primary) &&
-        (pristineAutomaticPending(primary) || canRecoverMovedInput(primary) || canSettlePendingMove(primary)) &&
-        eligible.every(item => item === primary || pendingMoveFollower(item, primary));
-      if (eligible.length !== 1 && !linkedGroup) continue;
-      const record = linkedGroup ? primary : eligible[0];
-      if (deleting.has(record.key) || record.status === "deleted") continue;
-      const hash = record.sha256 || record.lastResult?.sha256;
-      if (!hash && !["queued", "scanning"].includes(record.status) && !canRecoverMovedInput(record)) continue;
-      const before = JSON.stringify([record.locator, record.messageId, record.session, record.quarantine?.status]);
-      const candidates = destinations.get(envelope(record.locator)) || [];
-      if (candidates.length > 20) continue;
-      // Pending work with no prior digest has no verdict to transfer. A unique
-      // move-event target can redirect it; drain still reads/verifies its bytes.
-      const matches = !hash && candidates.length === 1 ? [...candidates] : [];
-      if (hash) for (const candidate of candidates) {
-        try {
-          if (!digests.has(candidate.id)) digests.set(candidate.id, rawBytes(candidate.id).then(sha256));
-          if (await digests.get(candidate.id) === hash) matches.push(candidate);
-        }
-        catch { /* An unreadable move cannot transfer a prior verdict. */ }
-      }
-      if ((record.sha256 || record.lastResult?.sha256) !== hash || deleting.has(record.key) || record.status === "deleted" ||
-          JSON.stringify([record.locator, record.messageId, record.session, record.quarantine?.status]) !== before) continue;
-      if (matches.length !== 1) {
-        if (hash && candidates.length === 1 && sameEnvelope(candidates[0], record.locator)) {
-          for (const item of linkedGroup ? eligible : [record]) {
-            unverifiedMoves.set(item, { message: structuredClone(candidates[0]), identity: moveIdentity(item), expires: Date.now() + 60000 });
-          }
-        }
-        continue;
-      }
-      if (linkedGroup && !eligible.every(item => item === record || pendingMoveFollower(item, record))) continue;
-      unverifiedMoves.delete(record);
-      refreshQuarantineLocation(record, matches[0]);
-      record.session = session;
-      moveRevisions.set(record, (moveRevisions.get(record) || 0) + 1);
-      if (linkedGroup) for (const duplicate of eligible) {
-        if (duplicate !== record) {
-          refreshQuarantineLocation(duplicate, matches[0]);
-          duplicate.session = session;
-          moveRevisions.set(duplicate, (moveRevisions.get(duplicate) || 0) + 1);
-          unverifiedMoves.delete(duplicate);
-        }
-      }
-      if ((!hash && pristineAutomaticPending(record)) || pendingMoveDuplicates.has(record)) {
-        const pending = records.filter(item => item !== record && item.session === session && item.messageId === record.messageId &&
-          JSON.stringify(item.locator) === JSON.stringify(record.locator));
-        if (pending.length === 1) linkPendingMove(record, pending[0]);
-        else if (linkedGroup) for (const duplicate of pending) linkPendingMove(record, duplicate);
-      }
-      if (canRecoverMovedInput(record)) recoveries.push([record, position(matches[0])]);
-      if (hash) {
-        const duplicates = records.filter(item => item !== record && item.session === session &&
-          item.messageId === record.messageId && JSON.stringify(item.locator) === JSON.stringify(record.locator));
-        if (duplicates.length === 1) {
-          const duplicate = duplicates[0];
-          if (["queued", "scanning"].includes(duplicate.status)) movedScans.set(duplicate, { original: record, hash });
-          else coalesceMovedScan(record, duplicate, hash);
-        }
-      }
-      changed = true;
+    const currentById = new Map();
+    for (const record of [...records, ...(overflowPending ? [overflowPending] : [])]) {
+      if (!currentById.has(record.messageId)) currentById.set(record.messageId, []);
+      currentById.get(record.messageId).push(record);
     }
-    if (changed) await save();
-    for (const [record, expectedPosition] of recoveries) await recoverMovedInput(record, expectedPosition);
-  };
-  moves = moves.catch(() => {}).then(work).catch(report);
-  return moves;
+    const jobs = [], digests = new Map(), known = [], groups = [];
+    for (const old of oldMessages) {
+      if (unscannedMoveSource(old, currentById)) groups.push([old]);
+      else known.push(old);
+    }
+    // Keep bulk, already-scanned work together so its history index and durable
+    // refresh are built once. Digest-free recoveries in the same event bypass it.
+    if (known.length) groups.push(known);
+    for (const group of groups) {
+      const targets = [...new Set(group.flatMap(old => destinations.get(moveEnvelope(old)) || []))];
+      // Reserve both ends before the next notification is accepted. A→B→C
+      // stays ordered even when A→B has not established a verified location.
+      const keys = new Set([...group.map(position), ...targets.map(position)]);
+      const prior = [...new Set([...keys].map(key => moveJobs.get(key)).filter(Boolean))];
+      const job = Promise.all(prior).then(() => applyMove(group, targets, digests)).catch(report);
+      for (const key of keys) moveJobs.set(key, job);
+      void job.then(() => {
+        for (const key of keys) if (moveJobs.get(key) === job) moveJobs.delete(key);
+      });
+      jobs.push(job);
+      if (jobs.length % 100 === 0) await yieldBatch();
+    }
+    return jobs;
+  });
+  moves = intake.then(() => {}, report);
+  // Test callers can still await completion; subsequent intake never does.
+  return intake.then(jobs => Promise.all(jobs)).catch(report);
 });
 api.mailTabs.onSelectedMessagesChanged.addListener(tab => { lastMailTab = tab.id; });
 api.menus.onClicked.addListener((info, tab) => {
