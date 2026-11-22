@@ -91,7 +91,7 @@ def fixture_xpi(target, original, version, scenario="full"):
           return testNotification(id,options);
         };
         const testContinue = api.messages.continueList.bind(api.messages);
-        let testPagedReceipt = null, testPagedMove = null, testOverflowSaved = null, testOverflowReads = 0;
+        let testPagedReceipt = null, testPagedMove = null, testOverflowSaved = null, testOverflowReads = 0, testFocusRecord = null;
         api.messages.continueList = async id => {
           if (id === 'fixture-receipt-page' || id === 'fixture-move-page') {
             const receipt = id === 'fixture-receipt-page';
@@ -142,6 +142,15 @@ def fixture_xpi(target, original, version, scenario="full"):
           })().catch(console.error);
         });
         api.storage.onChanged.addListener((changes, area) => {
+          const focusKey = changes.fixtureFocusRecordKey?.newValue;
+          if(area === 'local' && focusKey) {
+            const record=records.find(record=>record.key===focusKey);
+            if(record){testFocusRecord={record,updatedAt:record.updatedAt};record.updatedAt=new Date(Date.now()+60000).toISOString();void save().catch(console.error);}
+          }
+          if(area === 'local' && changes.fixtureFocusRestore?.newValue && testFocusRecord) {
+            testFocusRecord.record.updatedAt=testFocusRecord.updatedAt;testFocusRecord=null;
+            void save().then(()=>testStorageSet({fixtureFocusRestored:true})).catch(console.error);
+          }
           const overflowContext = changes.fixtureOverflowContext?.newValue;
           if (area === 'local' && overflowContext) {
             testOverflowSaved = {records,overflowPending,overflowReport};

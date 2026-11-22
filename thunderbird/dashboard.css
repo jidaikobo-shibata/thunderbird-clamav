@@ -109,3 +109,6 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid GrayText
 #settings-form input[type="number"] { font: inherit; min-height: 44px; padding: 4px 8px; width: 8rem; box-sizing: border-box; }
 #scan-phishing, #scan-macros, #scan-pua { margin-bottom: 12px; }
 .scanPolicy { display: block; font-size: .85rem; margin-top: 8px; }
+
+.field-error { display: block; color: light-dark(#a40000, #ffb4ab); margin-block: .25rem .75rem; }
+[aria-invalid="true"] { border: 2px solid light-dark(#a40000, #ffb4ab); }

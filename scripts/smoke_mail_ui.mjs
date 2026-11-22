@@ -252,6 +252,26 @@ try {
         await call("Page.reload");
       }
       await until("document.querySelectorAll('#results tr').length === 50 && document.getElementById('panel-settings').contains(document.getElementById('connection-title'))");
+      await evaluate(`document.getElementById('tab-results').click();
+        testState.folderJob={id:'ui-audit',status:'running',folder:{id:'inbox',accountId:'test',path:'/Inbox'},total:100,completed:0,discovered:100,scanning:1,counts:{clean:0,detected:0,incomplete:0,error:0}};`);
+      await until("!document.getElementById('folder-progress').hidden");
+      await evaluate("document.querySelectorAll('#results tr')[0].querySelector('input').click();document.querySelectorAll('#results tr')[3].querySelector('input').click()");
+      assert.equal(await evaluate("document.getElementById('quarantine-selected').disabled && document.getElementById('review-selected').disabled && !document.getElementById('result-action-wait').hidden"), true);
+      await evaluate("testState.folderJob=null;document.getElementById('deselect').click()");
+      await until("document.getElementById('folder-progress').hidden");
+      await evaluate("window.auditOldTime=testState.records.find(r=>r.key==='r1').updatedAt;window.auditFocus=document.querySelectorAll('#results tr')[1].querySelector('input');auditFocus.focus();testState.records.find(r=>r.key==='r1').updatedAt=new Date(Date.now()+60000).toISOString()");
+      await until("auditFocus.closest('tr')===document.querySelector('#results tr')");
+      assert.equal(await evaluate("document.activeElement===auditFocus"), true);
+      await evaluate("testState.records.find(r=>r.key==='r1').updatedAt=auditOldTime");
+      await until("auditFocus.closest('tr')===document.querySelectorAll('#results tr')[1]");
+      await evaluate("document.getElementById('tab-settings').click();document.getElementById('scan-mailMiB').value='4';document.getElementById('scan-mailMiB').dispatchEvent(new Event('change',{bubbles:true}))");
+      assert.equal(await evaluate("document.getElementById('scan-mailMiB').getAttribute('aria-invalid')"), 'true');
+      await evaluate("document.getElementById('scan-mailMiB').blur();new Promise(resolve=>setTimeout(resolve,2200))");
+      assert.equal(await evaluate("document.getElementById('scan-mailMiB').value"), '4');
+      assert.equal(await evaluate("document.getElementById('scan-mailMiB-error').textContent.includes('5') && document.getElementById('scan-mailMiB-error').textContent.includes('100')"), true);
+      await change('scan-mailMiB','25');
+      await until("!document.getElementById('scan-mailMiB').disabled && !document.getElementById('scan-mailMiB').hasAttribute('aria-invalid')");
+      await evaluate("document.getElementById('tab-scan').click()");
       assert.deepEqual(await evaluate(`(async () => {
         const {syncQuarantineSettings} = await import('./quarantine-ui.mjs');
         const original = document.getElementById('quarantine-settings');
@@ -992,10 +1012,14 @@ try {
       } catch (error) { throw new Error(id + ": " + await evaluate("JSON.stringify({settings:testState.settings, status:document.getElementById('settings-status').textContent, action:document.getElementById('action-status').textContent, inputs:[...document.querySelectorAll('#settings-form input[type=number]')].map(input=>[input.id,input.value,input.disabled])})")); }
     }
     await change("scan-mailMiB", "101");
-    assert.equal(await evaluate("document.getElementById('scan-mailMiB').value"), "50");
+    assert.equal(await evaluate("document.getElementById('scan-mailMiB').value"), "101");
     assert.equal(await evaluate("testState.settings.scanSettings.mailMiB"), 50);
+    await change("scan-mailMiB", "50");
+    await until("!document.getElementById('scan-mailMiB').disabled");
     await change("scan-expandedMiB", "25");
-    assert.equal(await evaluate("document.getElementById('scan-expandedMiB').value"), "200");
+    assert.equal(await evaluate("document.getElementById('scan-expandedMiB').value"), "25");
+    await change("scan-expandedMiB", "200");
+    await until("!document.getElementById('scan-expandedMiB').disabled");
     await evaluate("failSettings = true"); await change("scan-seconds", "100");
     await until("document.getElementById('scan-seconds').value === '90' && !document.getElementById('scan-seconds').disabled");
     await evaluate("failSettings = false; document.getElementById('scan-mailMiB').focus(); document.getElementById('scan-mailMiB').value = '75'");

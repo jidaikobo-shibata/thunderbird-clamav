@@ -41,3 +41,22 @@ test("native settings acknowledgement is required and malformed results fail clo
     client.close();
   }
 });
+
+test("policy form errors identify fields and retain their entered values", async () => {
+  const { readScanPolicy } = await import('../thunderbird/scan-policy.mjs');
+  const previous = globalThis.document;
+  const inputs = Object.fromEntries(Object.entries(SCAN_DEFAULTS).map(([key,value]) => ['scan-'+key,{value:String(value)}]));
+  globalThis.document = {getElementById:id=>inputs[id]};
+  try {
+    for(const [key,value,expected] of [['mailMiB','4','mailMiB'],['mailMiB','5.5','mailMiB'],['seconds','','seconds'],['phishing','unknown','phishing']]) {
+      inputs['scan-'+key].value=value;
+      assert.throws(readScanPolicy,error=>error.fields[0].key===expected&&error.fields[0].message.length>0);
+      assert.equal(inputs['scan-'+key].value,value);
+      inputs['scan-'+key].value=String(SCAN_DEFAULTS[key]);
+    }
+    inputs['scan-mailMiB'].value='100';inputs['scan-expandedMiB'].value='25';
+    assert.throws(readScanPolicy,error=>error.fields[0].key==='expandedMiB'&&error.message.includes('100'));
+    inputs['scan-expandedMiB'].value='100';
+    assert.equal(readScanPolicy().mailMiB,100);
+  } finally { if(previous===undefined)delete globalThis.document;else globalThis.document=previous; }
+});

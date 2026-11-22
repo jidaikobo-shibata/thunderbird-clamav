@@ -4453,3 +4453,14 @@ for(const returnToOld of [false,true]) for(const failure of [false,true]) test(`
  await settle(h,s=>s.records.length===1&&s.records[0].messageId===moved.id&&s.records[0].status==='detected');
  await new Promise(r=>setTimeout(r,10));assert.equal(calls,returnToOld&&failure?3:2);h.expireIdle();
 });
+
+test('state exposes review and manual quarantine availability during actual scanning',async()=>{
+ const target=mail(5801);let enter,release;
+ const started=new Promise(r=>enter=r),gate=new Promise(r=>release=r);
+ const h=await harness({direct:true,mails:[target],scanGate:async()=>{enter();await gate;},saved:{settings:{enabled:true,accountIds:['one'],notifications:false}}});
+ h.events.newMail.listeners[0](target.folder,{messages:[target]});await started;
+ assert.equal((await h.send('state')).resultActionsBusy,true);
+ release();
+ await settle(h,s=>s.records[0]?.status==='clean'&&s.resultActionsBusy===false);
+ h.expireIdle();
+});

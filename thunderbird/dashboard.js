@@ -25,7 +25,7 @@ let folderAnnouncement = null, seenResultsRequest = null;
 const TABS = DIRECT ? ["scan", "results", "settings", "help"] : ["scan", "results", "settings", "setup", "uninstall", "help"];
 let userNavigated = false, seenSetupRequest = null;
 const selectedFolders = new Set();
-let folderChoices = [], foldersLoading = false, settingsSaving = false;
+let folderChoices = [], foldersLoading = false, settingsSaving = false, scanSettingsDirty = false;
 let folderNames = createFolderIndex(folderChoices);
 
 async function request(type, values = {}) {
@@ -54,6 +54,13 @@ const installer = installationUI({ request, action, latest: () => latest, busy: 
 function selection() { return (latest?.records || []).filter(record => selected.has(record.key)); }
 function updateControls() {
   const locked = blocked() || startupFailed || Boolean(latest?.helperRemoved), chosen = selection();
+  const resultBusy = Boolean(latest?.resultActionsBusy || ["collecting", "running", "stopping"].includes(latest?.folderJob?.status) || latest?.records.some(record => record.status === "scanning"));
+  $("result-action-wait").hidden = !resultBusy;
+  setText($("result-action-wait"), resultBusy ? t("resultActionsWait", "検査・削除の処理が終わると、確認状態の変更と手動隔離を操作できます。") : "");
+  for (const id of ["review-selected", "unreview-selected", "quarantine-selected"]) {
+    if (resultBusy) $(id).setAttribute("aria-describedby", "result-action-wait");
+    else $(id).removeAttribute("aria-describedby");
+  }
   const retryCount = chosen.filter(canRetry).length, deleteCount = chosen.filter(canDelete).length, historyCount = chosen.filter(canForget).length;
   const outside = chosen.filter(record => !visible.some(item => item.key === record.key)).length;
   setText($("selected-count"), t("selectionCount", "$1件を選択中（画面外$2件）", [chosen.length, outside]));
@@ -66,11 +73,11 @@ function updateControls() {
   const reviewCount = chosen.filter(canReview).length, unreviewCount = chosen.filter(canUnreview).length;
   setText($("review-selected"), t("reviewCountAction", "確認済みにする（$1通）", [reviewCount]));
   setText($("unreview-selected"), t("unreviewCountAction", "未確認に戻す（$1通）", [unreviewCount]));
-  $("review-selected").disabled = locked || !reviewCount;
-  $("unreview-selected").disabled = locked || !unreviewCount;
+  $("review-selected").disabled = locked || resultBusy || !reviewCount;
+  $("unreview-selected").disabled = locked || resultBusy || !unreviewCount;
   const quarantineCount = chosen.filter(canQuarantine).length;
   setText($("quarantine-selected"), t("qSelectedCount", "隔離（$1通）", [quarantineCount]));
-  $("quarantine-selected").disabled = locked || !quarantineCount || foldersLoading || !folderChoices.length;
+  $("quarantine-selected").disabled = locked || resultBusy || !quarantineCount || foldersLoading || !folderChoices.length;
   $("deselect").disabled = locked || !chosen.length;
   const candidates = visible.filter(selectable), selectedOnPage = candidates.filter(record => selected.has(record.key)).length;
   $("select-page").disabled = locked || !candidates.length;
@@ -107,7 +114,9 @@ function updateControls() {
     entry.retry.disabled = locked || !canRetry(record);
     entry.remove.disabled = locked || !canDelete(record);
     entry.forget.disabled = locked || !canForget(record);
-    entry.review.disabled = locked || !["incomplete", "advisory"].includes(record.status);
+    entry.review.disabled = locked || resultBusy || !["incomplete", "advisory"].includes(record.status);
+    if (resultBusy) entry.review.setAttribute("aria-describedby", "result-action-wait");
+    else entry.review.removeAttribute("aria-describedby");
   }
   $("previous-page").disabled = navigationLocked || page === 0;
   $("next-page").disabled = navigationLocked || page + 1 >= Number($("page-label").dataset.pages || 1);
@@ -436,6 +445,8 @@ function renderOverflow() {
 }
 
 function renderRecords() {
+  const focused = document.activeElement;
+  const focusedRow = focused?.closest?.("#results tr");
   if (!latest) return;
   renderFolder();
   renderOverflow();
@@ -498,6 +509,10 @@ function renderRecords() {
     setText($("batch-progress"), t("bulkProgress", "$1：$2 ／ $3 / $4件 ／ 失敗$5件・未着手$6件", [operation, state, progress.completed, progress.total, progress.failed || 0, progress.active ? progress.total - progress.completed : progress.cancelled || 0]));
   }
   updateControls();
+  if (focusedRow && document.activeElement === document.body) {
+    if (focused.isConnected && !focused.disabled && !focused.closest("[hidden]")) focused.focus();
+    else { $("summary").tabIndex = -1; $("summary").focus(); }
+  }
 }
 
 async function refresh() {
@@ -631,7 +646,7 @@ $("forget-selected").addEventListener("click", () => {
 function syncSettings(settings, forceScan = false) {
   settings = normalizeAutomaticSettings(settings);
   $("notifications").checked = settings.notifications;
-  syncScanPolicy(settings.scanSettings, forceScan);
+  if (forceScan || !scanSettingsDirty) syncScanPolicy(settings.scanSettings, forceScan);
   syncQuarantineSettings(settings, latest.accounts, folderChoices);
   const current = new Map([...$("accounts").querySelectorAll("input")].map(input => [input.value, input]));
   const ids = new Set(latest.accounts.map(account => account.id));
@@ -765,14 +780,42 @@ $("quarantine-selected").addEventListener("click", () => {
     return t("qCompleted", "隔離：$1通移動、$2通失敗。結果を確認してください。", [result.moved, result.failed]);
   });
 });
+function clearScanErrors() {
+  for (const input of $("settings-form").querySelectorAll("[id^=scan-]")) {
+    input.removeAttribute("aria-invalid");
+    input.removeAttribute("aria-describedby");
+    $(input.id + "-error")?.remove();
+  }
+}
+function showScanErrors(error) {
+  clearScanErrors();
+  for (const field of error.fields || []) {
+    const input = $("scan-" + field.key), detail = document.createElement("span");
+    detail.id = input.id + "-error"; detail.className = "field-error"; detail.textContent = field.message;
+    input.insertAdjacentElement("afterend", detail);
+    input.setAttribute("aria-invalid", "true"); input.setAttribute("aria-describedby", detail.id);
+  }
+  setText($("settings-status"), error.message);
+  const first = error.fields?.[0];
+  if (first) {
+    const input = $("scan-" + first.key), details = input.closest("details");
+    if (details) details.open = true;
+    input.focus();
+  }
+}
+$("settings-form").addEventListener("input", event => {
+  if (event.target.id.startsWith("scan-")) scanSettingsDirty = true;
+});
 $("settings-form").addEventListener("submit", event => event.preventDefault());
-$("settings-form").addEventListener("change", () => {
+$("settings-form").addEventListener("change", event => {
+  if (event.target.id.startsWith("scan-")) scanSettingsDirty = true;
   const accountIds = [...$("accounts").querySelectorAll("input:checked")].map(input => input.value);
   const wasEnabled = latest.settings.enabled;
   const quarantine = readQuarantineSettings(latest.settings.quarantine, folderChoices);
   let scanSettings;
   try { scanSettings = readScanPolicy(); }
-  catch (error) { syncSettings(latest.settings, true); setText($("settings-status"), error.message); return; }
+  catch (error) { syncSettings(latest.settings); showScanErrors(error); return; }
+  clearScanErrors();
   const settings = { enabled: accountIds.length > 0, notifications: $("notifications").checked, accountIds, quarantine, scanSettings };
   const permission = quarantineNeedsPermission(latest.settings.quarantine, quarantine) ? requireMovePermission() : Promise.resolve();
   settingsSaving = true;
@@ -782,9 +825,11 @@ $("settings-form").addEventListener("change", () => {
       await permission;
       await request("settings", { settings });
       latest.settings = settings;
+      scanSettingsDirty = false;
       syncSettings(settings, true);
       setText($("settings-status"), !accountIds.length && wasEnabled ? t("mail167", "対象アカウントがなくなったため、自動検査を停止して保存しました。") : t("mail168", "保存しました。"));
     } catch (error) {
+      scanSettingsDirty = false;
       syncSettings(latest.settings, true);
       setText($("settings-status"), t("mail169", "保存できませんでした。変更前の設定に戻しました。"));
       throw error;

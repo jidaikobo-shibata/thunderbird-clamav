@@ -1,4 +1,46 @@
 {
+  "resultActionsWait": {
+    "message": "Review changes and manual quarantine become available when scanning and deletion finish."
+  },
+  "scanFieldMail": {
+    "message": "Message size limit"
+  },
+  "scanFieldExpanded": {
+    "message": "Expanded scan size limit"
+  },
+  "scanFieldSeconds": {
+    "message": "ClamAV internal scan time limit"
+  },
+  "scanRangeError": {
+    "message": "Enter a whole number from $ARG2$ to $ARG3$ for $ARG1$.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "scanChoiceError": {
+    "message": "Select a valid option for $ARG1$.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "scanExpandedError": {
+    "message": "The expanded scan size limit must be at least the message size limit ($ARG1$ MiB).",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
   "qUnretainedFailure": {
     "message": "Automatic quarantine could not be completed for a message whose details were removed by the history limit. Check the source and quarantine folders in Thunderbird. The message will not be moved again automatically. $ARG1$",
     "placeholders": {

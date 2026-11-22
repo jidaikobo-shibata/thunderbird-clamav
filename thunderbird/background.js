@@ -1862,6 +1862,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
     switch (request.type) {
       case "state":
         return { ok: true, directMigrationBackup, settings, records, overflowPending, overflowReport, issue, lastHealth, lastScan, resultsRequest, resultsFilter, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
+          resultActionsBusy: Boolean(running || folderScan.active || deleting.size),
           folderJob: folderScan.snapshot(), accounts: (await api.accounts.list())
           .filter(account => ["imap", "pop3", "none"].includes(account.type))
           .map(account => ({ id: account.id, name: account.name, type: account.type })) };

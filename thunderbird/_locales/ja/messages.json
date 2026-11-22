@@ -1,4 +1,46 @@
 {
+  "resultActionsWait": {
+    "message": "検査・削除の処理が終わると、確認状態の変更と手動隔離を操作できます。"
+  },
+  "scanFieldMail": {
+    "message": "メール全体の上限"
+  },
+  "scanFieldExpanded": {
+    "message": "展開後の検査量上限"
+  },
+  "scanFieldSeconds": {
+    "message": "ClamAV内部の検査時間上限"
+  },
+  "scanRangeError": {
+    "message": "$ARG1$は$ARG2$〜$ARG3$の整数で入力してください。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "scanChoiceError": {
+    "message": "$ARG1$の選択肢を選び直してください。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "scanExpandedError": {
+    "message": "展開後の検査量上限は、メール全体の上限（$ARG1$MiB）以上にしてください。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
   "qUnretainedFailure": {
     "message": "履歴上限で詳細が残っていないメールの自動隔離を完了できませんでした。Thunderbirdで元のフォルダーと隔離先を確認してください。自動で再移動はしません。 $ARG1$",
     "placeholders": {

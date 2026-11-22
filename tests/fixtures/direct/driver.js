@@ -507,6 +507,42 @@ try {
     await request("settings",{settings:notificationSettings});
     report.notificationIsolation=true;
     state=await request("state");
+    report.stage="dashboard-accessibility";
+    document.getElementById('tab-results').click();
+    let focusRow;
+    for(let attempt=0;attempt<100;attempt++) {
+      focusRow=[...document.querySelectorAll('#results tr')].find(row=>row.textContent.includes('Synthetic plain'));
+      if(focusRow) break;
+      await wait(100);
+    }
+    check(focusRow,"Native result row is available");
+    const focusedControl=focusRow.querySelector('input');focusedControl.focus();
+    await messenger.storage.local.set({fixtureFocusRecordKey:plainKey});
+    for(let attempt=0;attempt<100;attempt++) {
+      if(document.querySelector('#results tr')===focusRow) break;
+      await wait(100);
+    }
+    check(document.querySelector('#results tr')===focusRow&&document.activeElement===focusedControl,"Native focus survives automatic row reordering");
+    await messenger.storage.local.set({fixtureFocusRestore:true});
+    for(let attempt=0;attempt<100;attempt++) {
+      if((await messenger.storage.local.get('fixtureFocusRestored')).fixtureFocusRestored) break;
+      await wait(100);
+    }
+    check((await messenger.storage.local.get('fixtureFocusRestored')).fixtureFocusRestored,"Synthetic timestamp restored");
+    document.getElementById('tab-settings').click();
+    const mailLimit=document.getElementById('scan-mailMiB');
+    mailLimit.value='4';mailLimit.dispatchEvent(new Event('change',{bubbles:true}));mailLimit.blur();await wait(2300);
+    check(mailLimit.value==='4'&&mailLimit.getAttribute('aria-invalid')==='true',"Native invalid input survives refresh");
+    check(document.getElementById(mailLimit.getAttribute('aria-describedby')).textContent.includes('100'),"Native input error identifies its range");
+    mailLimit.value=String(state.settings.scanSettings.mailMiB);mailLimit.dispatchEvent(new Event('change',{bubbles:true}));
+    for(let attempt=0;attempt<100;attempt++) {
+      if(!mailLimit.disabled&&!mailLimit.hasAttribute('aria-invalid')) break;
+      await wait(100);
+    }
+    check(!mailLimit.disabled&&!mailLimit.hasAttribute('aria-invalid'),"Native corrected input saves and clears its error");
+    report.dashboardAccessibility=true;
+    state=await request("state");
+
 
 
   } else {
