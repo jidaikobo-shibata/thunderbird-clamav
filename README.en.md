@@ -1,6 +1,6 @@
 # ClamAV Mail Check
 
-This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a38**, a prerelease of the integrated Ubuntu/macOS scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a38 has not been published.
+This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a39**, a prerelease of the integrated Ubuntu/macOS scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a39 has not been published.
 
 ## Requirements
 
@@ -53,7 +53,7 @@ No additional Python or npm packages are needed:
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-Install `dist/clam-mail-check-direct-0.20.0a38.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
+Install `dist/clam-mail-check-direct-0.20.0a39.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
 
 Open Settings and choose Check connection again. Start with a small manual folder scan. Automatic scanning is disabled for a new installation; select accounts only after checking results.
 
@@ -70,6 +70,8 @@ Remove the extension through Thunderbird's Add-ons Manager. Normal extension set
 ## Results and privacy
 
 Encrypted content, scan limits, missing software and communication failures are reported as incomplete or failed, never as a clean scan. A previous malware detection is retained when a rescan fails. A clean result does not guarantee safety.
+
+Desktop notifications are submitted independently of scanning. Slow notification responses cannot hold later inspections or folder completion. Identical in-flight results are not submitted twice, and failures are not treated as delivered notices. Late responses cannot overwrite the delivery state of a newer result; relevant failures are shown in the status area.
 
 Incoming message lists are fetched independently per notification. Accepted messages can be scanned while another list is pending. Failed listing or saving retains the unaccepted remainder for periodic retries.
 

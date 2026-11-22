@@ -76,6 +76,7 @@ const historyTickets = new Map();
 const movedScans = new WeakMap();
 const moveRevisions = new WeakMap();
 const unverifiedMoves = new WeakMap(), notifiedMoveResults = new WeakMap();
+const notificationWork = new WeakMap();
 const pendingMoveDuplicates = new WeakMap(), pendingMoveOrigin = new WeakMap();
 let folderRequest = null;
 let lastHealth = null, lastScan = null;
@@ -148,13 +149,16 @@ const folderScan = new FolderScan(api, {
     return sha256(await rawBytes(message.id, MAX_TRANSFER_BYTES, check));
   },
   changed: () => save(), wake: () => { void drain().catch(report); },
-  finished: async job => {
+  finished: job => {
     if (!settings.notifications) return;
-    try {
-      await api.notifications.create("folder-" + job.id, { type: "basic", iconUrl: api.runtime.getURL("icon.svg"),
-        title: t("mail002", "ClamAV：フォルダー検査 ") + FOLDER_STATES[job.status],
-        message: t("mail003", "処理済み$1件、検出$2件、未検査$3件、失敗$4件。結果画面を確認してください。", [job.completed, job.counts.detected, job.counts.incomplete, job.counts.error]) + (job.counts.advisory ? t("scanFolderAdvisory", " 注意情報$1件。", [job.counts.advisory]) : "") });
-    } catch { issue = t("mail004", "フォルダー検査の通知を表示できません。結果画面を確認してください。"); }
+    // Completion notices must not hold folder progress or the serial scanner.
+    void (async () => {
+      try {
+        await api.notifications.create("folder-" + job.id, { type: "basic", iconUrl: api.runtime.getURL("icon.svg"),
+          title: t("mail002", "ClamAV：フォルダー検査 ") + FOLDER_STATES[job.status],
+          message: t("mail003", "処理済み$1件、検出$2件、未検査$3件、失敗$4件。結果画面を確認してください。", [job.completed, job.counts.detected, job.counts.incomplete, job.counts.error]) + (job.counts.advisory ? t("scanFolderAdvisory", " 注意情報$1件。", [job.counts.advisory]) : "") });
+      } catch { report(t("mail004", "フォルダー検査の通知を表示できません。結果画面を確認してください。")); }
+    })();
   }
 });
 
@@ -667,22 +671,37 @@ function moveResultStamp(record) {
   return JSON.stringify([record.sha256, record.status, record.lastAttempt, record.detail, record.signatures, record.advisories, record.unscannedReason]);
 }
 
-async function notify(record, coalescedMove = false) {
+function notify(record, coalescedMove = false) {
   if (!settings.notifications || !needsAttention(record)) return;
   // A transient failure is actionable only after its scheduled retry fails.
   if (scanFailed(record) && record.nextRetry) return;
   if (record.status === "advisory" && !advisoryNotifies(record)) return;
   const stamp = moveResultStamp(record);
   if (coalescedMove && notifiedMoveResults.get(record) === stamp) return;
-  // Subjects/senders are deliberately omitted from lock-screen notifications.
-  try {
-    await api.notifications.create(record.key, {
-      type: "basic", iconUrl: api.runtime.getURL("icon.svg"),
-      title: t("mail211", "ClamAV メール検査：") + LABELS[record.lastAttempt?.status || record.status],
-      message: t("mail030", "Thunderbirdの検査結果画面で対象メールを確認してください。")
-    });
-    notifiedMoveResults.set(record, stamp);
-  } catch { issue = t("mail031", "デスクトップ通知を表示できません。結果画面を確認してください。"); }
+  let work = notificationWork.get(record);
+  if (!work) { work = { pending: new Map(), latest: null }; notificationWork.set(record, work); }
+  // The submission is not yet known to have succeeded. Suppress overlapping
+  // identical submissions without treating a failure as a delivered notice.
+  if (work.pending.has(stamp)) { work.latest = work.pending.get(stamp); return; }
+  const ticket = {};
+  work.pending.set(stamp, ticket); work.latest = ticket;
+  const current = () => work.latest === ticket && moveResultStamp(record) === stamp;
+  const options = {
+    type: "basic", iconUrl: api.runtime.getURL("icon.svg"),
+    title: t("mail211", "ClamAV メール検査：") + LABELS[record.lastAttempt?.status || record.status],
+    message: t("mail030", "Thunderbirdの検査結果画面で対象メールを確認してください。")
+  };
+  // Subjects/senders are deliberately omitted. No caller waits for the OS.
+  void (async () => {
+    try {
+      await api.notifications.create(record.key, options);
+      if (current()) notifiedMoveResults.set(record, stamp);
+    } catch {
+      if (current() && settings.notifications && needsAttention(record)) {
+        report(t("mail031", "デスクトップ通知を表示できません。結果画面を確認してください。"));
+      }
+    } finally { work.pending.delete(stamp); }
+  })();
 }
 
 async function openDashboard() {
@@ -1099,7 +1118,7 @@ async function drain() {
     while (true) {
       if (recordStaging) break;
       if (overflowPending && !["queued", "scanning"].includes(overflowPending.status)) {
-        await notify(overflowPending);
+        notify(overflowPending);
         await finishOverflow(overflowPending);
       }
       // Folder work is fed one at a time, after fresh mail and manual work.
@@ -1231,7 +1250,7 @@ async function drain() {
           record.status === "advisory" ? (advisoryNotifies(record) ? "notifiedAdvisory" : null) : needsAttention(record) ? "notifiedProblem" : null;
         if (flag && !folderScan.job[flag]) {
           folderScan.job[flag] = true;
-          void notify(record);
+          notify(record);
         }
         await folderScan.complete(record.status, record.sha256 ? {
           hint: await checkpointHint(record.locator), digest: record.sha256
@@ -1240,7 +1259,7 @@ async function drain() {
       // Reserve the detected result before yielding to storage/notification UI.
       if (autoQuarantine) startAutomaticQuarantine(record, quarantineConfig);
       await save();
-      if (!fromFolder) await notify(record, coalescedMove);
+      if (!fromFolder) notify(record, coalescedMove);
       if (record === overflowPending) await finishOverflow(record);
       await updateBadge();
     }
@@ -1258,7 +1277,7 @@ async function drain() {
       const interrupted = overflowPending;
       interrupted.status = "error"; interrupted.nextRetry = null;
       interrupted.detail = t("overflowFailure", "保存枠不足時の検査処理に失敗しました。Thunderbirdで対象を確認して再検査してください。");
-      await notify(interrupted);
+      notify(interrupted);
       try { await finishOverflow(interrupted); } catch { overflowPending = null; wakeOverflow(); }
     }
     const active = records.find(record => record.status === "scanning");

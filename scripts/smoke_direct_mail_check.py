@@ -76,6 +76,20 @@ def fixture_xpi(target, original, version, scenario="full"):
         const api = messenger;
         const testStorageSet = api.storage.local.set.bind(api.storage.local);
         const testRaw = api.messages.getRaw.bind(api.messages);
+        const testNotification = api.notifications.create.bind(api.notifications);
+        api.notifications.create = async (id, options) => {
+          const record = [...records,...(overflowReport?.recent || []),...(overflowPending ? [overflowPending] : [])].find(record=>record.key===id);
+          if(record?.locator.subject === 'Synthetic held notification') {
+            await testStorageSet({fixtureNotificationStarted:true,fixtureNotificationPayload:options});
+            for(let attempt=0;attempt<4800;attempt++) {
+              if((await api.storage.local.get('fixtureNotificationRelease')).fixtureNotificationRelease) break;
+              await new Promise(resolve=>setTimeout(resolve,25));
+            }
+            await testStorageSet({fixtureNotificationReturned:true});
+            return id;
+          }
+          return testNotification(id,options);
+        };
         const testContinue = api.messages.continueList.bind(api.messages);
         let testPagedReceipt = null, testPagedMove = null, testOverflowSaved = null, testOverflowReads = 0;
         api.messages.continueList = async id => {

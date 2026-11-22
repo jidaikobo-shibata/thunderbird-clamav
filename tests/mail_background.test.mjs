@@ -4346,3 +4346,110 @@ for(const change of ['disabled','target','contents','timeout']) test(`unretained
  assert.equal(state.records.length,1000);
  h.expireIdle();
 });
+
+test('slow notification submission does not hold later automatic or manual inspections',async()=>{
+ const mails=[mail(5201),mail(5202),mail(5203)];
+ const h=await harness({direct:true,mails,scanResult:id=>({status:id===5201?'detected':'clean',signatures:id===5201?['Synthetic']:[]}),saved:{settings:{enabled:true,accountIds:['one'],notifications:true}}});
+ let enter,release;const started=new Promise(r=>enter=r),gate=new Promise(r=>release=r);
+ h.api.notifications.create=async()=>{enter();await gate;};
+ h.events.newMail.listeners[0](mails[0].folder,{messages:[mails[0]]});await started;
+ h.events.newMail.listeners[0](mails[1].folder,{messages:[mails[1]]});
+ h.api.mailTabs.getSelectedMessages=async()=>({messages:[mails[2]]});assert.equal((await h.send('scanSelection')).ok,true);
+ await settle(h,s=>s.records.length===3);
+ for(let i=0;i<3;i++){await h.timers[0]();await new Promise(r=>setTimeout(r,5));}
+ let state=await h.send('state');
+ await settle(h,s=>s.records.filter(r=>r.status==='clean').length===2);
+ state=await h.send('state');
+ assert.deepEqual(state.records.map(r=>r.status),['detected','clean','clean']);
+ assert.equal(h.directRequests.filter(r=>r.op==='end').length,3);
+ assert.equal(h.inputTimers.filter(t=>t.active).length,0);
+ assert.equal(h.reviewTimers.filter(t=>t.active).length,0);
+
+ release();await settle(h,s=>s.records.filter(r=>r.status==='clean').length===2);
+ assert.equal(h.directRequests.filter(r=>r.op==='end').length,3);h.expireIdle();
+});
+
+test('a pending detection notice does not hold overflow capacity or following deliveries',async()=>{
+ const mails=[mail(5301),mail(5302)];
+ const records=Array.from({length:1000},(_,i)=>({key:'held-'+i,status:'detected',locator:{accountId:'one'}}));
+ const h=await harness({direct:true,mails,scanResult:id=>({status:id===5301?'detected':'clean'}),saved:{records,settings:{enabled:true,accountIds:['one'],notifications:true}}});
+ let release,enter,calls=0;const gate=new Promise(r=>release=r),started=new Promise(r=>enter=r);
+ h.api.notifications.create=async()=>{calls++;enter();await gate;};
+ h.events.newMail.listeners[0](mails[0].folder,{messages:mails});await started;
+ await settle(h,s=>s.overflowReport?.total===2&&!s.overflowPending);
+ assert.equal(calls,1);release();h.expireIdle();
+});
+
+test('folder completion notification cannot hold subsequent automatic inspection',async()=>{
+ const first=mail(5401),fresh=mail(5402);first.folder.id='inbox';
+ const h=await harness({direct:true,mails:[first,fresh],saved:{settings:{enabled:true,accountIds:['one'],notifications:true}}});
+ let release,enter;const gate=new Promise(r=>release=r),started=new Promise(r=>enter=r);
+ h.api.notifications.create=async id=>{assert.ok(id.startsWith('folder-'));enter();await gate;};
+ h.api.messages.list=async()=>({messages:[first]});
+ const token=await h.send('folderContext',{folderId:'inbox'});
+ await h.send('folderStart',{token:token.token,includeSubfolders:false});await started;
+ h.events.newMail.listeners[0](fresh.folder,{messages:[fresh]});
+ const state=await settle(h,s=>s.folderJob?.status==='completed'&&s.records.some(r=>r.source==='automatic'&&r.messageId===fresh.id&&r.status==='clean'));
+ assert.equal(state.folderJob.completed,1);release();h.expireIdle();
+});
+
+test('pending identical notifications are coalesced but later explicit rescans may notify again',async()=>{
+ const target=mail(5501),h=await harness({direct:true,mails:[target],scanResult:{status:'detected'},saved:{settings:{enabled:true,accountIds:['one'],notifications:true}}});
+ let release,enter,calls=0;const gate=new Promise(r=>release=r),started=new Promise(r=>enter=r);
+ h.api.notifications.create=async()=>{if(++calls===1){enter();await gate;}};
+ h.events.newMail.listeners[0](target.folder,{messages:[target]});await started;
+ const key=(await h.send('state')).records[0].key;
+ assert.equal((await h.send('retry',{key})).ok,true);
+ await settle(h,()=>h.directRequests.filter(r=>r.op==='end').length===2);
+ await new Promise(r=>setTimeout(r,10));assert.equal(calls,1);
+ release();await new Promise(r=>setTimeout(r,10));
+ assert.equal((await h.send('retry',{key})).ok,true);
+ await settle(h,()=>calls===2);h.expireIdle();
+});
+
+test('failed asynchronous notification is reported without stopping later scans and may be retried',async()=>{
+ const a=mail(5601),b=mail(5602),h=await harness({direct:true,mails:[a,b],scanResult:{status:'detected'},saved:{settings:{enabled:true,accountIds:['one'],notifications:true}}});
+ let reject,enter,calls=0;const gate=new Promise((r,j)=>reject=j),started=new Promise(r=>enter=r);
+ h.api.notifications.create=async()=>{if(++calls===1){enter();await gate;}};
+ h.events.newMail.listeners[0](a.folder,{messages:[a]});await started;
+ h.events.newMail.listeners[0](b.folder,{messages:[b]});await settle(h,()=>calls===2);
+ reject(Error('synthetic notification failed'));
+ await settle(h,s=>s.issue.includes('デスクトップ通知'));
+ const key=(await h.send('state')).records.find(r=>r.messageId===a.id).key;
+ assert.equal((await h.send('retry',{key})).ok,true);
+ await settle(h,()=>calls===3);h.expireIdle();
+});
+
+for(const returnToOld of [false,true]) for(const failure of [false,true]) test(`late notification completion preserves current delivery state (failure=${failure}, returnToOld=${returnToOld})`,async()=>{
+ const original={...mail(5701),folder:{id:'inbox',accountId:'one',path:'/Inbox'}};
+ const moved={...original,id:5702,folder:{id:'moved',accountId:'one',path:'/Moved'}};
+ let signature='Synthetic.Old';
+ const h=await harness({direct:true,mails:[original,moved],scanResult:()=>({status:'detected',signatures:[signature]}),saved:{settings:{enabled:true,accountIds:['one'],notifications:true}}});
+ let enter,release,fail,releaseEnd,enterEnd,calls=0,ends=0;
+ const started=new Promise(r=>enter=r),gate=new Promise((r,j)=>{release=r;fail=j;}),endStarted=new Promise(r=>enterEnd=r),endGate=new Promise(r=>releaseEnd=r);
+ h.api.notifications.create=async()=>{if(++calls===1){enter();await gate;}};
+ h.events.newMail.listeners[0](original.folder,{messages:[original]});await started;
+ const key=(await h.send('state')).records[0].key;
+ const request=h.api.clamDirect.request;
+ h.api.clamDirect.request=async(token,value)=>{
+   const response=await request(token,value);
+   if(JSON.parse(value).op==='end'&&++ends===(returnToOld?3:2)){enterEnd();await endGate;}
+   return response;
+ };
+ signature='Synthetic.New';
+ assert.equal((await h.send('retry',{key})).ok,true);
+ await settle(h,s=>s.records[0].signatures?.[0]==='Synthetic.New'&&calls===2);
+ if(returnToOld){
+   signature='Synthetic.Old';assert.equal((await h.send('retry',{key})).ok,true);
+   await settle(h,s=>s.records[0].status==='detected'&&s.records[0].signatures?.[0]==='Synthetic.Old');
+   await new Promise(r=>setTimeout(r,10));assert.equal(calls,2);
+ }
+ if(failure)fail(Error('old failure'));else release();
+ await new Promise(r=>setTimeout(r,10));
+ if(returnToOld&&failure)assert.match((await h.send('state')).issue,/デスクトップ通知/);
+ else assert.equal((await h.send('state')).issue,'');
+ h.events.newMail.listeners[0](moved.folder,{messages:[moved]});await endStarted;
+ await h.events.moved.listeners[0]({messages:[original]},{messages:[moved]});releaseEnd();
+ await settle(h,s=>s.records.length===1&&s.records[0].messageId===moved.id&&s.records[0].status==='detected');
+ await new Promise(r=>setTimeout(r,10));assert.equal(calls,returnToOld&&failure?3:2);h.expireIdle();
+});

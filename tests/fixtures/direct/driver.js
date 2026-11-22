@@ -476,6 +476,38 @@ try {
     }
     check((await messenger.storage.local.get('fixtureOverflowRestored')).fixtureOverflowRestored,"Original synthetic test history restored");
     state=await request("state");
+    report.stage = "notification-isolation";
+    await messenger.testFixture.report(JSON.stringify({...report,running:true}));
+    const notificationSettings=structuredClone(state.settings);
+    await request("settings",{settings:{...notificationSettings,notifications:true}});
+    const notificationRaw=fixture.mails.encrypted.replace(/Subject: [^\r\n]+/,"Subject: Synthetic held notification").replace(/Message-ID: [^\r\n]+/i,"Message-ID: <held-notification@example.invalid>");
+    const notificationMail=await messenger.messages.import(new File([notificationRaw],"notification.eml",{type:"message/rfc822"}),fixture.source.id,{read:true,new:false});
+    await messenger.testFixture.inject(notificationMail.id);
+    for(let attempt=0;attempt<200;attempt++) {
+      if((await messenger.storage.local.get('fixtureNotificationStarted')).fixtureNotificationStarted) break;
+      await wait(25);
+    }
+    check((await messenger.storage.local.get('fixtureNotificationStarted')).fixtureNotificationStarted,"Notification API completion held");
+    const notificationFreshRaw=fixture.mails.plain.replace(/Subject: [^\r\n]+/,"Subject: Synthetic during notification").replace(/Message-ID: [^\r\n]+/i,"Message-ID: <during-notification@example.invalid>");
+    const notificationFresh=await messenger.messages.import(new File([notificationFreshRaw],"during-notification.eml",{type:"message/rfc822"}),fixture.source.id,{read:true,new:false});
+    await messenger.testFixture.inject(notificationFresh.id);
+    state=await settled(state=>state.records.some(r=>r.messageId===notificationFresh.id&&r.status==="clean"));
+    const notificationRetry=state.records.find(r=>r.messageId===notificationFresh.id).key;
+    await request("retry",{key:notificationRetry});
+    state=await settled(state=>state.records.some(r=>r.key===notificationRetry&&r.source==="manual"&&r.status==="clean"));
+    check(!(await messenger.storage.local.get('fixtureNotificationReturned')).fixtureNotificationReturned,"Automatic and manual inspections complete before notification response");
+    const payload=(await messenger.storage.local.get('fixtureNotificationPayload')).fixtureNotificationPayload;
+    check(!JSON.stringify(payload).includes("Synthetic held notification")&&!JSON.stringify(payload).includes("synthetic@example.invalid"),"Notification omits private mail headers");
+    await messenger.storage.local.set({fixtureNotificationRelease:true});
+    for(let attempt=0;attempt<200;attempt++) {
+      if((await messenger.storage.local.get('fixtureNotificationReturned')).fixtureNotificationReturned) break;
+      await wait(25);
+    }
+    check((await messenger.storage.local.get('fixtureNotificationReturned')).fixtureNotificationReturned,"Held notification response released");
+    await request("settings",{settings:notificationSettings});
+    report.notificationIsolation=true;
+    state=await request("state");
+
 
   } else {
     check(state.settings.scanSettings.mailMiB === 50 && state.settings.quarantine[fixture.accountId].auto, "Updated settings retained");

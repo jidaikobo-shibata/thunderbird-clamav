@@ -1,14 +1,14 @@
 # ClamAV Mail Check / ClamAV メール検査
 
 Thunderbirdのメールを、コンピューターにインストールしたClamAVで検査する拡張機能です。
-このブランチは **0.20.0a38（試用版）** です。補助プログラムの別途インストールは不要です。
+このブランチは **0.20.0a39（試用版）** です。補助プログラムの別途インストールは不要です。
 公開済みの0.20.0a5はUbuntu向けです。このブランチのXPIは末尾のビルド手順で作成できます。GitHubにはまだ公開していません。
 
 [English installation guide](README.en.md)
 
 ## インストール
 
-1. このブランチから作成した`dist/clam-mail-check-direct-0.20.0a38.xpi`を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
+1. このブランチから作成した`dist/clam-mail-check-direct-0.20.0a39.xpi`を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
 2. Thunderbirdのアドオンマネージャーで、歯車メニューの「ファイルからアドオンをインストール」を選び、XPIを指定します。
 3. 表示される権限を確認してインストールします。Experiment APIを使用するため、Thunderbirdとコンピューターへの全面アクセス権限が必要です。
 4. ツールバーのアイコンから画面を開き、「設定」末尾の「ClamAVの状態」で「接続を再確認」を押します。ClamAVが未導入なら、表示される導入手順に従います。ウイルス定義の初回更新も完了させてください。
@@ -72,6 +72,8 @@ Homebrewの標準配置（Apple Siliconの`/opt/homebrew`、Intelの`/usr/local`
 
 ClamAVが検出しないメールの安全性を保証するものではありません。暗号化・検査上限・通信失敗などは結果に表示します。
 
+デスクトップ通知は検査から独立して送信します。通知の応答が遅れても、次のメールやフォルダー検査の完了処理を止めません。送信中の同じ結果は重ねて通知せず、失敗を配達済みとは扱いません。遅い通知応答が新しい結果の通知状態を上書きしないよう保護し、現在の結果に関係する通知失敗は状態欄に表示します。
+
 新着通知の一覧取得は通知ごとに独立して待ち、保存できたメールから検査を進めます。ほかの一覧の応答待ちで別の新着を止めません。一覧取得や保存に失敗した場合は未受付分を保持し、定期的に再試行します。
 
 移動通知も一覧取得と履歴の照合を分け、無関係なメールの移動追跡を先に進めます。先行通知が遅れたときは、保持した後続通知も本文を照合して連続移動を追跡します。一時保持は最大60秒・1000通知・10万ヘッダーで、確認不能なら場所を引き継がず状態欄に案内します。
@@ -128,7 +130,7 @@ ClamAVが検出しないメールの安全性を保証するものではあり�
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-成果物は`dist/clam-mail-check-direct-0.20.0a38.xpi`です。同じXPIにUbuntu/macOS用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
+成果物は`dist/clam-mail-check-direct-0.20.0a39.xpi`です。同じXPIにUbuntu/macOS用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
 
 ```bash
 for test_file in tests/*.test.mjs; do
