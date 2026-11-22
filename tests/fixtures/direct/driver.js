@@ -446,6 +446,37 @@ try {
     check((await messenger.messages.get(incomplete.messageId)).id === incomplete.messageId, "History removal preserves other mail");
     check(state.records.find(record => record.key === incomplete.key).review?.note === "Synthetic reviewed encryption", "History removal preserves human review");
     report.historyRemoval = true;
+    report.stage = "overflow-quarantine-ownership";
+    await messenger.testFixture.report(JSON.stringify({...report,running:true}));
+    await messenger.storage.local.set({fixtureOverflowContext:{accountId:fixture.accountId,folder:fixture.source}});
+    for(let attempt=0;attempt<200;attempt++) {
+      if((await messenger.storage.local.get('fixtureOverflowReady')).fixtureOverflowReady) break;
+      await wait(25);
+    }
+    check((await messenger.storage.local.get('fixtureOverflowReady')).fixtureOverflowReady,"Protected synthetic history filled");
+    for(let index=0;index<22;index++) {
+      const overflowRaw=fixture.mails.attachment.replace(/Subject: [^\r\n]+/,"Subject: Synthetic overflow threat "+index).replace(/Message-ID: [^\r\n]+/i,"Message-ID: <overflow-threat-"+index+"@example.invalid>");
+      const imported=await messenger.messages.import(new File([overflowRaw],"overflow.eml",{type:"message/rfc822"}),fixture.source.id,{read:true,new:false});
+      await messenger.testFixture.inject(imported.id);
+    }
+    state=await settled(state=>state.overflowReport?.total===22);
+    check((await messenger.storage.local.get('fixtureOverflowQuarantineStarted')).fixtureOverflowQuarantineStarted,"First real quarantine remains held");
+    check(state.records.length===1000&&state.overflowReport.recent.length===20,"Visible history stays bounded while every task is retained");
+    await messenger.storage.local.set({fixtureOverflowQuarantineRelease:true});
+    state=await settled(state=>state.overflowReport?.recent.every(r=>r.quarantine?.status==="moved"));
+    const isolatedOverflow=(await messenger.messages.list(fixture.quarantine.id)).messages.filter(m=>m.subject.startsWith("Synthetic overflow threat "));
+    check(isolatedOverflow.length===22,"All 22 real threats were quarantined after history rotation");
+    const remainingOverflow=(await messenger.messages.list(fixture.source.id)).messages.filter(m=>m.subject.startsWith("Synthetic overflow threat "));
+    check(remainingOverflow.length===0,"No rotated threat remains in the source");
+    report.overflowQuarantineOwnership=true;
+    await messenger.storage.local.set({fixtureOverflowRestore:true});
+    for(let attempt=0;attempt<200;attempt++) {
+      if((await messenger.storage.local.get('fixtureOverflowRestored')).fixtureOverflowRestored) break;
+      await wait(25);
+    }
+    check((await messenger.storage.local.get('fixtureOverflowRestored')).fixtureOverflowRestored,"Original synthetic test history restored");
+    state=await request("state");
+
   } else {
     check(state.settings.scanSettings.mailMiB === 50 && state.settings.quarantine[fixture.accountId].auto, "Updated settings retained");
     check(state.records.some(record => record.status === "deleted") && state.records.some(record => record.quarantine?.status === "moved"), "Updated result history retained");

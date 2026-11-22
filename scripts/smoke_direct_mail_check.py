@@ -77,7 +77,7 @@ def fixture_xpi(target, original, version, scenario="full"):
         const testStorageSet = api.storage.local.set.bind(api.storage.local);
         const testRaw = api.messages.getRaw.bind(api.messages);
         const testContinue = api.messages.continueList.bind(api.messages);
-        let testPagedReceipt = null, testPagedMove = null;
+        let testPagedReceipt = null, testPagedMove = null, testOverflowSaved = null, testOverflowReads = 0;
         api.messages.continueList = async id => {
           if (id === 'fixture-receipt-page' || id === 'fixture-move-page') {
             const receipt = id === 'fixture-receipt-page';
@@ -128,6 +128,23 @@ def fixture_xpi(target, original, version, scenario="full"):
           })().catch(console.error);
         });
         api.storage.onChanged.addListener((changes, area) => {
+          const overflowContext = changes.fixtureOverflowContext?.newValue;
+          if (area === 'local' && overflowContext) {
+            testOverflowSaved = {records,overflowPending,overflowReport};
+            records = Array.from({length:1000},(_,index)=>({key:'fixture-protected-'+index,status:'detected',
+              locator:{accountId:overflowContext.accountId,folder:overflowContext.folder,headerMessageId:'fixture-protected-'+index+'@example.invalid'}}));
+            overflowPending = null; overflowReport = null;
+            void save().then(()=>testStorageSet({fixtureOverflowReady:true})).catch(console.error);
+          }
+          if (area === 'local' && changes.fixtureOverflowRestore?.newValue && testOverflowSaved) {
+            void (async()=>{
+              for(let attempt=0;attempt<2400&&automaticQuarantineTasks.size;attempt++) await new Promise(resolve=>setTimeout(resolve,25));
+              if(automaticQuarantineTasks.size) throw new Error('Pending synthetic quarantine work');
+              ({records,overflowPending,overflowReport}=testOverflowSaved);
+              testOverflowSaved=null;
+              await save(); await testStorageSet({fixtureOverflowRestored:true});
+            })().catch(console.error);
+          }
           const paged = changes.fixtureReceiptPageId?.newValue;
           if (area === 'local' && Number.isInteger(paged)) {
             testPagedReceipt = paged;
@@ -161,6 +178,13 @@ def fixture_xpi(target, original, version, scenario="full"):
             for (let attempt=0;attempt<4800;attempt++) {
               if ((await api.storage.local.get('fixtureQuarantineProofRelease')).fixtureQuarantineProofRelease) break;
               await new Promise(resolve => setTimeout(resolve,25));
+            }
+          }
+          if (header.subject === 'Synthetic overflow threat 0' && ++testOverflowReads === 2) {
+            await testStorageSet({fixtureOverflowQuarantineStarted:true});
+            for(let attempt=0;attempt<4800;attempt++) {
+              if((await api.storage.local.get('fixtureOverflowQuarantineRelease')).fixtureOverflowQuarantineRelease) break;
+              await new Promise(resolve=>setTimeout(resolve,25));
             }
           }
           if (header.subject === 'Synthetic slow quarantine') {

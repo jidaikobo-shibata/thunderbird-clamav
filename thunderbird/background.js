@@ -59,6 +59,7 @@ const pendingReceipts = new Set();
 let receiptIssue = null;
 let checkingQuarantineReceipts = false;
 let automaticQuarantines = Promise.resolve();
+const automaticQuarantineTasks = new Set();
 const QUARANTINE_TIMEOUT_MS = 60000;
 const QUARANTINE_RECEIPT_TIMEOUT_MS = 10000;
 const quarantineCheckFailures = new WeakMap();
@@ -327,19 +328,21 @@ function startAutomaticQuarantine(record, config) {
   let identity;
   const digest = record.sha256;
   const target = structuredClone(config);
+  automaticQuarantineTasks.add(record);
   deleting.add(record.key); // Protect queued work as well as the active move.
   record.quarantine = { status: "moving", destination: target, updatedAt: new Date().toISOString() };
   identity = moveIdentity(record);
   const admitted = save();
   void admitted.catch(() => {});
+  const requested = () => {
+    const selected = settings.quarantine?.[record.locator.accountId];
+    return settings.enabled && settings.accountIds.includes(record.locator.accountId) && selected?.auto &&
+      selected.folderId === target.folderId && selected.path === target.path && selected.activation === target.activation;
+  };
   const work = async () => {
     const current = () => {
-      const selected = settings.quarantine?.[record.locator.accountId];
-      if (!quarantineHistory().includes(record) || record.status !== "detected" || record.sha256 !== digest ||
-          moveIdentity(record) !== identity || maintenanceActive() || helperRemoved ||
-          !settings.enabled || !settings.accountIds.includes(record.locator.accountId) ||
-          !selected?.auto || selected.folderId !== target.folderId || selected.path !== target.path ||
-          selected.activation !== target.activation) {
+      if (!automaticQuarantineTasks.has(record) || record.status !== "detected" || record.sha256 !== digest ||
+          moveIdentity(record) !== identity || maintenanceActive() || helperRemoved || !requested()) {
         throw new Error(t("qChanged", "対象または隔離先が変わりました。もう一度確認してください。"));
       }
     };
@@ -363,11 +366,15 @@ function startAutomaticQuarantine(record, config) {
         await moveToQuarantine(api, copy, target, { verified, rawBytes, save: commit, session, automatic: true, check });
       }, QUARANTINE_TIMEOUT_MS);
     } catch (error) {
-      if (quarantineHistory().includes(record)) {
+      if (automaticQuarantineTasks.has(record)) {
         record.quarantine = { ...record.quarantine, status: "error", detail: error.message, updatedAt: new Date().toISOString() };
+        if (requested() && !records.includes(record) && !overflowReport?.recent.includes(record) && overflowPending !== record) {
+          report(t("qUnretainedFailure", "履歴上限で詳細が残っていないメールの自動隔離を完了できませんでした。Thunderbirdで元のフォルダーと隔離先を確認してください。自動で再移動はしません。 $1", [String(error.message || error)]));
+        }
         await save();
       }
     } finally {
+      automaticQuarantineTasks.delete(record);
       deleting.delete(record.key);
       void drain().catch(report);
     }
@@ -853,7 +860,7 @@ async function prepareScanInput(record, maxBytes) {
 }
 
 function quarantineHistory() {
-  return [...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : [])];
+  return [...new Set([...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : []), ...automaticQuarantineTasks])];
 }
 function pendingQuarantineCheck(record) {
   return record?.quarantineCheckPending === true && record.source === "automatic" && record.status === "queued" &&
@@ -958,7 +965,7 @@ function stageMessage(message, source) {
       if (maintenanceActive() || helperRemoved) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
       if (batchProgress?.active) throw new Error(t("bulkBusy", "一括操作の処理中です。"));
     }
-    const existing = [...records, ...(overflowPending ? [overflowPending] : [])].find(record => record.session === session && record.messageId === message.id);
+    const existing = [...records, ...(overflowPending ? [overflowPending] : []), ...automaticQuarantineTasks].find(record => record.session === session && record.messageId === message.id);
     if (existing && source === "automatic") return {};
     if (existing && (existing === overflowPending || deleting.has(existing.key) || ["deleted", "queued", "scanning"].includes(existing.status))) return {};
     const evicted = !existing && records.length >= MAX_RECORDS ? records.find(record =>

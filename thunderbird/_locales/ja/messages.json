@@ -1,4 +1,12 @@
 {
+  "qUnretainedFailure": {
+    "message": "履歴上限で詳細が残っていないメールの自動隔離を完了できませんでした。Thunderbirdで元のフォルダーと隔離先を確認してください。自動で再移動はしません。 $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
   "moveIntakeExpired": {
     "message": "移動通知の一覧を確認できませんでした。履歴の場所は自動更新せずに残しています。必要ならThunderbirdのメール一覧から再検査してください。"
   },

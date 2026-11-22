@@ -1,4 +1,12 @@
 {
+  "qUnretainedFailure": {
+    "message": "Automatic quarantine could not be completed for a message whose details were removed by the history limit. Check the source and quarantine folders in Thunderbird. The message will not be moved again automatically. $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
   "moveIntakeExpired": {
     "message": "The moved-message list could not be verified. History locations have been left unchanged. If needed, rescan the messages from Thunderbird’s message list."
   },

@@ -4278,3 +4278,71 @@ test('move replay retention limit retires the oldest incomplete notice safely',a
  release();await first;
  assert.equal((await h.send('state')).records[0].messageId,a.id);h.expireIdle();
 });
+
+async function waitingOverflowQuarantine() {
+ const mails=Array.from({length:22},(_,i)=>({...mail(5101+i),folder:{id:'inbox',accountId:'one',path:'/Inbox'}}));
+ const isolation={id:'isolation',accountId:'one',path:'/Isolation'};
+ const records=Array.from({length:1000},(_,i)=>({key:'protected-'+i,status:'detected',locator:{accountId:'one'}}));
+ const h=await harness({direct:true,mails,folderRefs:[mails[0].folder,isolation],scanResult:{status:'detected',signatures:['Synthetic']},saved:{records,settings:{enabled:true,accountIds:['one'],notifications:false,quarantine:{one:{folderId:isolation.id,path:isolation.path,auto:true}}}}});
+ h.api.permissions.contains=async()=>true;h.api.folders.getFolderCapabilities=async()=>({canAddMessages:true,canDeleteMessages:true});
+ let enter,release,reads=0;const started=new Promise(r=>enter=r),gate=new Promise(r=>release=r),raw=h.api.messages.getRaw,moves=[];
+ h.api.messages.getRaw=async(id,opt)=>{if(id===mails[0].id&&++reads===2){enter();await gate;}return raw(id,opt);};
+ h.api.messages.move=async ids=>{moves.push(...ids);for(const id of ids)mails.find(m=>m.id===id).folder=isolation;};
+ h.events.newMail.listeners[0](mails[0].folder,{messages:mails});await started;
+ await settle(h,s=>s.overflowReport?.total===22);
+ assert.equal((await h.send('state')).overflowReport.recent.length,20);
+ return {h,mails,isolation,release,moves};
+}
+
+for(const clear of [false,true]) test(`overflow rotation preserves every automatic quarantine without restoring forgotten history (clear=${clear})`,async()=>{
+ const {h,mails,release,moves}=await waitingOverflowQuarantine();
+ h.events.newMail.listeners[0](mails[0].folder,{messages:[mails[0],mails[1]]});
+ await new Promise(resolve=>setTimeout(resolve,10));
+ assert.equal((await h.send('state')).overflowReport.total,22);
+ if(clear)assert.equal((await h.send('clearOverflow')).ok,true);
+ release();await settle(h,()=>moves.length===22);
+ const state=await h.send('state');
+ assert.equal(mails.filter(m=>m.folder.id==='inbox').length,0);
+ assert.equal(state.records.length,1000);
+ assert.equal(new Set(moves).size,22);
+ assert.equal(h.directRequests.filter(r=>r.op==='end').length,22);
+ if(clear)assert.equal(state.overflowReport,null);
+ else{assert.equal(state.overflowReport.recent.length,20);assert.equal(state.overflowReport.total,22);}
+ h.expireIdle();
+});
+
+for(const change of ['disabled','target','contents','timeout']) test(`unretained quarantine tasks still protect ${change} changes`,async()=>{
+ const {h,mails,isolation,release,moves}=await waitingOverflowQuarantine();
+ if(change==='disabled'||change==='target'){
+   const settings=(await h.send('state')).settings;
+   if(change==='disabled'){settings.enabled=false;settings.accountIds=[];}
+   else{
+     const next={id:'other',accountId:'one',path:'/Other'};
+     const get=h.api.folders.get;h.api.folders.get=async id=>id===next.id?next:get(id);
+     settings.quarantine.one={folderId:next.id,path:next.path,auto:true};
+   }
+   assert.equal((await h.send('settings',{settings})).ok,true);
+ }else if(change==='contents')mails[0].raw='Subject: different\r\n\r\nchanged body';
+ if(change==='timeout'){
+   h.expireInput();
+   await settle(h,s=>moves.length===21&&s.overflowReport.recent.every(r=>r.quarantine?.status==='moved'));
+   const before=structuredClone((await h.send('state')).overflowReport);
+   release();await new Promise(resolve=>setTimeout(resolve,20));
+   assert.deepEqual((await h.send('state')).overflowReport,before);
+ }else{
+   release();
+   if(change==='contents')await settle(h,()=>moves.length===21);
+   else await settle(h,s=>s.overflowReport.recent.every(r=>r.quarantine?.status==='error'));
+ }
+ const state=await h.send('state');
+ if(change==='disabled'||change==='target'){assert.equal(moves.length,0);assert.equal(state.issue,'');}
+ else{
+   assert.equal(moves.length,21);
+   assert.match(state.issue,/履歴上限/);
+   assert.equal(state.issue.includes(mails[0].headerMessageId),false);
+   assert.equal(mails[0].folder.id,'inbox');
+ }
+ assert.equal(state.overflowReport.recent.length,20);
+ assert.equal(state.records.length,1000);
+ h.expireIdle();
+});

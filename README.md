@@ -1,14 +1,14 @@
 # ClamAV Mail Check / ClamAV メール検査
 
 Thunderbirdのメールを、コンピューターにインストールしたClamAVで検査する拡張機能です。
-このブランチは **0.20.0a37（試用版）** です。補助プログラムの別途インストールは不要です。
+このブランチは **0.20.0a38（試用版）** です。補助プログラムの別途インストールは不要です。
 公開済みの0.20.0a5はUbuntu向けです。このブランチのXPIは末尾のビルド手順で作成できます。GitHubにはまだ公開していません。
 
 [English installation guide](README.en.md)
 
 ## インストール
 
-1. このブランチから作成した`dist/clam-mail-check-direct-0.20.0a37.xpi`を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
+1. このブランチから作成した`dist/clam-mail-check-direct-0.20.0a38.xpi`を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
 2. Thunderbirdのアドオンマネージャーで、歯車メニューの「ファイルからアドオンをインストール」を選び、XPIを指定します。
 3. 表示される権限を確認してインストールします。Experiment APIを使用するため、Thunderbirdとコンピューターへの全面アクセス権限が必要です。
 4. ツールバーのアイコンから画面を開き、「設定」末尾の「ClamAVの状態」で「接続を再確認」を押します。ClamAVが未導入なら、表示される導入手順に従います。ウイルス定義の初回更新も完了させてください。
@@ -82,6 +82,8 @@ ClamAVが検出しないメールの安全性を保証するものではあり�
 
 自動隔離は検査と分離し、1通ずつ最大60秒で処理します。隔離を待つ間も検出通知と後続の検査は進みます。完了を確認できなければ元のフォルダーと隔離先をThunderbirdで確認してください。自動で再移動はしません。隔離済みかの照合は最大10秒とし、確認できなければ通常検査へ戻します。期限後の応答による履歴の消去や上書きは防ぎます。
 
+実行中・待機中の自動隔離予約は履歴とは別に保持します。履歴上限による入れ替えや上限超過時の集計履歴の消去では、予約を取り消しません。通常履歴1000件・上限超過時の詳細20件という表示上限は維持し、処理完了または中止時に予約を解放します。詳細が残っていないメールの隔離に失敗した場合も、状態欄に案内します。
+
 ## 更新と削除
 
 更新は、新しいXPIを**旧版を削除せず上書きインストール**します。設定と履歴を引き継ぎます。GitHubの新しい試用版を確認して手動で更新してください。
@@ -126,7 +128,7 @@ ClamAVが検出しないメールの安全性を保証するものではあり�
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-成果物は`dist/clam-mail-check-direct-0.20.0a37.xpi`です。同じXPIにUbuntu/macOS用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
+成果物は`dist/clam-mail-check-direct-0.20.0a38.xpi`です。同じXPIにUbuntu/macOS用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
 
 ```bash
 for test_file in tests/*.test.mjs; do

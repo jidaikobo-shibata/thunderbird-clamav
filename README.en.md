@@ -1,6 +1,6 @@
 # ClamAV Mail Check
 
-This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a37**, a prerelease of the integrated Ubuntu/macOS scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a37 has not been published.
+This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a38**, a prerelease of the integrated Ubuntu/macOS scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a38 has not been published.
 
 ## Requirements
 
@@ -53,7 +53,7 @@ No additional Python or npm packages are needed:
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-Install `dist/clam-mail-check-direct-0.20.0a37.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
+Install `dist/clam-mail-check-direct-0.20.0a38.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
 
 Open Settings and choose Check connection again. Start with a small manual folder scan. Automatic scanning is disabled for a new installation; select accounts only after checking results.
 
@@ -78,6 +78,8 @@ Move notifications also fetch their lists independently. Later metadata is retai
 Folder-resume checkpoint verification and post-move history verification each wait at most 10 seconds. Unverified messages remain eligible for scanning, and an unverified move does not transfer a verdict. Stopping folder enumeration cancels its pending waits. Late replies cannot change a newer job's progress or a history entry's location.
 
 Automatic quarantine runs separately from scanning, one message at a time, with a 60-second deadline per attempt. Detection alerts and later scans continue while it waits. If completion cannot be confirmed, check both folders in Thunderbird; no automatic repeat move is attempted. Quarantine receipt identity checks wait at most 10 seconds, then fall back to normal scanning. Late replies cannot remove or overwrite newer results.
+
+Active and queued automatic quarantine tasks are retained independently of history. History rotation or clearing the overflow summary does not cancel them. The visible limits remain 1,000 history records and 20 overflow details; task ownership is released on completion or cancellation. If a task fails after its detail has rotated out, an issue is still shown in the status area.
 
 Automatic carry-forward checks for a previous acknowledgement wait at most 10 seconds. If the message contents cannot be verified in time, the result requires review again and later inspections continue. Late responses cannot replace a later human decision.
 
