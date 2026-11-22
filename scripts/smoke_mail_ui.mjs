@@ -87,6 +87,7 @@ try {
     window.confirmResult = true;
     window.permissionGranted = true;
     window.failSettings = false;
+    window.holdDeletePreparation = false; window.releaseDeletePreparation = false; window.ignorePreparationCancel = false;
     window.cancelUninstall = true;
     window.failSave = false;
     window.customSaveName = null;
@@ -212,7 +213,17 @@ try {
       }
       if (request.type === "prepareDelete") return { ok: true, token: "test-ticket", ...target(request.key) };
       if (request.type === "deletePermanently") testState.records.find(record => record.key === request.key).status = "deleted";
-      if (request.type === "prepareDeleteBatch") { batchKeys = request.keys; return { ok: true, token: "batch", targets: batchKeys.map(target) }; }
+      if (request.type === "cancelDeletePreparation" && testState.batch?.preparationId === request.preparationId && !ignorePreparationCancel) testState.batch.stopRequested = true;
+      if (request.type === "prepareDeleteBatch") {
+        batchKeys = request.keys;
+        if (holdDeletePreparation) {
+          testState.batch={id:'held-preparation',preparationId:request.preparationId,operation:'delete',phase:'prepare',active:true,completed:0,total:batchKeys.length};
+          while(!releaseDeletePreparation&&!testState.batch.stopRequested) await new Promise(resolve=>setTimeout(resolve,20));
+          testState.batch.active=false;
+          if(testState.batch.stopRequested)return{ok:true,cancelled:true,targets:[]};
+        }
+        return { ok: true, token: "batch", targets: batchKeys.map(target) };
+      }
       if (request.type === "deleteBatch") return { ok: true, results: batchKeys.map((key, i) => {
         if (i === 0) testState.records.find(record => record.key === key).status = "deleted";
         return { key, deleted: i === 0, error: i === 0 ? undefined : "模擬の削除失敗" }; }) };
@@ -272,6 +283,33 @@ try {
       await change('scan-mailMiB','25');
       await until("!document.getElementById('scan-mailMiB').disabled && !document.getElementById('scan-mailMiB').hasAttribute('aria-invalid')");
       await evaluate("document.getElementById('tab-scan').click()");
+      await evaluate("document.getElementById('tab-results').click();document.getElementById('select-page').click();holdDeletePreparation=true;releaseDeletePreparation=false;document.getElementById('delete-selected').click()");
+      assert.equal(await evaluate("document.getElementById('delete-dialog').open"),true);
+      assert.equal(await evaluate("document.getElementById('delete-ack').disabled && document.getElementById('delete-confirm').disabled"),true);
+      await until("testState.batch?.preparationId && document.getElementById('delete-dialog').open");
+      await evaluate("testState.batch.completed=2");
+      await until("document.getElementById('delete-preparation-bar').value===2");
+      const preparationImage=await call('Page.captureScreenshot',{format:'png'});
+      await writeFile(path.join(root,'dist/ui-delete-preparation-'+language+'.png'),Buffer.from(preparationImage.data,'base64'));
+      assert.equal(await evaluate("testCalls.some(call=>call.type==='deleteBatch')"),false);
+      await evaluate("document.getElementById('delete-cancel').click()");
+      await until("!document.getElementById('delete-selected').disabled");
+      assert.equal(await evaluate("testCalls.some(call=>call.type==='cancelDeletePreparation') && !document.getElementById('delete-dialog').open"),true);
+      await evaluate("holdDeletePreparation=true;releaseDeletePreparation=false;testState.batch=null;window.prepCloseCount=0;document.getElementById('delete-dialog').addEventListener('close',()=>prepCloseCount++);document.getElementById('delete-selected').click()");
+      await until("testState.batch?.active");
+      await evaluate("releaseDeletePreparation=true");
+      await until("document.getElementById('delete-dialog').open && !document.getElementById('delete-ack').disabled");
+      assert.equal(await evaluate("prepCloseCount"),0);
+      assert.equal(await evaluate("document.querySelectorAll('#delete-targets li').length>0 && document.getElementById('delete-confirm').disabled"),true);
+      await evaluate("document.getElementById('delete-cancel').click()");
+      await until("!document.getElementById('delete-selected').disabled");
+      await evaluate("holdDeletePreparation=true;releaseDeletePreparation=false;ignorePreparationCancel=true;testState.batch=null;window.lateCancelStart=testCalls.length;document.getElementById('delete-selected').click()");
+      await until("testState.batch?.active");
+      await evaluate("document.getElementById('delete-cancel').click();releaseDeletePreparation=true");
+      await until("!document.getElementById('delete-selected').disabled");
+      assert.equal(await evaluate("!document.getElementById('delete-dialog').open && testCalls.slice(lateCancelStart).some(call=>call.type==='cancelDeleteBatch')"),true);
+      await evaluate("ignorePreparationCancel=false");
+      await evaluate("holdDeletePreparation=false;releaseDeletePreparation=true;testState.batch=null;document.getElementById('deselect').click();document.getElementById('tab-scan').click()");
       assert.deepEqual(await evaluate(`(async () => {
         const {syncQuarantineSettings} = await import('./quarantine-ui.mjs');
         const original = document.getElementById('quarantine-settings');
@@ -358,7 +396,7 @@ try {
       await until("!document.getElementById('health').disabled && !document.getElementById('notifications').disabled");
       assert.equal(await evaluate("JSON.stringify(testState.records)===recoveryBefore"),true);
       await evaluate("document.getElementById('tab-results').click(); document.querySelector('#results tr button.danger').click()");
-      await until("document.getElementById('delete-dialog').open");
+      await until("document.getElementById('delete-dialog').open && !document.getElementById('delete-ack').disabled");
       assert.equal(await evaluate("document.activeElement.id"), "delete-cancel");
       await evaluate("document.getElementById('delete-cancel').click()");
       await until("!document.querySelector('#results tr button.danger').disabled");
@@ -382,7 +420,7 @@ try {
       await evaluate("testState.resultsRequest='toolbar-again-'+" + JSON.stringify(language));
       await until("document.getElementById('filter').value==='attention'");
       await evaluate("document.getElementById('reset-filters').click();window.forgetBefore=testState.records.length;window.forgetCallStart=testCalls.length;document.querySelector('#results .forget-action').click()");
-      await until("document.getElementById('delete-dialog').open");
+      await until("document.getElementById('delete-dialog').open && !document.getElementById('delete-ack').disabled");
       assert.equal(await evaluate("document.querySelectorAll('#delete-targets li').length"), 1);
       assert.equal(await evaluate("document.activeElement.id"), 'delete-cancel');
       assert.match(await evaluate("document.getElementById('delete-warning').textContent"), language==='ja'?/メール本体は残ります/:/Messages themselves will remain/i);
@@ -390,7 +428,7 @@ try {
       await until("!document.querySelector('#results .forget-action').disabled");
       assert.equal(await evaluate("testState.records.length===forgetBefore"),true);
       await evaluate("document.querySelector('#results .forget-action').click()");
-      await until("document.getElementById('delete-dialog').open");
+      await until("document.getElementById('delete-dialog').open && !document.getElementById('delete-ack').disabled");
       await evaluate("document.getElementById('delete-ack').click();document.getElementById('delete-confirm').click()");
       await until("testState.records.length===forgetBefore-1&&!document.getElementById('filter').disabled");
       assert.equal(await evaluate("testCalls.filter(call=>call.type==='prepareForget').at(-1).keys.length"),1);
@@ -507,7 +545,7 @@ try {
   assert.equal(await evaluate("document.getElementById('delete-dialog').open"), false);
   assert.equal(await evaluate("testCalls.some(call => call.type === 'prepareDeleteBatch' || call.type === 'deleteBatch')"), false);
   await evaluate("permissionGranted = true; document.getElementById('delete-selected').click()");
-  await until("document.getElementById('delete-dialog').open");
+  await until("document.getElementById('delete-dialog').open && !document.getElementById('delete-ack').disabled");
   assert.equal(await evaluate("testCalls.some(call => call.type === 'permission')"), true);
   assert.equal(await evaluate("testCalls.findIndex(call => call.type === 'permission') < testCalls.findIndex(call => call.type === 'prepareDeleteBatch')"), true);
   assert.equal(await evaluate("document.querySelectorAll('#delete-targets li').length"), 2);
@@ -521,7 +559,7 @@ try {
   const desktop = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
   await writeFile(path.join(root, "dist/ui-desktop.png"), Buffer.from(desktop.data, "base64"));
   await evaluate("document.getElementById('delete-selected').click()");
-  await until("document.getElementById('delete-dialog').open");
+  await until("document.getElementById('delete-dialog').open && !document.getElementById('delete-ack').disabled");
   await evaluate("document.getElementById('delete-ack').click(); document.getElementById('delete-confirm').click()");
   await until("document.getElementById('action-status').textContent.includes('完全削除1通')");
   assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 1);
@@ -532,7 +570,7 @@ try {
   assert.equal(await evaluate("testCalls.filter(call => call.type === 'prepareDelete').length"), singlePrepares);
   assert.equal(await evaluate("document.getElementById('delete-dialog').open"), false);
   await evaluate("permissionGranted = true; document.querySelector('#results button:last-child').click()");
-  await until("document.getElementById('delete-dialog').open");
+  await until("document.getElementById('delete-dialog').open && !document.getElementById('delete-ack').disabled");
   await evaluate("document.getElementById('delete-ack').click(); document.getElementById('delete-confirm').click()");
   await until("document.getElementById('action-status').textContent.includes('対象メールを完全削除')");
   await change("filter", "deleted");
@@ -545,7 +583,7 @@ try {
   await evaluate("document.getElementById('select-page').click()");
   assert.equal(await evaluate("document.getElementById('delete-selected').disabled"), false);
   await evaluate("document.getElementById('delete-selected').click()");
-  await until("document.getElementById('delete-dialog').open");
+  await until("document.getElementById('delete-dialog').open && !document.getElementById('delete-ack').disabled");
   assert.equal(await evaluate("document.querySelectorAll('#delete-targets li').length"), 1);
   assert.match(await evaluate("document.getElementById('delete-targets').textContent"), /一部または全部が未検査/);
   await evaluate("document.getElementById('delete-cancel').click()");
@@ -559,7 +597,7 @@ try {
   const mobile = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
   await writeFile(path.join(root, "dist/ui-mobile.png"), Buffer.from(mobile.data, "base64"));
   await evaluate("document.getElementById('tab-results').click(); document.getElementById('reset-filters').click(); document.getElementById('select-page').click(); if (!document.getElementById('select-filtered').hidden) document.getElementById('select-filtered').click(); document.getElementById('forget-selected').click()");
-  await until("document.getElementById('delete-dialog').open");
+  await until("document.getElementById('delete-dialog').open && !document.getElementById('delete-ack').disabled");
   assert.match(await evaluate("document.getElementById('delete-warning').textContent"), /メール本体は残ります/);
   await evaluate("document.getElementById('delete-ack').click(); document.getElementById('delete-confirm').click()");
   await until("testCalls.some(call => call.type === 'forgetMany') && !document.getElementById('filter').disabled");
@@ -811,7 +849,7 @@ try {
   assert.equal(await evaluate("document.getElementById('retry-selected').disabled"), false);
   assert.equal(await evaluate("document.getElementById('delete-selected').disabled"), false);
   await evaluate("document.getElementById('forget-selected').click()");
-  await until("document.getElementById('delete-dialog').open");
+  await until("document.getElementById('delete-dialog').open && !document.getElementById('delete-ack').disabled");
   await evaluate("document.getElementById('delete-ack').click(); document.getElementById('delete-confirm').click()");
   await until("!testState.records.some(record => record.key === 'excluded-ui') && !document.getElementById('filter').disabled");
   await call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
@@ -828,7 +866,7 @@ try {
   const selectionImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
   await writeFile(path.join(root, "dist/ui-selection-desktop.png"), Buffer.from(selectionImage.data, "base64"));
   await evaluate("document.getElementById('forget-selected').click()");
-  await until("document.getElementById('delete-dialog').open");
+  await until("document.getElementById('delete-dialog').open && !document.getElementById('delete-ack').disabled");
   assert.equal(await evaluate("document.querySelectorAll('#delete-targets li').length"), 1000);
   assert.match(await evaluate("document.getElementById('delete-warning').textContent"), /Messages themselves will remain/);
   await evaluate("document.getElementById('delete-cancel').click()");
@@ -841,7 +879,7 @@ try {
   assert.equal(await evaluate("document.getElementById('delete-selected').disabled"), true);
   assert.equal(await evaluate("document.getElementById('forget-selected').disabled"), false);
   await evaluate("document.getElementById('forget-selected').click()");
-  await until("document.getElementById('delete-dialog').open");
+  await until("document.getElementById('delete-dialog').open && !document.getElementById('delete-ack').disabled");
   await evaluate("document.getElementById('delete-ack').click(); document.getElementById('delete-confirm').click()");
   await until("testState.records.length === 900 && !document.getElementById('filter').disabled");
   await evaluate("testState.batch = { id: 'mock-progress', operation: 'delete', phase: 'execute', active: true, stopRequested: false, total: 1000, completed: 7, failed: 0 }");

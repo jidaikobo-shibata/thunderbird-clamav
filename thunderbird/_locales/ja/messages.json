@@ -1,4 +1,24 @@
 {
+  "deleteReady": {
+    "message": "照合が完了しました。対象一覧を確認してください。まだ削除していません。"
+  },
+  "deletePreparing": {
+    "message": "削除対象を照合しています：$ARG1$ / $ARG2$通。まだ削除していません。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "deletePreparingProgress": {
+    "message": "削除対象の照合済み件数"
+  },
+  "deletePreparingHint": {
+    "message": "メールの取り違えを防ぐため、内容を確認しています。削除は、照合後の対象一覧を確認して実行するまで行いません。"
+  },
   "resultActionsWait": {
     "message": "検査・削除の処理が終わると、確認状態の変更と手動隔離を操作できます。"
   },

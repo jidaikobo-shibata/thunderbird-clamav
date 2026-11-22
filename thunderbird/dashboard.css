@@ -48,7 +48,7 @@ summary { cursor: pointer; }
 .folder-progress { padding: 16px; border: 1px solid GrayText; border-radius: 6px; margin-bottom: 20px; }
 .folder-progress h3 { margin: 0; }
 .folder-progress p { margin: 8px 0; overflow-wrap: anywhere; }
-.folder-progress progress { display: block; width: 100%; height: 20px; accent-color: Highlight; }
+.folder-progress progress, #delete-preparation-bar { display: block; width: 100%; height: 20px; accent-color: Highlight; }
 dialog { width: min(800px, calc(100% - 48px)); max-height: calc(100% - 48px); box-sizing: border-box; border: 2px solid GrayText; border-radius: 8px; padding: 24px; }
 dialog::backdrop { background: rgb(0 0 0 / 55%); }
 .dialog-targets { max-height: 35vh; overflow: auto; border: 1px solid GrayText; margin-bottom: 16px; padding-right: 12px; }

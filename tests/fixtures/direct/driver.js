@@ -542,6 +542,57 @@ try {
     check(!mailLimit.disabled&&!mailLimit.hasAttribute('aria-invalid'),"Native corrected input saves and clears its error");
     report.dashboardAccessibility=true;
     state=await request("state");
+    report.stage="deletion-preparation-dialog";
+    document.getElementById('tab-results').click();
+    for(let attempt=0;attempt<100;attempt++) {
+      if(!document.getElementById('delete-selected').disabled||!document.getElementById('filter').disabled) break;
+      await wait(100);
+    }
+    const deletionHeldRecord=state.records.find(r=>r.key===notificationRetry);
+    await messenger.storage.local.set({fixtureDeleteHoldId:deletionHeldRecord.messageId});
+    for(const subject of ['Synthetic plain','Synthetic during notification']) {
+      const row=[...document.querySelectorAll('#results tr')].find(row=>row.textContent.includes(subject));
+      check(row,"Native deletion target row available");
+      const box=row.querySelector('input');if(!box.checked)box.click();
+    }
+    document.getElementById('delete-selected').click();
+    check(document.getElementById('delete-dialog').open,"Deletion modal opens synchronously");
+    check(document.getElementById('delete-ack').disabled&&document.getElementById('delete-confirm').disabled,"Deletion remains unavailable during verification");
+    for(let attempt=0;attempt<200;attempt++) {
+      if((await messenger.storage.local.get('fixtureDeleteStarted')).fixtureDeleteStarted&&document.getElementById('delete-preparation-bar').value===1) break;
+      await wait(100);
+    }
+    check((await messenger.storage.local.get('fixtureDeleteStarted')).fixtureDeleteStarted&&document.getElementById('delete-preparation-bar').value===1,"Native modal shows 1 of 2 verified messages");
+    document.getElementById('delete-cancel').click();
+    for(let attempt=0;attempt<100;attempt++) {
+      if(!document.getElementById('delete-selected').disabled) break;
+      await wait(100);
+    }
+    check(!document.getElementById('delete-dialog').open&&!document.getElementById('delete-selected').disabled,"Cancellation finishes before blocked body returns");
+    state=await request("state");const cancelledPreparation=JSON.stringify(state.batch);
+    check((await messenger.messages.get(deletionHeldRecord.messageId)).id===deletionHeldRecord.messageId,"Cancelled mail remains present");
+    await messenger.storage.local.set({fixtureDeleteRelease:true});
+    for(let attempt=0;attempt<100;attempt++) {
+      if((await messenger.storage.local.get('fixtureDeleteReturned')).fixtureDeleteReturned) break;
+      await wait(100);
+    }
+    check((await messenger.storage.local.get('fixtureDeleteReturned')).fixtureDeleteReturned,"Expired body reply actually returned");
+    check(JSON.stringify((await request('state')).batch)===cancelledPreparation&&!document.getElementById('delete-dialog').open,"Late verification cannot reopen or update the cancelled preparation");
+    document.getElementById('delete-selected').click();
+    const sameDeletionDialog=document.getElementById('delete-dialog');
+    for(let attempt=0;attempt<100;attempt++) {
+      if(!document.getElementById('delete-ack').disabled) break;
+      await wait(100);
+    }
+    check(sameDeletionDialog.open&&!document.getElementById('delete-ack').disabled&&document.querySelectorAll('#delete-targets li').length===2,"Verified native targets appear in the same dialog");
+    document.getElementById('delete-cancel').click();
+    for(let attempt=0;attempt<100;attempt++) {
+      if(!document.getElementById('delete-selected').disabled) break;
+      await wait(100);
+    }
+    report.deletionPreparationDialog=true;
+    state=await request('state');
+
 
 
 

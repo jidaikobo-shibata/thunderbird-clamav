@@ -1,14 +1,14 @@
 # ClamAV Mail Check / ClamAV メール検査
 
 Thunderbirdのメールを、コンピューターにインストールしたClamAVで検査する拡張機能です。
-このブランチは **0.20.0a40（試用版）** です。補助プログラムの別途インストールは不要です。
+このブランチは **0.20.0a41（試用版）** です。補助プログラムの別途インストールは不要です。
 公開済みの0.20.0a5はUbuntu向けです。このブランチのXPIは末尾のビルド手順で作成できます。GitHubにはまだ公開していません。
 
 [English installation guide](README.en.md)
 
 ## インストール
 
-1. このブランチから作成した`dist/clam-mail-check-direct-0.20.0a40.xpi`を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
+1. このブランチから作成した`dist/clam-mail-check-direct-0.20.0a41.xpi`を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
 2. Thunderbirdのアドオンマネージャーで、歯車メニューの「ファイルからアドオンをインストール」を選び、XPIを指定します。
 3. 表示される権限を確認してインストールします。Experiment APIを使用するため、Thunderbirdとコンピューターへの全面アクセス権限が必要です。
 4. ツールバーのアイコンから画面を開き、「設定」末尾の「ClamAVの状態」で「接続を再確認」を押します。ClamAVが未導入なら、表示される導入手順に従います。ウイルス定義の初回更新も完了させてください。
@@ -74,6 +74,8 @@ ClamAVが検出しないメールの安全性を保証するものではあり�
 
 検査や削除の処理中は、確認状態の変更と手動隔離を無効にし、理由を検査結果画面に表示します。一覧の自動並び替えでは操作中のフォーカスを保ち、対象が消えた場合は結果の概要へ移します。検査設定の入力範囲エラーは値を残し、項目ごとに修正方法を示します。未保存の入力は検査には適用されません。
 
+複数メールの完全削除では、ボタンを押すとすぐ確認画面を開き、削除対象の照合件数を表示します。照合中はキャンセルでき、メールは削除しません。照合が終わると同じ画面に対象一覧を表示し、最終確認後に削除します。
+
 デスクトップ通知は検査から独立して送信します。通知の応答が遅れても、次のメールやフォルダー検査の完了処理を止めません。送信中の同じ結果は重ねて通知せず、失敗を配達済みとは扱いません。遅い通知応答が新しい結果の通知状態を上書きしないよう保護し、現在の結果に関係する通知失敗は状態欄に表示します。
 
 新着通知の一覧取得は通知ごとに独立して待ち、保存できたメールから検査を進めます。ほかの一覧の応答待ちで別の新着を止めません。一覧取得や保存に失敗した場合は未受付分を保持し、定期的に再試行します。
@@ -132,7 +134,7 @@ ClamAVが検出しないメールの安全性を保証するものではあり�
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-成果物は`dist/clam-mail-check-direct-0.20.0a40.xpi`です。同じXPIにUbuntu/macOS用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
+成果物は`dist/clam-mail-check-direct-0.20.0a41.xpi`です。同じXPIにUbuntu/macOS用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
 
 ```bash
 for test_file in tests/*.test.mjs; do

@@ -1,4 +1,24 @@
 {
+  "deleteReady": {
+    "message": "Verification is complete. Review the target list. No messages have been deleted."
+  },
+  "deletePreparing": {
+    "message": "Verifying deletion targets: $ARG1$ / $ARG2$ messages. No messages have been deleted.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "deletePreparingProgress": {
+    "message": "Number of verified deletion targets"
+  },
+  "deletePreparingHint": {
+    "message": "Message contents are being verified to avoid deleting the wrong mail. Nothing is deleted until you review the verified list and confirm deletion."
+  },
   "resultActionsWait": {
     "message": "Review changes and manual quarantine become available when scanning and deletion finish."
   },

@@ -20,6 +20,7 @@ const $ = id => document.getElementById(id);
 let latest, initialized = false, refreshing = false, busy = false, startupFailed = false, page = 0;
 let visible = [], filteredRecords = [];
 const rows = new Map(), selected = new Set();
+let deletePreparation = null;
 let folderFilterId = null, seenFolderRequest = null;
 let folderAnnouncement = null, seenResultsRequest = null;
 const TABS = DIRECT ? ["scan", "results", "settings", "help"] : ["scan", "results", "settings", "setup", "uninstall", "help"];
@@ -313,12 +314,19 @@ for (const button of document.querySelectorAll("[data-open-tab]")) {
   button.addEventListener("click", () => { userNavigated = true; activateTab(button.dataset.openTab, true); });
 }
 
-function confirmDeletion(targets, history = false) {
+function confirmDeletion(targets, history = false, preparedInDialog = false) {
+  $("delete-preparation").hidden = !preparedInDialog;
+  $("delete-preparation-bar").hidden = preparedInDialog;
+  if (preparedInDialog) setText($("delete-preparation-status"), t("deleteReady", "照合が完了しました。対象一覧を確認してください。まだ削除していません。"));
+  $("delete-ack-label").hidden = false;
+  $("delete-ack").disabled = false;
+  $("delete-confirm").hidden = false;
   const dialog = $("delete-dialog");
   setText($("delete-title"), history ? t("forgetTitle", "履歴だけ消去") : t("mail357", "メールの完全削除"));
   setText($("delete-warning"), history ? t("forgetWarning", "選択した検査履歴だけを消去します。メール本体は残ります。状態が変わった履歴は消去しません。") : t("mail358", "ごみ箱を経由せず完全に削除します。元には戻せません。IMAPではサーバーと他端末にも反映されます。"));
   setText($("delete-ack-text"), history ? t("forgetAck", "対象の履歴を確認しました。メール本体は残ることを理解しました。") : t("mail359", "上の対象を確認し、元に戻せないことを理解しました"));
   setText($("delete-confirm"), history ? t("forgetTitle", "履歴だけ消去") : t("mail360", "完全に削除する"));
+  $("delete-targets").parentElement.hidden = false;
   $("delete-targets").replaceChildren();
   setText($("delete-count"), history ? t("forgetConfirmCount", "消去する履歴：$1件（画面外を含む全対象を下に表示しています）", [targets.length]) : t("deleteConfirmCount", "完全削除するメール：$1通（画面外を含む全対象を下に表示しています）", [targets.length]));
   for (const target of targets) {
@@ -335,11 +343,58 @@ function confirmDeletion(targets, history = false) {
   dialog.returnValue = "cancel";
   return new Promise(resolve => {
     dialog.addEventListener("close", () => resolve(dialog.returnValue === "delete" && $("delete-ack").checked), { once: true });
-    dialog.showModal();
+    if (!dialog.open) dialog.showModal();
     $("delete-cancel").focus();
   });
 }
-$("delete-ack").addEventListener("change", () => { $("delete-confirm").disabled = !$("delete-ack").checked; });
+$("delete-ack").addEventListener("change", () => { $("delete-confirm").disabled = Boolean(deletePreparation?.preparing) || !$("delete-ack").checked; });
+
+function renderDeletePreparation(progress) {
+  const context = deletePreparation;
+  if (!context?.preparing || context.cancelled) return;
+  const completed = progress?.preparationId === context.id ? progress.completed : 0;
+  setText($("delete-preparation-status"), t("deletePreparing", "削除対象を照合しています：$1 / $2通。まだ削除していません。", [completed, context.total]));
+  $("delete-preparation-bar").max = context.total;
+  $("delete-preparation-bar").value = completed;
+  $("delete-preparation-bar").setAttribute("aria-label", t("deletePreparingProgress", "削除対象の照合済み件数"));
+}
+async function prepareDeleteConfirmation(keys) {
+  const dialog = $("delete-dialog");
+  const context = { id: crypto.randomUUID(), total: keys.length, preparing: true, cancelled: false, started: false };
+  deletePreparation = context;
+  setText($("delete-title"), t("mail357", "メールの完全削除"));
+  setText($("delete-warning"), t("deletePreparingHint", "メールの取り違えを防ぐため、内容を確認しています。削除は、照合後の対象一覧を確認して実行するまで行いません。"));
+  $("delete-preparation").hidden = false; $("delete-preparation-bar").hidden = false;
+  $("delete-targets").parentElement.hidden = true;
+  $("delete-targets").replaceChildren(); setText($("delete-count"), "");
+  $("delete-ack-label").hidden = true; $("delete-ack").checked = false; $("delete-ack").disabled = true;
+  $("delete-confirm").hidden = true; $("delete-confirm").disabled = true;
+  const closed = () => {
+    if (!context.preparing) return;
+    context.cancelled = true;
+    if (context.started) void request("cancelDeletePreparation", { preparationId: context.id }).catch(error => setText($("action-status"), error.message));
+  };
+  dialog.addEventListener("close", closed);
+  dialog.returnValue = "cancel";
+  renderDeletePreparation();
+  dialog.showModal(); $("delete-cancel").focus();
+  try {
+    await requireDeletePermission();
+    if (context.cancelled || !dialog.open) return null;
+    context.started = true;
+    const prepared = await request("prepareDeleteBatch", { keys, preparationId: context.id });
+    if (context.cancelled || !dialog.open || prepared.cancelled) {
+      if (prepared.token) await request("cancelDeleteBatch", { token: prepared.token });
+      return null;
+    }
+    context.preparing = false;
+    return prepared;
+  } finally {
+    dialog.removeEventListener("close", closed);
+    if (context.preparing && dialog.open) dialog.close("cancel");
+    if (deletePreparation === context) deletePreparation = null;
+  }
+}
 
 async function requireDeletePermission() {
   // Called synchronously from the delete click, before any other awaited work.
@@ -500,6 +555,7 @@ function renderRecords() {
   $("page-label").dataset.pages = String(result.pages);
   $("empty-results").hidden = visible.length > 0;
   const progress = latest.batch;
+  renderDeletePreparation(progress);
   $("batch-progress").hidden = !progress;
   $("batch-stop").hidden = !progress?.active;
   $("batch-stop").disabled = !progress?.active || progress.stopRequested;
@@ -605,12 +661,10 @@ $("retry-selected").addEventListener("click", () => {
 $("delete-selected").addEventListener("click", () => {
   const keys = selection().filter(canDelete).map(record => record.key);
   void action(async () => {
-    await requireDeletePermission();
     $("batch-report").replaceChildren(); $("batch-report").hidden = true;
-    setText($("action-status"), t("mail148", "選択した削除対象を照合しています。"));
-    const prepared = await request("prepareDeleteBatch", { keys });
-    if (prepared.cancelled) return t("bulkPrepareCancelled", "照合を中止しました。メールは削除していません。");
-    if (!await confirmDeletion(prepared.targets)) {
+    const prepared = await prepareDeleteConfirmation(keys);
+    if (!prepared) return t("bulkPrepareCancelled", "照合を中止しました。メールは削除していません。");
+    if (!await confirmDeletion(prepared.targets, false, true)) {
       await request("cancelDeleteBatch", { token: prepared.token });
       return t("mail149", "一括削除をキャンセルしました。");
     }

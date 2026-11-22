@@ -4464,3 +4464,38 @@ test('state exposes review and manual quarantine availability during actual scan
  await settle(h,s=>s.records[0]?.status==='clean'&&s.resultActionsBusy===false);
  h.expireIdle();
 });
+
+for(const phase of ['permission','raw']) test(`deletion preparation cancels without waiting for ${phase} and isolates late replies`,async()=>{
+ const {h}=await batchFixture();
+ const before=structuredClone((await h.send('state')).records);
+ let enter,release,buffers=0,first=true;
+ const started=new Promise(r=>enter=r),gate=new Promise(r=>release=r);
+ if(phase==='permission'){
+   h.api.permissions.contains=async()=>{if(first){first=false;enter();await gate;}return true;};
+ }else{
+   const raw=h.api.messages.getRaw;
+   h.api.messages.getRaw=async(...args)=>{const file=await raw(...args);if(first){first=false;enter();await gate;return{size:file.size,arrayBuffer:()=>{buffers++;return file.arrayBuffer();}};}return file;};
+ }
+ const pending=h.send('prepareDeleteBatch',{keys:['k1','k2'],preparationId:'old-preparation'});await started;
+ assert.equal((await h.send('state')).batch.preparationId,'old-preparation');
+ assert.equal((await h.send('cancelDeletePreparation',{preparationId:'old-preparation'})).ok,true);
+ await settle(h,s=>!s.batch.active);
+ const cancelled=await pending;assert.equal(cancelled.cancelled,true);assert.equal(cancelled.token,undefined);
+ assert.deepEqual((await h.send('state')).records,before);
+ const next=await h.send('prepareDeleteBatch',{keys:['k1'],preparationId:'next-preparation'});assert.equal(next.ok,true);assert.equal(next.targets.length,1);
+ const after=structuredClone((await h.send('state')).records);
+ release();await new Promise(r=>setTimeout(r,20));
+ assert.deepEqual((await h.send('state')).records,after);assert.equal(buffers,0);assert.equal(h.deleted.length,0);
+ assert.equal((await h.send('state')).batch.preparationId,'next-preparation');
+ await h.send('cancelDeleteBatch',{token:next.token});
+});
+
+test('an early cancellation is scoped to its preparation and cannot cancel another request',async()=>{
+ const {h}=await batchFixture();
+ await h.send('cancelDeletePreparation',{preparationId:'early-preparation'});
+ const early=await h.send('prepareDeleteBatch',{keys:['k1'],preparationId:'early-preparation'});
+ assert.equal(early.cancelled,true);assert.equal(h.rawReads.length,0);
+ const normal=await h.send('prepareDeleteBatch',{keys:['k1','k2'],preparationId:'other-preparation'});
+ assert.equal(normal.targets.length,2);assert.equal(h.deleted.length,0);
+ await h.send('cancelDeleteBatch',{token:normal.token});
+});

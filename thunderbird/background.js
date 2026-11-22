@@ -71,6 +71,8 @@ const moveProofWaiters = [];
 const deletionTickets = new Map();
 const deleting = new Set();
 const batchTickets = new Map();
+let deletionPreparation = null;
+const cancelledPreparations = new Map();
 let batchProgress = null, retryContext = null;
 const historyTickets = new Map();
 const movedScans = new WeakMap();
@@ -417,22 +419,35 @@ function finishRetry(record) {
   if (!retryContext.entries.size) { batchProgress.active = false; retryContext = null; }
 }
 
-async function prepareBatch(keys) {
+async function prepareBatch(keys, preparationId = crypto.randomUUID()) {
+  if (typeof preparationId !== "string" || !/^[a-zA-Z0-9-]{1,100}$/.test(preparationId)) throw new Error(t("mail015", "一括操作は重複のない1〜1000件を選択してください。"));
   requestedKeys(keys);
   if (batchProgress?.active) throw new Error(t("mail016", "一括削除の処理中です。"));
-  if (!await api.permissions.contains({ permissions: ["messagesDelete"] })) {
-    throw new Error(t("mail017", "完全削除の権限がありません。削除ボタンからもう一度操作してください。"));
-  }
   const progress = startBatch("delete", keys.length, "prepare");
+  progress.preparationId = preparationId;
+  let cancel;
+  const context = { id: preparationId, cancelled: false, signal: new Promise(resolve => { cancel = resolve; }) };
+  context.cancel = () => { context.cancelled = true; progress.stopRequested = true; cancel(); };
+  deletionPreparation = context;
+  const check = () => { if (context.cancelled || deletionPreparation !== context) throw new Error("Deletion preparation cancelled"); };
   try {
+    if (cancelledPreparations.delete(preparationId)) context.cancel();
+    if (context.cancelled) return { ok: true, cancelled: true, targets: [] };
+    const allowed = await Promise.race([api.permissions.contains({ permissions: ["messagesDelete"] }), context.signal]);
+    check();
+    if (!allowed) throw new Error(t("mail017", "完全削除の権限がありません。"));
     const tickets = [], targets = [], positions = new Set();
     for (const key of keys) {
       if (progress.stopRequested) return { ok: true, cancelled: true, targets: [] };
       const record = deletable(key);
       if (deleting.has(key)) throw new Error(t("mail018", "削除処理中のメールがあります。"));
-      const hash = record.sha256;
-      const { message, fingerprint } = await verified(record);
-      if (deletable(key).sha256 !== hash) throw new Error(t("mail019", "検査結果が変わりました。選び直してください。"));
+      const hash = record.sha256, identity = moveIdentity(record);
+      const copy = structuredClone(record);
+      const proof = await Promise.race([verified(copy, null, check), context.signal]);
+      check();
+      const { message, fingerprint } = proof;
+      if (deletable(key).sha256 !== hash || moveIdentity(record) !== identity) throw new Error(t("mail019", "検査結果が変わりました。選び直してください。"));
+      refreshQuarantineLocation(record, message); record.session = copy.session;
       const place = position(message);
       if (positions.has(place)) throw new Error(t("mail020", "同じメールを指す履歴が含まれています。重複を外してください。"));
       positions.add(place);
@@ -452,10 +467,15 @@ async function prepareBatch(keys) {
     batchTickets.set(token, { tickets, expires: Date.now() + 300000 });
     return { ok: true, token, targets };
   } catch (error) {
+    if (context.cancelled) return { ok: true, cancelled: true, targets: [] };
     progress.error = true; progress.failed++;
     progress.completed = Math.min(progress.total, progress.completed + 1);
     throw error;
-  } finally { progress.active = false; progress.cancelled = progress.total - progress.completed; }
+  } finally {
+    if (deletionPreparation === context) deletionPreparation = null;
+    cancelledPreparations.delete(preparationId);
+    progress.active = false; progress.cancelled = progress.total - progress.completed;
+  }
 }
 
 async function executeDeletion(ticket) {
@@ -2053,6 +2073,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         const progress = batchProgress;
         if (!progress?.active || request.id !== progress.id) return { ok: true };
         progress.stopRequested = true;
+        if (progress.phase === "prepare" && deletionPreparation) deletionPreparation.cancel();
         if (progress.operation === "retry" && retryContext) {
           if (retryContext.staging) return { ok: true };
           for (const [key, record] of retryContext.entries) {
@@ -2081,7 +2102,17 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         return await forgetRecords(request.token);
       }
       case "prepareDeleteBatch":
-        return await prepareBatch(request.keys);
+        return await prepareBatch(request.keys, request.preparationId);
+      case "cancelDeletePreparation": {
+        if (typeof request.preparationId !== "string" || !/^[a-zA-Z0-9-]{1,100}$/.test(request.preparationId)) return { ok: true };
+        if (deletionPreparation?.id === request.preparationId) deletionPreparation.cancel();
+        else {
+          for (const [id, when] of cancelledPreparations) if (Date.now() - when > 300000) cancelledPreparations.delete(id);
+          cancelledPreparations.set(request.preparationId, Date.now());
+          while (cancelledPreparations.size > 100) cancelledPreparations.delete(cancelledPreparations.keys().next().value);
+        }
+        return { ok: true };
+      }
       case "cancelDeleteBatch":
         batchTickets.delete(request.token);
         return { ok: true };

@@ -190,6 +190,16 @@ def fixture_xpi(target, original, version, scenario="full"):
         });
         api.messages.getRaw = async (id, options) => {
           const header = await api.messages.get(id);
+          let deletionHeld = false;
+          const deletionGate = await api.storage.local.get(['fixtureDeleteHoldId','fixtureDeleteStarted']);
+          if(deletionGate.fixtureDeleteHoldId === id && !deletionGate.fixtureDeleteStarted) {
+            deletionHeld = true;
+            await testStorageSet({fixtureDeleteStarted:true});
+            for(let attempt=0;attempt<4800;attempt++) {
+              if((await api.storage.local.get('fixtureDeleteRelease')).fixtureDeleteRelease) break;
+              await new Promise(resolve=>setTimeout(resolve,25));
+            }
+          }
           let reviewCarryHeld = false;
           let automaticHeld = false, receiptHeld = false;
           const quarantineGate = await api.storage.local.get('fixtureQuarantinePendingId');
@@ -255,6 +265,7 @@ def fixture_xpi(target, original, version, scenario="full"):
             failedLateInput = true; throw new Error('synthetic late-body move failure');
           }
           const file = await testRaw(id,options);
+          if (deletionHeld) await testStorageSet({fixtureDeleteReturned:true});
           if (receiptHeld) await testStorageSet({fixtureQuarantineProofReturned:true});
           if (automaticHeld) await testStorageSet({fixtureAutoReturned:true});
           if (reviewCarryHeld) await testStorageSet({fixtureReviewCarryReturned:true});

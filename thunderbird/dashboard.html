@@ -272,9 +272,13 @@
   <form method="dialog">
     <h2 id="delete-title"><span data-i18n="mail357">メールの完全削除</span></h2>
     <p id="delete-warning"><span data-i18n="mail358">ごみ箱を経由せず完全に削除します。元には戻せません。IMAPではサーバーと他端末にも反映されます。</span></p>
+    <div id="delete-preparation" hidden>
+      <p id="delete-preparation-status" role="status" aria-live="polite"></p>
+      <progress id="delete-preparation-bar" max="1"></progress>
+    </div>
     <p id="delete-count"></p>
     <div class="dialog-targets"><ol id="delete-targets"></ol></div>
-    <label><input type="checkbox" id="delete-ack"> <span id="delete-ack-text" data-i18n="mail359">上の対象を確認し、元に戻せないことを理解しました</span></label>
+    <label id="delete-ack-label"><input type="checkbox" id="delete-ack"> <span id="delete-ack-text" data-i18n="mail359">上の対象を確認し、元に戻せないことを理解しました</span></label>
     <div class="actions"><button id="delete-cancel" value="cancel" autofocus><span data-i18n="mail348">キャンセル</span></button><button id="delete-confirm" class="danger" value="delete" disabled><span data-i18n="mail360">完全に削除する</span></button></div>
   </form>
 </dialog>
