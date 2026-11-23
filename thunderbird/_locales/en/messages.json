@@ -3080,5 +3080,44 @@
   },
   "scanInputTimeout": {
     "message": "Message lookup, retrieval, or verification did not finish within 60 seconds. Try scanning again later."
+  },
+  "messageDetails": {
+    "message": "Review message"
+  },
+  "messageDismiss": {
+    "message": "Dismiss"
+  },
+  "messageRefresh": {
+    "message": "Reload"
+  },
+  "messageClose": {
+    "message": "Close"
+  },
+  "messageWarning": {
+    "message": "Review the operation results"
+  },
+  "messageError": {
+    "message": "The operation could not be completed"
+  },
+  "messageGuidance": {
+    "message": "Review this message and, if needed, your settings or scan results before trying again."
+  },
+  "messageRefreshError": {
+    "message": "The view could not be refreshed. Displayed information may be out of date."
+  },
+  "messageDeleteNotStarted": {
+    "message": "No messages have been deleted. Rescan the targets and review the results before trying again."
+  },
+  "messageBatchGuidance": {
+    "message": "Successful operations have already taken effect. Review the scan results and the errors for each target."
+  },
+  "messagePrevious": {
+    "message": "A problem reported in this tab"
+  },
+  "messageClear": {
+    "message": "Clear this notice"
+  },
+  "messageEffects": {
+    "message": "The operation may have taken partial effect. Check the scan results and the messages before running it again."
   }
 }

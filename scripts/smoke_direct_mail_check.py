@@ -265,6 +265,7 @@ def fixture_xpi(target, original, version, scenario="full"):
             failedLateInput = true; throw new Error('synthetic late-body move failure');
           }
           const file = await testRaw(id,options);
+          if ((await api.storage.local.get('fixtureDeleteMismatchId')).fixtureDeleteMismatchId === id) return new File([file, '\\r\\nSynthetic changed contents'], 'changed.eml', {type:'message/rfc822'});
           if (deletionHeld) await testStorageSet({fixtureDeleteReturned:true});
           if (receiptHeld) await testStorageSet({fixtureQuarantineProofReturned:true});
           if (automaticHeld) await testStorageSet({fixtureAutoReturned:true});

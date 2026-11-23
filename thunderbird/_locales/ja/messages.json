@@ -3080,5 +3080,44 @@
   },
   "scanInputTimeout": {
     "message": "メールの特定・本文の取得または照合が60秒以内に完了しませんでした。時間をおいて再検査してください。"
+  },
+  "messageDetails": {
+    "message": "メッセージを確認"
+  },
+  "messageDismiss": {
+    "message": "非表示にする"
+  },
+  "messageRefresh": {
+    "message": "再読み込み"
+  },
+  "messageClose": {
+    "message": "閉じる"
+  },
+  "messageWarning": {
+    "message": "操作結果を確認してください"
+  },
+  "messageError": {
+    "message": "操作を完了できませんでした"
+  },
+  "messageGuidance": {
+    "message": "表示内容を確認し、必要に応じて設定や検査結果を確認してから、もう一度お試しください。"
+  },
+  "messageRefreshError": {
+    "message": "画面の情報を更新できませんでした。表示が古い可能性があります。"
+  },
+  "messageDeleteNotStarted": {
+    "message": "メールは削除していません。対象を再検査し、結果を確認してからもう一度お試しください。"
+  },
+  "messageBatchGuidance": {
+    "message": "成功した処理は実行済みです。検査結果と対象ごとのエラーを確認してください。"
+  },
+  "messagePrevious": {
+    "message": "このタブで発生した問題"
+  },
+  "messageClear": {
+    "message": "この案内を消す"
+  },
+  "messageEffects": {
+    "message": "処理が途中まで進んでいる可能性があります。再実行の前に、検査結果とメールの状態を確認してください。"
   }
 }

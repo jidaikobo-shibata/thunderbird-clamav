@@ -14,7 +14,7 @@ const catalogs = Object.fromEntries(await Promise.all(["ja", "en"].map(async lan
 const profile = await mkdtemp(path.join(tmpdir(), "clam-mail-ui-"));
 const server = createServer(async (request, response) => {
   const name = new URL(request.url, "http://localhost").pathname.slice(1);
-  if (!["state-storage.mjs", "scan-history.mjs", "direct-transport.mjs", "direct-view.mjs", "dashboard.html", "dashboard.css", "dashboard.js", "review.mjs", "scan-policy.mjs", "quarantine.mjs", "quarantine-ui.mjs", "core.mjs", "results.mjs", "folder-scan.mjs", "folder-labels.mjs", "installation.mjs", "i18n.mjs", "installer.pyz", "icon.svg"].includes(name)) {
+  if (!["feedback.mjs", "state-storage.mjs", "scan-history.mjs", "direct-transport.mjs", "direct-view.mjs", "dashboard.html", "dashboard.css", "dashboard.js", "review.mjs", "scan-policy.mjs", "quarantine.mjs", "quarantine-ui.mjs", "core.mjs", "results.mjs", "folder-scan.mjs", "folder-labels.mjs", "installation.mjs", "i18n.mjs", "installer.pyz", "icon.svg"].includes(name)) {
     response.writeHead(404).end(); return;
   }
   const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript", ".svg": "image/svg+xml", ".pyz": "application/octet-stream" };
@@ -86,7 +86,7 @@ try {
     window.testCalls = [];
     window.confirmResult = true;
     window.permissionGranted = true;
-    window.failSettings = false;
+    window.failSettings = false; window.failPrepareDelete = false; window.failRefresh = false; window.failRetry = false;
     window.holdDeletePreparation = false; window.releaseDeletePreparation = false; window.ignorePreparationCancel = false;
     window.cancelUninstall = true;
     window.failSave = false;
@@ -121,6 +121,8 @@ try {
     let batchKeys = [], forgetKeys = [];
     window.messenger = { i18n: { getUILanguage: () => language, getMessage }, runtime: { getPlatformInfo: async () => ({os:${JSON.stringify(process.argv.includes("--mac") ? "mac" : "linux")},arch:${JSON.stringify(process.argv.includes("--intel") ? "x86-64" : "aarch64")}}), getManifest: () => ({ version: direct ? "0.20.0a2" : "0.19.2", ...(direct ? {experiment_apis:{clamDirect:{}}} : {}) }), getURL: name => "/" + name, sendMessage: async request => {
       testCalls.push(request);
+      if (request.type === "state" && failRefresh) return {ok:false,error:"synthetic refresh failure"};
+      if (request.type === "retry" && failRetry) return {ok:false,error:"synthetic retry failure"};
       if (request.type === "state" && testState.startupFailure) return {ok:false,startupFailed:true,error:"synthetic startup storage failure"};
       if (request.type === "state") return structuredClone(testState);
       if (request.type === "clearOverflow") testState.overflowReport = null;
@@ -215,6 +217,7 @@ try {
       if (request.type === "deletePermanently") testState.records.find(record => record.key === request.key).status = "deleted";
       if (request.type === "cancelDeletePreparation" && testState.batch?.preparationId === request.preparationId && !ignorePreparationCancel) testState.batch.stopRequested = true;
       if (request.type === "prepareDeleteBatch") {
+        if (failPrepareDelete) return {ok:false,error:"synthetic content mismatch <img src=x onerror=window.bad=true>"};
         batchKeys = request.keys;
         if (holdDeletePreparation) {
           testState.batch={id:'held-preparation',preparationId:request.preparationId,operation:'delete',phase:'prepare',active:true,completed:0,total:batchKeys.length};
@@ -252,6 +255,11 @@ try {
     const timer = setInterval(() => { if (${expression}) { clearInterval(timer); clearTimeout(deadline); resolve(true); } }, 20);
     const deadline = setTimeout(() => { clearInterval(timer); reject(new Error('UI condition timed out')); }, 5000);
   })`);
+  const dismissMessage = async () => {
+    await until("document.getElementById('message-dialog').open");
+    await evaluate("document.getElementById('message-close').click()");
+    await until("!document.getElementById('message-dialog').open");
+  };
   const change = async (id, value, event = "change") => evaluate(`document.getElementById(${JSON.stringify(id)}).value = ${JSON.stringify(value)};
     document.getElementById(${JSON.stringify(id)}).dispatchEvent(new Event(${JSON.stringify(event)}, { bubbles: true }));`);
   await call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
@@ -309,6 +317,40 @@ try {
       await until("!document.getElementById('delete-selected').disabled");
       assert.equal(await evaluate("!document.getElementById('delete-dialog').open && testCalls.slice(lateCancelStart).some(call=>call.type==='cancelDeleteBatch')"),true);
       await evaluate("ignorePreparationCancel=false");
+      // Foreground failures remain visible after the dialog closes, with no unsafe deletion.
+      await evaluate("holdDeletePreparation=false;testState.batch=null;failPrepareDelete=true;window.scrollTo(0,document.body.scrollHeight);document.getElementById('delete-selected').focus();document.getElementById('delete-selected').click()");
+      await until("document.getElementById('message-dialog').open");
+      assert.equal(await evaluate("document.getElementById('message-dialog').getAttribute('role')==='alertdialog' && document.activeElement.id==='message-close'"),true);
+      assert.equal(await evaluate("document.getElementById('message-detail').textContent.includes('synthetic content mismatch') && !document.querySelector('#message-dialog img') && !window.bad"),true);
+      assert.equal(await evaluate("document.getElementById('message-guidance').textContent.includes("+JSON.stringify(language==='ja'?'削除していません':'No messages have been deleted')+")"),true);
+      await mkdir(path.join(root,'dist'),{recursive:true});
+      const errorImage=await call('Page.captureScreenshot',{format:'png'});
+      await writeFile(path.join(root,'dist/ui-operation-error-'+language+'.png'),Buffer.from(errorImage.data,'base64'));
+      await call('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+      await call('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+      await until("!document.getElementById('message-dialog').open && !document.getElementById('delete-selected').disabled");
+      assert.equal(await evaluate("document.activeElement.id==='delete-selected'"),true);
+      assert.equal(await evaluate("!document.querySelector('#panel-results .operation-error').hidden && document.querySelector('#panel-results .operation-error').textContent.includes('synthetic content mismatch')"),true);
+      await evaluate("document.querySelector('#panel-results .operation-error button').click()");
+      await dismissMessage();
+      await until("!document.getElementById('delete-selected').disabled");
+      await evaluate("failPrepareDelete=false;failRetry=true;document.querySelector('#results tr button:nth-child(2)').focus();document.querySelector('#results tr button:nth-child(2)').click()");
+      await until("document.getElementById('message-dialog').open && document.getElementById('message-detail').textContent.includes('synthetic retry failure')");
+      await dismissMessage();
+      await until("!document.getElementById('delete-selected').disabled");
+      await evaluate("failRetry=false");
+      await evaluate("failPrepareDelete=false;document.getElementById('tab-settings').click();failSettings=true;document.getElementById('notifications').click()");
+      await dismissMessage();
+      await until("!document.getElementById('notifications').disabled");
+      assert.equal(await evaluate("!document.querySelector('#panel-settings .operation-error').hidden && document.querySelector('#panel-settings .operation-error').textContent.includes('synthetic storage failure')"),true);
+      await evaluate("failSettings=false;failRefresh=true");
+      await until("!document.getElementById('background-error').hidden");
+      assert.equal(await evaluate("!document.getElementById('message-dialog').open"),true);
+      await evaluate("failRefresh=false;document.getElementById('background-retry').click()");
+      await until("document.getElementById('background-error').hidden && !document.getElementById('background-retry').disabled");
+      assert.equal(await evaluate("!document.getElementById('operation-toast').hidden && document.querySelector('#panel-settings .operation-status').textContent.length>0"),true);
+      await evaluate("document.getElementById('message-dismiss').click()");
+      assert.equal(await evaluate("document.getElementById('operation-toast').hidden"),true);
       await evaluate("holdDeletePreparation=false;releaseDeletePreparation=true;testState.batch=null;document.getElementById('deselect').click();document.getElementById('tab-scan').click()");
       assert.deepEqual(await evaluate(`(async () => {
         const {syncQuarantineSettings} = await import('./quarantine-ui.mjs');
@@ -524,9 +566,11 @@ try {
   await evaluate("document.querySelector('#accounts input').click()");
   await until("testState.settings.enabled && testState.settings.accountIds.length === 1 && document.getElementById('settings-status').textContent.includes('保存しました') && !document.getElementById('notifications').disabled");
   await evaluate("failSettings = true; document.querySelector('#accounts input').click()");
+  await dismissMessage();
   await until("document.getElementById('settings-status').textContent.includes('保存できません') && !document.getElementById('notifications').disabled");
   assert.equal(await evaluate("document.querySelector('#accounts input').checked"), true);
   await evaluate("failSettings = true; document.getElementById('notifications').click()");
+  await dismissMessage();
   await until("document.getElementById('settings-status').textContent.includes('保存できません') && !document.getElementById('notifications').disabled");
   assert.equal(await evaluate("document.getElementById('notifications').checked"), true);
   assert.equal(await evaluate("document.querySelector('#accounts input').checked"), true);
@@ -541,6 +585,7 @@ try {
   await writeFile(path.join(root, "dist/ui-settings.png"), Buffer.from(settingsImage.data, "base64"));
   assert.equal(await evaluate("document.getElementById('allow-delete')"), null);
   await evaluate("document.getElementById('tab-results').click(); document.getElementById('select-page').click(); permissionGranted = false; document.getElementById('delete-selected').click()");
+  await dismissMessage();
   await until("document.getElementById('action-status').textContent.includes('許可されなかった') && !document.getElementById('delete-selected').disabled");
   assert.equal(await evaluate("document.getElementById('delete-dialog').open"), false);
   assert.equal(await evaluate("testCalls.some(call => call.type === 'prepareDeleteBatch' || call.type === 'deleteBatch')"), false);
@@ -562,10 +607,13 @@ try {
   await until("document.getElementById('delete-dialog').open && !document.getElementById('delete-ack').disabled");
   await evaluate("document.getElementById('delete-ack').click(); document.getElementById('delete-confirm').click()");
   await until("document.getElementById('action-status').textContent.includes('完全削除1通')");
+  await dismissMessage();
+  await until("!document.getElementById('delete-selected').disabled");
   assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 1);
   assert.match(await evaluate("document.getElementById('batch-report').textContent"), /模擬の削除失敗/);
   const singlePrepares = await evaluate("testCalls.filter(call => call.type === 'prepareDelete').length");
   await evaluate("permissionGranted = false; document.querySelector('#results button:last-child').click()");
+  await dismissMessage();
   await until("document.getElementById('action-status').textContent.includes('許可されなかった') && !document.querySelector('#results button:last-child').disabled");
   assert.equal(await evaluate("testCalls.filter(call => call.type === 'prepareDelete').length"), singlePrepares);
   assert.equal(await evaluate("document.getElementById('delete-dialog').open"), false);
@@ -691,9 +739,11 @@ try {
   await mkdir(downloads, { recursive: true });
   await cdp("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: downloads });
   await evaluate("permissionGranted = false; document.getElementById('installer-download').click()");
+  await dismissMessage();
   await until("document.getElementById('installation-report').textContent.includes('許可されなかった') && !document.getElementById('installer-download').disabled");
   assert.equal(await evaluate("testCalls.some(call => call.type === 'saveDownload')"), false);
   await evaluate("permissionGranted = true; failSave = true; document.getElementById('installer-download').click()");
+  await dismissMessage();
   await until("document.getElementById('installation-report').textContent.includes('保存できません') && !document.getElementById('installer-download').disabled");
   await evaluate("failSave = false; document.getElementById('installer-download').click()");
   await until("document.getElementById('installation-report').textContent.includes('保存しました') && !document.getElementById('installer-download').disabled");
@@ -900,8 +950,10 @@ try {
       await writeFile(path.join(root, "dist/ui-clamav-missing.png"), Buffer.from(image.data, "base64"));
     }
     await evaluate("sessionStorage.setItem('fixture-health', 'clamav_unusable'); document.getElementById('health').click()");
+    await dismissMessage();
     await until("document.getElementById('clamav-install-guide').dataset.code === 'clamav_unusable' && !document.getElementById('health').disabled");
     await evaluate("testState.installation.state = 'unavailable'; document.getElementById('health').click()");
+    await dismissMessage();
     await until("document.getElementById('clamav-install-guide').dataset.code === 'helper_unavailable' && !document.getElementById('health').disabled");
     assert.match(await evaluate("document.getElementById('health-result').textContent"), language === "ja" ? /有無はまだ確認できません/ : /Cannot determine whether ClamAV/);
     await evaluate("sessionStorage.removeItem('fixture-health'); testState.installation.state = 'managed'; document.getElementById('health').click()");
@@ -918,6 +970,7 @@ try {
     await evaluate("const input = document.querySelector('#quarantine-settings select'); input.value = 'spam'; input.dispatchEvent(new Event('change', {bubbles:true}))");
     await until("testState.settings.quarantine?.test?.folderId === 'spam' && !document.querySelector('#quarantine-settings input').disabled");
     await evaluate("permissionGranted = false; document.querySelector('#quarantine-settings input').click()");
+  await dismissMessage();
     await until("!document.querySelector('#quarantine-settings input').disabled && !document.querySelector('#quarantine-settings input').checked");
     assert.equal(await evaluate("testState.settings.quarantine.test.auto"), false);
     await evaluate("permissionGranted = true; document.querySelector('#quarantine-settings input').click()");
@@ -1059,6 +1112,7 @@ try {
     await change("scan-expandedMiB", "200");
     await until("!document.getElementById('scan-expandedMiB').disabled");
     await evaluate("failSettings = true"); await change("scan-seconds", "100");
+  await dismissMessage();
     await until("document.getElementById('scan-seconds').value === '90' && !document.getElementById('scan-seconds').disabled");
     await evaluate("failSettings = false; document.getElementById('scan-mailMiB').focus(); document.getElementById('scan-mailMiB').value = '75'");
     await evaluate("new Promise(resolve => setTimeout(resolve, 1200))");

@@ -42,7 +42,7 @@ export function toolbarNotice(info, version, issue, count) {
     title: notice ? t("mail211", "ClamAV メール検査：") + notice.message : t("mail212", "ClamAV メール検査"), setup: Boolean(notice) };
 }
 
-export function installationUI({ request, action, latest, busy }) {
+export function installationUI({ request, action, feedback, latest, busy }) {
   if (directRuntime()) return { render() {} };
   const $ = id => document.getElementById(id);
   const version = messenger.runtime.getManifest().version;
@@ -78,9 +78,9 @@ export function installationUI({ request, action, latest, busy }) {
       void check();
     });
   }
-  async function saveInstaller(reportId) {
+  async function saveInstaller(reportId, origin) {
     if (saving || busy()) return;
-    const report = $(reportId);
+    const report = $(reportId), context = feedback.capture(origin);
     saving = true; render();
     let url;
     try {
@@ -88,6 +88,7 @@ export function installationUI({ request, action, latest, busy }) {
       const granted = await permission(messenger, ["downloads"]);
       if (!granted) {
         report.textContent = t("mail215", "ファイル保存が許可されなかったため、保存していません。保存ボタンから再度許可できます。");
+        await feedback.error(new Error(report.textContent), context);
         return;
       }
       report.textContent = t("mail216", "保存先を選択してください。ファイルの保存だけで設置や削除は行いません。");
@@ -100,21 +101,26 @@ export function installationUI({ request, action, latest, busy }) {
       savedName = item.filename.split("/").at(-1);
       updateCommands();
       report.textContent = t("mail219", "保存しました：$1。この保存先のフォルダーをTerminalで開いて、表示されたコマンドを実行してください。", [item.filename]);
+      feedback.status(report.textContent, context);
     } catch (error) {
       report.textContent = t("mail220", "保存できませんでした。保存画面を中止した場合は変更ありません。再試行できます。 ") + error.message;
+      await feedback.error(new Error(report.textContent), context);
     } finally {
       if (url) URL.revokeObjectURL(url);
       saving = false; render();
+      if (document.activeElement === document.body || document.activeElement === context.panel) feedback.restore(context);
     }
   }
-  $("installer-download").addEventListener("click", () => { void saveInstaller("installation-report"); });
-  $("uninstall-download").addEventListener("click", () => { void saveInstaller("uninstall-report"); });
+  $("installer-download").addEventListener("click", event => { void saveInstaller("installation-report", event.currentTarget); });
+  $("uninstall-download").addEventListener("click", event => { void saveInstaller("uninstall-report", event.currentTarget); });
   for (const [id, operation] of [["copy-install", "install"], ["copy-uninstall", "uninstall"]]) {
-    $(id).addEventListener("click", () => {
+    $(id).addEventListener("click", event => {
+      const context = feedback.capture(event.currentTarget);
       const report = $(operation === "uninstall" ? "uninstall-report" : "installation-report");
       void navigator.clipboard.writeText(command(operation)).then(() => {
         report.textContent = t("mail221", "コマンドをコピーしました。保存先のフォルダーのTerminalで実行してください。");
-      }).catch(() => { report.textContent = t("mail222", "コピーできませんでした。表示されたコマンドを選択してコピーしてください。"); });
+        feedback.status(report.textContent, context);
+      }).catch(() => { report.textContent = t("mail222", "コピーできませんでした。表示されたコマンドを選択してコピーしてください。"); void feedback.error(new Error(report.textContent), context); });
     });
   }
   function render() {

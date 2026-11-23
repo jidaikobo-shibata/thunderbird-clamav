@@ -1,3 +1,4 @@
+import { operationFeedback } from "./feedback.mjs";
 import { scanHistoryDescription } from "./scan-history.mjs";
 import { configureDirectView } from "./direct-view.mjs";
 import { directRuntime, permission } from "./direct-transport.mjs";
@@ -17,6 +18,7 @@ await configureDirectView();
 const DIRECT = directRuntime();
 
 const $ = id => document.getElementById(id);
+const feedback = operationFeedback({ document, t });
 let latest, initialized = false, refreshing = false, busy = false, startupFailed = false, page = 0;
 let visible = [], filteredRecords = [];
 const rows = new Map(), selected = new Set();
@@ -30,7 +32,12 @@ let folderChoices = [], foldersLoading = false, settingsSaving = false, scanSett
 let folderNames = createFolderIndex(folderChoices);
 
 async function request(type, values = {}) {
-  const response = await messenger.runtime.sendMessage({ ...values, type });
+  let response;
+  try { response = await messenger.runtime.sendMessage({ ...values, type }); }
+  catch (error) {
+    if (["deletePermanently", "deleteBatch", "quarantineMany"].includes(type)) error.guidance = t("messageEffects", "処理が途中まで進んでいる可能性があります。再実行の前に、検査結果とメールの状態を確認してください。");
+    throw error;
+  }
   if (!response?.ok) {
     if (response?.startupFailed) {
       const showRecovery = !startupFailed;
@@ -42,7 +49,9 @@ async function request(type, values = {}) {
       throw new Error(message);
     }
     if (response?.setupRequired) { await refresh(); openSetup(); }
-    throw new Error(response?.error || t("mail102", "拡張の処理に接続できませんでした。"));
+    const error = new Error(response?.error || t("mail102", "拡張の処理に接続できませんでした。"));
+    if (["deletePermanently", "deleteBatch", "quarantineMany"].includes(type)) error.guidance = t("messageEffects", "処理が途中まで進んでいる可能性があります。再実行の前に、検査結果とメールの状態を確認してください。");
+    throw error;
   }
   if (type === "state") startupFailed = false;
   return response;
@@ -51,7 +60,7 @@ function setText(element, text) {
   if (element.textContent !== text) element.textContent = text;
 }
 function blocked() { return busy || Boolean(latest?.batch?.active) || Boolean(latest?.maintenance); }
-const installer = installationUI({ request, action, latest: () => latest, busy: () => blocked() });
+const installer = installationUI({ request, action, feedback, latest: () => latest, busy: () => blocked() });
 function selection() { return (latest?.records || []).filter(record => selected.has(record.key)); }
 function updateControls() {
   const locked = blocked() || startupFailed || Boolean(latest?.helperRemoved), chosen = selection();
@@ -125,26 +134,29 @@ function updateControls() {
 }
 async function action(callback, success) {
   if (blocked()) return;
-  const previousFocus = document.activeElement;
+  const context = feedback.capture(), previousFocus = context.origin;
   busy = true;
   updateControls();
+  feedback.begin(context);
   try {
-    setText($("action-status"), t("mail104", "処理しています。"));
-    const message = await callback();
-    setText($("action-status"), success || message || t("mail105", "処理が完了しました。"));
-    await refresh();
-  } catch (error) { setText($("action-status"), error.message); }
+    const result = await callback();
+    const message = success || result?.message || (typeof result === "string" ? result : "") || t("mail105", "処理が完了しました。");
+    feedback.status(message, context);
+    // A failed refresh must not misreport a completed operation as a failure.
+    await refresh().catch(reportRefreshError);
+    if (result?.warning) await feedback.error({ message, guidance: result.guidance }, context, { warning: true });
+  } catch (error) { await feedback.error(error, context); }
   finally {
     busy = false; updateControls();
-    if (document.activeElement === document.body) {
-      if (previousFocus?.isConnected && !previousFocus.disabled && !previousFocus.closest("[hidden]")) {
-        previousFocus.focus();
-      } else if (!$("panel-results").hidden) {
-        $("summary").tabIndex = -1;
-        $("summary").focus();
-      }
+    if (document.activeElement === document.body || document.activeElement === context.panel) {
+      if (previousFocus?.isConnected && !previousFocus.disabled && !previousFocus.closest("[hidden]")) previousFocus.focus();
+      else if (context.panel && !context.panel.hidden) context.panel.focus();
     }
   }
+}
+function reportRefreshError(error) {
+  setText($("background-error-detail"), t("messageRefreshError", "画面の情報を更新できませんでした。表示が古い可能性があります。") + " " + error.message);
+  $("background-error").hidden = false;
 }
 
 function renderHelperNotice() {
@@ -246,7 +258,7 @@ function showFolderDialog(context) {
   dialog.returnValue = "cancel";
   dialog.addEventListener("close", () => {
     if (dialog.returnValue !== "start") {
-      void request("folderCancel", { token: context.token }).catch(error => setText($("action-status"), error.message));
+      void request("folderCancel", { token: context.token }).catch(error => feedback.error(error, feedback.capture()));
       return;
     }
     const includeSubfolders = $("folder-subfolders").checked;
@@ -372,7 +384,7 @@ async function prepareDeleteConfirmation(keys) {
   const closed = () => {
     if (!context.preparing) return;
     context.cancelled = true;
-    if (context.started) void request("cancelDeletePreparation", { preparationId: context.id }).catch(error => setText($("action-status"), error.message));
+    if (context.started) void request("cancelDeletePreparation", { preparationId: context.id }).catch(error => feedback.error(error, feedback.capture()));
   };
   dialog.addEventListener("close", closed);
   dialog.returnValue = "cancel";
@@ -382,7 +394,9 @@ async function prepareDeleteConfirmation(keys) {
     await requireDeletePermission();
     if (context.cancelled || !dialog.open) return null;
     context.started = true;
-    const prepared = await request("prepareDeleteBatch", { keys, preparationId: context.id });
+    let prepared;
+    try { prepared = await request("prepareDeleteBatch", { keys, preparationId: context.id }); }
+    catch (error) { error.guidance = t("messageDeleteNotStarted", "メールは削除していません。対象を再検査し、結果を確認してからもう一度お試しください。"); throw error; }
     if (context.cancelled || !dialog.open || prepared.cancelled) {
       if (prepared.token) await request("cancelDeleteBatch", { token: prepared.token });
       return null;
@@ -405,8 +419,10 @@ async function requireDeletePermission() {
 
 async function deleteOne(key) {
   await requireDeletePermission();
-  setText($("action-status"), t("mail127", "削除対象を照合しています。"));
-  const target = await request("prepareDelete", { key });
+  feedback.status(t("mail127", "削除対象を照合しています。"));
+  let target;
+  try { target = await request("prepareDelete", { key }); }
+  catch (error) { error.guidance = t("messageDeleteNotStarted", "メールは削除していません。対象を再検査し、結果を確認してからもう一度お試しください。"); throw error; }
   if (!await confirmDeletion([target])) {
     await request("cancelDelete", { token: target.token });
     return t("mail128", "削除をキャンセルしました。");
@@ -600,6 +616,7 @@ async function refresh() {
     }
     $("issue").hidden = !latest.issue;
     setText($("issue"), latest.issue || "");
+    $("background-error").hidden = true;
     renderRecords();
     renderHelperNotice();
     if (latest.setupRequest && latest.setupRequest !== seenSetupRequest) {
@@ -620,7 +637,7 @@ async function refresh() {
       activateTab("results");
     }
     if (latest.folderRequest && latest.folderRequest.token !== seenFolderRequest && !blocked() &&
-        !$("delete-dialog").open && !$("folder-dialog").open && !$("folder-delete-dialog").open) showFolderDialog(latest.folderRequest);
+        !$("message-dialog").open && !$("delete-dialog").open && !$("folder-dialog").open && !$("folder-delete-dialog").open) showFolderDialog(latest.folderRequest);
   } finally { refreshing = false; }
 }
 
@@ -646,7 +663,7 @@ $("select-filtered").addEventListener("click", () => {
   updateControls();
 });
 $("batch-stop").addEventListener("click", () => {
-  void request("cancelBatch", { id: latest?.batch?.id }).then(refresh).catch(error => setText($("action-status"), error.message));
+  void request("cancelBatch", { id: latest?.batch?.id }).then(refresh).catch(error => feedback.error(error, feedback.capture()));
 });
 $("deselect").addEventListener("click", () => { selected.clear(); updateControls(); });
 $("retry-selected").addEventListener("click", () => {
@@ -678,7 +695,7 @@ $("delete-selected").addEventListener("click", () => {
       $("batch-report").append(item);
     }
     $("batch-report").hidden = failed.length === 0;
-    return t("bulkDeleteResult", "完全削除$1通 ／ 失敗$2通 ／ 未着手$3通", [response.results.length - failed.length, failed.length, response.cancelled || 0]);
+    return { message: t("bulkDeleteResult", "完全削除$1通 ／ 失敗$2通 ／ 未着手$3通", [response.results.length - failed.length, failed.length, response.cancelled || 0]), warning: failed.length > 0, guidance: t("messageBatchGuidance", "成功した処理は実行済みです。検査結果と対象ごとのエラーを確認してください。") };
   });
 });
 async function forgetHistory(keys) {
@@ -765,7 +782,7 @@ function renderTarget() {
 $("folder-search").addEventListener("input", renderFolderChoices);
 $("folder-select-visible").addEventListener("click", () => { for (const folder of matchingFolders()) selectedFolders.add(folder.id); renderFolderChoices(); });
 $("folder-clear-selection").addEventListener("click", () => { selectedFolders.clear(); renderFolderChoices(); });
-async function loadFolders() {
+async function loadFolders(interactive = false) {
   if (foldersLoading) return;
   foldersLoading = true; updateControls();
   setText($("folder-load-status"), t("mail162", "フォルダー一覧を取得しています。"));
@@ -785,11 +802,11 @@ async function loadFolders() {
     renderRecords();
     setText($("folder-load-status"), response.limited ? t("mail163", "フォルダー数の上限に達しました。一覧にない対象はThunderbirdの右クリックから指定してください。") :
       folderChoices.length ? "" : t("mail164", "検査できるフォルダーがありません。"));
-  } catch (error) { setText($("folder-load-status"), t("mail165", "一覧を取得できませんでした。「一覧を更新」で再試行してください。") + error.message); }
+  } catch (error) { setText($("folder-load-status"), t("mail165", "一覧を取得できませんでした。「一覧を更新」で再試行してください。") + error.message); if (interactive) throw error; }
   finally { foldersLoading = false; updateControls(); }
 }
 $("scan-account").addEventListener("change", () => { selectedFolders.clear(); $("folder-search").value = ""; renderFolderChoices(); });
-$("reload-folders").addEventListener("click", () => { void loadFolders(); });
+$("reload-folders").addEventListener("click", () => { void action(() => loadFolders(true)); });
 function changeReview(targets, reviewed) {
   if (!targets.length || blocked()) return;
   const stamps = Object.fromEntries(targets.map(record => [record.key, reviewStamp(record)]));
@@ -820,7 +837,7 @@ $("quarantine-selected").addEventListener("click", () => {
   if (!targets.length || blocked()) return;
   if (targets.some(record => !latest.settings.quarantine?.[record.locator.accountId])) {
     userNavigated = true; activateTab("settings");
-    setText($("action-status"), t("qTargetMissing", "隔離先を確認できません。設定で同じアカウント内の専用フォルダーを選び直してください。"));
+    void feedback.error(new Error(t("qTargetMissing", "隔離先を確認できません。設定で同じアカウント内の専用フォルダーを選び直してください。")), feedback.capture());
     $("quarantine-settings").querySelector("select")?.focus();
     return;
   }
@@ -831,7 +848,7 @@ $("quarantine-selected").addEventListener("click", () => {
     await permission;
     if (!await confirmQuarantine(targets, { quarantine: destinations }, latest.accounts, folderChoices)) return t("qCancelled", "隔離を中止しました。");
     const result = await request("quarantineMany", { keys: targets.map(record => record.key), destinations, hashes });
-    return t("qCompleted", "隔離：$1通移動、$2通失敗。結果を確認してください。", [result.moved, result.failed]);
+    return { message: t("qCompleted", "隔離：$1通移動、$2通失敗。結果を確認してください。", [result.moved, result.failed]), warning: result.failed > 0, guidance: t("messageBatchGuidance", "成功した処理は実行済みです。検査結果と対象ごとのエラーを確認してください。") };
   });
 });
 function clearScanErrors() {
@@ -899,7 +916,8 @@ $("health").addEventListener("click", () => {
     if (health.status !== "ready") throw new Error(health.detail);
   }, t("mail171", "接続の確認結果を更新しました。"));
 });
-void refresh().catch(error => setText($("action-status"), error.message));
+$("background-retry").addEventListener("click", () => { void action(() => refresh()); });
+void refresh().catch(reportRefreshError);
 setInterval(() => {
-  if (!document.hidden) void refresh().catch(error => setText($("action-status"), error.message));
+  if (!document.hidden) void refresh().catch(reportRefreshError);
 }, 2000);

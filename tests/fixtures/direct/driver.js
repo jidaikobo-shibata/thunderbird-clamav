@@ -591,6 +591,31 @@ try {
       await wait(100);
     }
     report.deletionPreparationDialog=true;
+    await messenger.storage.local.set({fixtureDeleteMismatchId:deletionHeldRecord.messageId});
+    document.getElementById('delete-selected').focus();
+    document.getElementById('delete-selected').click();
+    for(let attempt=0;attempt<100;attempt++) {
+      if(document.getElementById('message-dialog').open) break;
+      await wait(100);
+    }
+    check(document.getElementById('message-dialog').open&&document.activeElement.id==='message-close',"Native content mismatch opens focused error dialog");
+    check(document.getElementById('message-detail').textContent.length>0&&document.getElementById('message-guidance').textContent.length>0,"Native error includes reason and next step");
+    check(!document.getElementById('delete-dialog').open,"Unsafe deletion confirmation is not shown");
+    document.getElementById('message-close').click();
+    for(let attempt=0;attempt<100;attempt++) {
+      if(!document.getElementById('delete-selected').disabled) break;
+      await wait(100);
+    }
+    check(document.activeElement.id==='delete-selected',"Native error returns focus to original operation");
+    check(!document.querySelector('#panel-results .operation-error').hidden,"Native error remains available in its tab");
+    check((await messenger.messages.get(deletionHeldRecord.messageId)).id===deletionHeldRecord.messageId,"Mismatch target is not deleted");
+    document.querySelector('#panel-results .operation-error button').click();
+    for(let attempt=0;attempt<100;attempt++) {if(document.getElementById('message-dialog').open)break;await wait(100);}
+    check(document.getElementById('message-dialog').open,"Native error can be reopened");
+    document.getElementById('message-close').click();
+    await messenger.storage.local.remove('fixtureDeleteMismatchId');
+    report.operationFeedback=true;
+
     state=await request('state');
 
 

@@ -19,8 +19,16 @@
     <button type="button" role="tab" id="tab-uninstall" aria-selected="false" aria-controls="panel-uninstall" tabindex="-1"><span data-i18n="mail241">アンインストール</span></button>
     <button type="button" role="tab" id="tab-help" aria-selected="false" aria-controls="panel-help" tabindex="-1"><span data-i18n="mail256">ヘルプ</span></button>
   </div>
+  <div id="background-error" class="background-error" role="alert" hidden>
+    <span id="background-error-detail"></span>
+    <button type="button" id="background-retry" data-i18n="messageRefresh">再読み込み</button>
   </div>
-  <p id="action-status" role="status" aria-live="polite"></p>
+  </div>
+  <aside id="operation-toast" class="operation-toast" hidden>
+    <p id="action-status" role="status" aria-live="polite" aria-atomic="true"></p>
+    <button type="button" id="message-reopen" hidden data-i18n="messageDetails">メッセージを確認</button>
+    <button type="button" id="message-dismiss" data-i18n="messageDismiss">非表示にする</button>
+  </aside>
   <p id="issue" role="alert" hidden></p>
 
   <section id="panel-scan" role="tabpanel" aria-labelledby="tab-scan" tabindex="0">
@@ -266,6 +274,13 @@
     <p id="folder-delete-target"></p>
     <p id="folder-delete-warning"><span data-i18n="mail356">進捗と再開用の記録を削除します。この検査は再開できなくなります。メール本体と各メールの検査結果は削除しません。</span></p>
     <div class="actions"><button id="folder-delete-cancel" value="cancel" autofocus><span data-i18n="mail348">キャンセル</span></button><button id="folder-delete-confirm" value="delete"><span data-i18n="mail266">検査記録を削除</span></button></div>
+  </form>
+</dialog>
+<dialog id="message-dialog" role="alertdialog" aria-labelledby="message-title" aria-describedby="message-operation message-detail message-guidance">
+  <form method="dialog">
+    <h2 id="message-title"></h2><p id="message-operation"></p>
+    <p id="message-detail"></p><p id="message-guidance"></p>
+    <div class="actions"><button id="message-close" value="close" autofocus data-i18n="messageClose">閉じる</button></div>
   </form>
 </dialog>
 <dialog id="delete-dialog" aria-labelledby="delete-title" aria-describedby="delete-warning">
