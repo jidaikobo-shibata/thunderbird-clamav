@@ -3119,5 +3119,20 @@
   },
   "messageEffects": {
     "message": "処理が途中まで進んでいる可能性があります。再実行の前に、検査結果とメールの状態を確認してください。"
+  },
+  "receiptRecoveryTitle": {
+    "message": "未検査のメールを確認してください"
+  },
+  "receiptRecoveryHint": {
+    "message": "新着メールの受付が上限に達し、未検査のメールが残っている可能性があります。自動検査を有効にしていたアカウントの受信先・振り分け先フォルダーを「検査」タブから検査してください。この案内は、再検査を終えてから閉じてください。"
+  },
+  "receiptRecoveryScan": {
+    "message": "検査するフォルダーを選ぶ"
+  },
+  "receiptRecoveryClear": {
+    "message": "再検査を終えたので案内を閉じる"
+  },
+  "receiptRecoveryChanged": {
+    "message": "新しい未受付があります。案内を確認してください。"
   }
 }

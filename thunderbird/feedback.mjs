@@ -31,6 +31,7 @@ export function operationFeedback({ document, t }) {
     $("message-reopen").hidden = true;
     const local = panels.get(context?.panel);
     if (local) local.status.textContent = message;
+    protectFocus();
   }
   function restore(context) {
     const target = context?.origin;
@@ -74,6 +75,18 @@ export function operationFeedback({ document, t }) {
     $("message-reopen").onclick = () => { void open({ ...item, context: { ...context, origin: $("message-reopen") } }); };
     return modal ? open(item) : Promise.resolve();
   }
+  // Hide only when the floating notice actually overlaps a focused control.
+  // The full notice remains available in its originating tab.
+  function protectFocus() {
+    const toast = $("operation-toast"), target = document.activeElement;
+    if (toast.hidden || toast.contains(target) || document.querySelector("dialog[open]")) return;
+    if (!target?.matches("button,input,select,textarea,a[href],summary")) return;
+    const control = target.getBoundingClientRect(), notice = toast.getBoundingClientRect();
+    if (control.top < notice.bottom && control.bottom > notice.top &&
+        control.left < notice.right && control.right > notice.left) toast.hidden = true;
+  }
+  document.addEventListener("focusin", protectFocus);
+  document.addEventListener("scroll", protectFocus, true);
   $("message-dismiss").addEventListener("click", () => {
     $("operation-toast").hidden = true;
     restore(toastContext || current);

@@ -62,6 +62,12 @@
   </section>
   <section id="panel-results" role="tabpanel" aria-labelledby="tab-results" tabindex="0" hidden>
     <h2><span data-i18n="mail141">検査結果</span></h2>
+    <section id="receipt-recovery" class="connection-status" hidden>
+      <h3 data-i18n="receiptRecoveryTitle">未検査のメールを確認してください</h3>
+      <p data-i18n="receiptRecoveryHint">新着メールの受付が上限に達し、未検査のメールが残っている可能性があります。自動検査を有効にしていたアカウントの受信先・振り分け先フォルダーを「検査」タブから検査してください。この案内は、再検査を終えてから閉じてください。</p>
+      <button type="button" id="receipt-open-scan" data-i18n="receiptRecoveryScan">検査するフォルダーを選ぶ</button>
+      <button type="button" id="receipt-recovery-clear" data-i18n="receiptRecoveryClear">再検査を終えたので案内を閉じる</button>
+    </section>
     <section id="overflow-report" class="connection-status" aria-labelledby="overflow-title" hidden>
       <h3 id="overflow-title" data-i18n="overflowTitle">履歴に保存できなかった結果</h3>
       <p id="overflow-summary" role="status"></p>

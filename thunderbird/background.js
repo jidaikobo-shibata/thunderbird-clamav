@@ -1,3 +1,4 @@
+import { ReceiptBudget } from "./receipt-budget.mjs";
 import { toolbarUpdates } from "./toolbar-updates.mjs";
 import { StateStorage, readStoredState } from "./state-storage.mjs";
 import { ScanConnection } from "./scan-connection.mjs";
@@ -58,6 +59,9 @@ let recordChanges = Promise.resolve(), recordStaging = null;
 let manualMutations = Promise.resolve();
 let automaticReceipts = 0;
 const pendingReceipts = new Set();
+const receiptBudget = new ReceiptBudget();
+let receiptRecovery = null, recoveringReceipts = false;
+let savingReceiptRecovery = false, receiptRecoveryDirty = false;
 let receiptIssue = null;
 let checkingQuarantineReceipts = false;
 let automaticQuarantines = Promise.resolve();
@@ -522,10 +526,10 @@ function save() {
   return persistState();
 }
 
-function persistState(history = records, overflow = overflowPending) {
+function persistState(history = records, overflow = overflowPending, recovery = receiptRecovery, problem = issue) {
   // Take a snapshot now, then serialize storage writes so an older snapshot
   // cannot overwrite a later scan result.
-  const snapshot = stateStorage.snapshot({ directMigrationBackup, incrementalMigrationBackup, overflowPending: overflow, overflowReport, issue, lastHealth, lastScan, helperRemoved, installation,
+  const snapshot = stateStorage.snapshot({ directMigrationBackup, incrementalMigrationBackup, overflowPending: overflow, overflowReport, issue: problem, receiptRecovery: recovery, lastHealth, lastScan, helperRemoved, installation,
     folderJob: folderScan.snapshot() }, history, folderScan.checkpoints.snapshot(folderScan.job?.id));
   writes = writes.catch(() => {}).then(() => stateStorage.write(snapshot, settings));
   void updateBadge().catch(() => {});
@@ -679,7 +683,7 @@ function forgetRecords(token) {
 }
 
 function toolbarState() {
-  return toolbarNotice(installation, api.runtime.getManifest().version, issue, records.filter(needsAttention).length + (overflowReport?.recent || []).filter(needsAttention).length);
+  return toolbarNotice(installation, api.runtime.getManifest().version, issue || (receiptRecovery ? receiptRecoveryMessage() : ""), records.filter(needsAttention).length + (overflowReport?.recent || []).filter(needsAttention).length);
 }
 async function updateBadge() {
   toolbar.update(toolbarState());
@@ -1052,19 +1056,61 @@ function stageMessage(message, source) {
   return recordChanges;
 }
 
-// Keep page state on errors: a rejected continuation may be retried without
-// closing the generator and losing the unaccepted remainder of the notification.
-function receiptPages(first) {
+function receiptRecoveryMessage() {
+  return t("receiptRecoveryHint", "新着メールの受付が上限に達し、未検査のメールが残っている可能性があります。自動検査を有効にしていたアカウントの受信先・振り分け先フォルダーを「検査」タブから検査してください。この案内は、再検査を終えてから閉じてください。");
+}
+async function saveReceiptRecovery() {
+  if (savingReceiptRecovery || !receiptRecoveryDirty) return;
+  savingReceiptRecovery = true;
+  const token = receiptRecovery?.token;
+  try {
+    await save();
+    receiptRecoveryDirty = receiptRecovery?.token !== token;
+  } catch (error) { report(error); }
+  finally { savingReceiptRecovery = false; }
+}
+function deferReceipt(page) {
+  receiptRecovery = { token: crypto.randomUUID() };
+  if (page?.id && api.messages.abortList) void api.messages.abortList(page.id).catch(report);
+  // One bounded marker replaces excess headers, never a successful verdict.
+  report(receiptRecoveryMessage());
+  receiptRecoveryDirty = true;
+  void saveReceiptRecovery();
+}
+
+// Retain the current page after an IO failure, but bound active and failed
+// notifications together. Excess lists require an explicit folder reinspection.
+function receiptPages(first, receipt) {
   let page = first, offset = 0;
   return { async next() {
     while (page) {
       if (offset < page.messages.length) return { value: page.messages[offset++], done: false };
-      if (!page.id) { page = null; break; }
-      const next = await api.messages.continueList(page.id);
+      const id = page.id;
+      page = null;
+      receiptBudget.releasePage(receipt);
+      if (!id) break;
+      // Keep the cursor on rejection so the next attempt can retry it.
+      page = { id, messages: [] };
+      const next = await api.messages.continueList(id);
+      if (!receiptBudget.page(receipt, next)) { deferReceipt(next); page = null; break; }
       page = next; offset = 0;
     }
     return { done: true };
   } };
+}
+
+async function recoverReceipts() {
+  if (recoveringReceipts) return;
+  recoveringReceipts = true;
+  try {
+    // Snapshot once: failures wait for the next tick instead of spinning.
+    const waiting = [...pendingReceipts].filter(item => !item.retryQueued);
+    for (let offset = 0; offset < waiting.length; offset += 4) {
+      if (maintenanceActive() || helperRemoved) break;
+      for (const receipt of waiting.slice(offset, offset + 4)) void enqueueReceipt(receipt).catch(report);
+      if (offset + 4 < waiting.length) await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  } finally { recoveringReceipts = false; }
 }
 
 function enqueueReceipt(receipt) {
@@ -1093,6 +1139,7 @@ function enqueueReceipt(receipt) {
         receipt.current = null;
       }
       pendingReceipts.delete(receipt);
+      receiptBudget.delete(receipt);
       if (!pendingReceipts.size && receiptIssue) {
         if (issue === receiptIssue) issue = "";
         receiptIssue = null;
@@ -1111,7 +1158,12 @@ function enqueueReceipt(receipt) {
 }
 
 function enqueue(first, source) {
-  if (source === "automatic") return enqueueReceipt({ iterator: receiptPages(first), current: null });
+  if (source === "automatic") {
+    const receipt = { current: null };
+    if (!receiptBudget.page(receipt, first)) { deferReceipt(first); return Promise.resolve(); }
+    receipt.iterator = receiptPages(first, receipt);
+    return enqueueReceipt(receipt);
+  }
   const work = async () => {
     for await (const message of messagePages(api.messages, first)) {
       if (message.external || !message.folder) continue;
@@ -1351,6 +1403,7 @@ async function initialize() {
   overflowReport = data.overflowReport || null;
   if (overflowReport) overflowReport.recent = (overflowReport.recent || []).slice(0, 20);
   issue = typeof data.issue === "string" ? data.issue : "";
+  receiptRecovery = typeof data.receiptRecovery?.token === "string" ? { token: data.receiptRecovery.token.slice(0, 80) } : null;
   lastHealth = data.lastHealth || null;
   helperRemoved = !DIRECT && data.helperRemoved === true;
   installation = data.installation || null;
@@ -1420,7 +1473,13 @@ api.messages.onNewMailReceived.addListener((folder, list) => {
     if (list.id && api.messages.abortList) void api.messages.abortList(list.id).catch(() => {});
     return;
   }
-  void ready.then(() => enqueue(list, "automatic")).catch(report);
+  void ready.then(() => {
+    if (!settings.enabled || folder.accountId && !settings.accountIds.includes(folder.accountId)) {
+      if (list.id && api.messages.abortList) void api.messages.abortList(list.id).catch(report);
+      return;
+    }
+    return enqueue(list, "automatic");
+  }).catch(report);
 }, true);
 // Only an explicit, content-verified move can establish this relationship.
 // Ordinary copies and histories with independent human actions stay separate.
@@ -1879,11 +1938,31 @@ api.runtime.onMessage.addListener(async (request, sender) => {
     if (batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation) && !["state", "cancelBatch", "helperInfo", "health"].includes(request.type)) throw new Error(t("qBusy", "このメールは処理中です。"));
     switch (request.type) {
       case "state":
-        return { ok: true, directMigrationBackup, settings, records, overflowPending, overflowReport, issue, lastHealth, lastScan, resultsRequest, resultsFilter, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
+        return { ok: true, directMigrationBackup, settings, records, overflowPending, overflowReport, issue, receiptRecovery, lastHealth, lastScan, resultsRequest, resultsFilter, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
           resultActionsBusy: Boolean(running || folderScan.active || deleting.size),
           folderJob: folderScan.snapshot(), accounts: (await api.accounts.list())
           .filter(account => ["imap", "pop3", "none"].includes(account.type))
           .map(account => ({ id: account.id, name: account.name, type: account.type })) };
+      case "acknowledgeReceiptRecovery": {
+        if (!receiptRecovery || request.token !== receiptRecovery.token) throw new Error(t("receiptRecoveryChanged", "新しい未受付があります。案内を確認してください。"));
+        const work = async () => {
+          if (!receiptRecovery || request.token !== receiptRecovery.token) throw new Error(t("receiptRecoveryChanged", "新しい未受付があります。案内を確認してください。"));
+          const token = receiptRecovery.token;
+          await persistState(records, overflowPending, null, issue === receiptRecoveryMessage() ? "" : issue);
+          if (receiptRecovery?.token === token) {
+            receiptRecovery = null;
+            receiptRecoveryDirty = false;
+            if (issue === receiptRecoveryMessage()) issue = "";
+          } else {
+            receiptRecoveryDirty = true;
+            void saveReceiptRecovery();
+          }
+          await updateBadge();
+          return { ok: true };
+        };
+        recordChanges = recordChanges.catch(() => {}).then(work);
+        return await recordChanges;
+      }
       case "helperInfo":
         return { ok: true, installation: await helperInfo(), health: lastHealth };
       case "helperPlan": {
@@ -2227,10 +2306,8 @@ setInterval(() => {
     if (pendingMaintenance && !pendingMaintenance.applying && Date.now() > pendingMaintenance.expires) releaseMaintenance();
     if (maintenanceActive() || helperRemoved) return;
     pruneMoveIntakes();
-    // At most one retained receipt is scheduled per tick; new deliveries keep
-    // their independent queue and repeated ticks cannot enqueue duplicates.
-    const receipt = [...pendingReceipts].find(item => !item.retryQueued);
-    if (receipt) void enqueueReceipt(receipt).catch(report);
+    void saveReceiptRecovery();
+    void recoverReceipts().catch(report);
     for (const record of records) {
       if (!deleting.has(record.key) && scanFailed(record) && record.nextRetry && record.nextRetry <= Date.now() &&
           (record.source === "manual" || (settings.enabled && settings.accountIds.includes(record.locator.accountId)))) {

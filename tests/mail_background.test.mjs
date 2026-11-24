@@ -2071,7 +2071,8 @@ test("concurrent settings changes survive an earlier failed save without publish
   assert.deepEqual(h.stored().settings,state.settings);
   const writes = h.storageCounts.writes;
   h.events.newMail.listeners[0](mail(1).folder,{messages:[mail(1)]});
-  await settle(h,()=>h.storageCounts.writes>writes);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.storageCounts.writes,writes, "disabled delivery allocates no receipt or storage write");
   assert.equal((await h.send("state")).records.length,0);
   assert.deepEqual(h.stored().settings,state.settings);
 });
@@ -2819,7 +2820,7 @@ for (const overflow of [false, true]) for (const duplicate of [false, true]) tes
   assert.equal(h.rawReads.length, 4);
 });
 
-test("persistent admission failures retry once per tick and rotate fairly without blocking new mail", async () => {
+test("persistent admission failures retry each retained receipt once per recovery cycle", async () => {
   const mails = [mail(201), mail(202), mail(203)];
   const h = await harness({ mails, saved: { settings: { enabled: true, accountIds: ["one"], notifications: false } } });
   const original = h.api.storage.local.set; let failures = 0;
@@ -2827,9 +2828,9 @@ test("persistent admission failures retry once per tick and rotate fairly withou
   h.events.newMail.listeners[0](mails[0].folder, { messages: [mails[0]] });
   h.events.newMail.listeners[0](mails[1].folder, { messages: [mails[1]] });
   await settle(h, state => state.issue.includes("failure 2"));
-  for (const count of [3, 4]) {
+  for (const count of [4, 6]) {
     await h.timers[0]();
-    // Each tick schedules one retained receipt, rotating after a failure.
+    // Each cycle tries a bounded snapshot once; failures never spin.
     await settle(h, state => state.issue.includes("failure " + count));
     assert.equal(failures, count);
   }
@@ -4514,4 +4515,93 @@ test('hidden toolbar rendering cannot hold initialization or automatic mail admi
  assert.equal(h.stored().records.filter(r=>r.status==='clean').length,3);
  release();await new Promise(r=>setImmediate(r));
  assert.equal((await h.send('state')).records.length,3);
+});
+
+test("intake overflow stays bounded and leaves a durable explicit reinspection notice", async () => {
+  const mails = Array.from({ length: 140 }, (_, i) => mail(9000 + i));
+  const h = await harness({ mails, saved: { settings: { enabled: true, accountIds: ["one"], notifications: false } } });
+  const original = h.api.storage.local.set;
+  let failedWrites = 0;
+  h.api.storage.local.set = async () => { failedWrites++; throw Error("intake outage"); };
+  for (const message of mails) h.events.newMail.listeners[0](message.folder, { messages: [message] });
+  await settle(h, state => Boolean(state.receiptRecovery));
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert(failedWrites <= 130, "excess notifications do not allocate writes or retained receipts");
+  assert.equal(h.rawReads.length, 0);
+  h.api.storage.local.set = original;
+  await h.timers[0]();
+  const state = await settle(h, state => state.records.length === 128 && state.records.every(record => record.status === "clean"));
+  assert.equal(h.rawReads.length, 128, "all retained notifications recover in one cycle");
+  await settle(h, () => Boolean(h.stored().receiptRecovery));
+  assert(state.receiptRecovery, "overflow never masquerades as successful inspection");
+  assert.equal((await h.send("acknowledgeReceiptRecovery", { token: "stale" })).ok, false);
+  const restarted = await harness({ saved: h.stored() });
+  assert((await restarted.send("state")).receiptRecovery);
+  assert.equal((await h.send("acknowledgeReceiptRecovery", { token: state.receiptRecovery.token })).ok, true);
+  assert.equal((await h.send("state")).receiptRecovery, null);
+  assert.equal(h.stored().receiptRecovery, null);
+});
+test("oversized incoming pages abort enumeration and require explicit folder inspection", async () => {
+  const message = mail(10001);
+  const h = await harness({ mails: [message], saved: { settings: { enabled: true, accountIds: ["one"], notifications: false } } });
+  const aborted = [];
+  h.api.messages.abortList = async id => { aborted.push(id); };
+  h.events.newMail.listeners[0](message.folder, { id: "oversized", messages: Array(257).fill(message) });
+  await settle(h, state => Boolean(state.receiptRecovery));
+  assert.deepEqual(aborted, ["oversized"]);
+  assert.equal(h.rawReads.length, 0);
+});
+
+test("a retained page waiting on IO cannot hold later recovery batches", async () => {
+  const mails = Array.from({ length: 6 }, (_, i) => mail(11000 + i));
+  const h = await harness({ mails, saved: { settings: { enabled: true, accountIds: ["one"], notifications: false } } });
+  let failed = true, attempts = 0, release;
+  const gate = new Promise(resolve => { release = resolve; });
+  h.api.messages.continueList = async id => {
+    const i = Number(id);
+    if (failed) { attempts++; throw Error("page unavailable"); }
+    if (i < 4) await gate;
+    return { messages: [mails[i]] };
+  };
+  for (let i = 0; i < 6; i++) h.events.newMail.listeners[0](mails[i].folder, { id: String(i), messages: [] });
+  await settle(h, () => attempts === 6);
+  failed = false;
+  await h.timers[0]();
+  await settle(h, state => state.records.filter(record => record.status === "clean").length === 2);
+  assert.deepEqual(h.rawReads, [11004, 11005]);
+  release();
+  await settle(h, state => state.records.length === 6 && state.records.every(record => record.status === "clean"));
+});
+
+for (const failure of [false, true]) test(`reinspection notice acknowledgement preserves newer intake (storage failure=${failure})`, async () => {
+  const message = mail(12001);
+  const h = await harness({ mails: [message], saved: { receiptRecovery: { token: "old" }, settings: { enabled: true, accountIds: ["one"], notifications: false } } });
+  const original = h.api.storage.local.set;
+  let enter, release, first = true;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { enter = resolve; });
+  h.api.storage.local.set = async value => {
+    if (first) {
+      first = false; enter(); await gate;
+      if (failure) throw Error("acknowledgement write failed");
+    }
+    return original(value);
+  };
+  const acknowledgement = h.send("acknowledgeReceiptRecovery", { token: "old" });
+  await started;
+  assert.equal((await h.send("state")).receiptRecovery.token, "old", "no publication before save");
+  h.events.newMail.listeners[0](message.folder, { messages: Array(257).fill(message) });
+  const newer = await settle(h, state => state.receiptRecovery?.token !== "old");
+  release();
+  assert.equal((await acknowledgement).ok, !failure);
+  await settle(h, () => h.stored().receiptRecovery?.token === newer.receiptRecovery.token);
+  assert.equal((await h.send("state")).receiptRecovery.token, newer.receiptRecovery.token);
+});
+
+test("options entry does not broaden trusted runtime message origins", async () => {
+  const h = await harness();
+  for (const page of ["options.html", "dashboard.html?settings=1", "dashboard.html#settings"]) {
+    assert.equal(await h.send("state", {}, { id: "unit", url: h.api.runtime.getURL(page) }), undefined);
+  }
+  assert.equal((await h.send("state")).ok, true);
 });

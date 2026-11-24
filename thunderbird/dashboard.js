@@ -618,7 +618,15 @@ async function refresh() {
     setText($("issue"), latest.issue || "");
     $("background-error").hidden = true;
     renderRecords();
+    $("receipt-recovery").hidden = !latest.receiptRecovery;
     renderHelperNotice();
+    if (sessionStorage.getItem("clam-open-settings") === "1") {
+      sessionStorage.removeItem("clam-open-settings");
+      userNavigated = true;
+      seenSetupRequest = latest.setupRequest;
+      seenResultsRequest = latest.resultsRequest;
+      activateTab("settings");
+    }
     if (latest.setupRequest && latest.setupRequest !== seenSetupRequest) {
       seenSetupRequest = latest.setupRequest;
       seenResultsRequest = latest.resultsRequest;
@@ -921,3 +929,9 @@ void refresh().catch(reportRefreshError);
 setInterval(() => {
   if (!document.hidden) void refresh().catch(reportRefreshError);
 }, 2000);
+
+$("receipt-open-scan").addEventListener("click", () => { userNavigated = true; activateTab("scan"); });
+$("receipt-recovery-clear").addEventListener("click", () => {
+  const token = latest?.receiptRecovery?.token;
+  void action(() => request("acknowledgeReceiptRecovery", { token }));
+});

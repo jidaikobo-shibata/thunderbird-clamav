@@ -14,7 +14,7 @@ const catalogs = Object.fromEntries(await Promise.all(["ja", "en"].map(async lan
 const profile = await mkdtemp(path.join(tmpdir(), "clam-mail-ui-"));
 const server = createServer(async (request, response) => {
   const name = new URL(request.url, "http://localhost").pathname.slice(1);
-  if (!["feedback.mjs", "state-storage.mjs", "scan-history.mjs", "direct-transport.mjs", "direct-view.mjs", "dashboard.html", "dashboard.css", "dashboard.js", "review.mjs", "scan-policy.mjs", "quarantine.mjs", "quarantine-ui.mjs", "core.mjs", "results.mjs", "folder-scan.mjs", "folder-labels.mjs", "installation.mjs", "i18n.mjs", "installer.pyz", "icon.svg"].includes(name)) {
+  if (!["options.html", "options.mjs", "feedback.mjs", "state-storage.mjs", "scan-history.mjs", "direct-transport.mjs", "direct-view.mjs", "dashboard.html", "dashboard.css", "dashboard.js", "review.mjs", "scan-policy.mjs", "quarantine.mjs", "quarantine-ui.mjs", "core.mjs", "results.mjs", "folder-scan.mjs", "folder-labels.mjs", "installation.mjs", "i18n.mjs", "installer.pyz", "icon.svg"].includes(name)) {
     response.writeHead(404).end(); return;
   }
   const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript", ".svg": "image/svg+xml", ".pyz": "application/octet-stream" };
@@ -197,6 +197,11 @@ try {
       if (request.type === "folderStop") { testState.folderJob.status = "stopped"; testState.folderJob.scanning = 0;
         testState.folderJob.finishedAt = new Date().toISOString(); testState.folderJob.detail = "中止しました。"; }
 
+      if (request.type === "acknowledgeReceiptRecovery") {
+        if (request.token !== testState.receiptRecovery?.token) return {ok:false,error:"stale receipt notice"};
+        testState.receiptRecovery = null;
+        return {ok:true};
+      }
       if (request.type === "health") {
         delete testState.startupFailure;
         testState.lastHealth = fixtureHealth();
@@ -217,7 +222,7 @@ try {
       if (request.type === "deletePermanently") testState.records.find(record => record.key === request.key).status = "deleted";
       if (request.type === "cancelDeletePreparation" && testState.batch?.preparationId === request.preparationId && !ignorePreparationCancel) testState.batch.stopRequested = true;
       if (request.type === "prepareDeleteBatch") {
-        if (failPrepareDelete) return {ok:false,error:"synthetic content mismatch <img src=x onerror=window.bad=true>"};
+        if (failPrepareDelete) return {ok:false,error:"synthetic content mismatch <img src=x onerror=window.bad=true>" + " 検査対象の確認に失敗しました。".repeat(25)};
         batchKeys = request.keys;
         if (holdDeletePreparation) {
           testState.batch={id:'held-preparation',preparationId:request.preparationId,operation:'delete',phase:'prepare',active:true,completed:0,total:batchKeys.length};
@@ -271,6 +276,27 @@ try {
         await call("Page.reload");
       }
       await until("document.querySelectorAll('#results tr').length === 50 && document.getElementById('panel-settings').contains(document.getElementById('connection-title'))");
+      await evaluate("sessionStorage.setItem('clam-open-settings','1')");
+      await call("Page.navigate", {url:`http://127.0.0.1:${server.address().port}/options.html`});
+      // The options page redirects: do not hold an evaluated promise in a
+      // context that is about to be destroyed.
+      for (let attempt = 0; attempt < 100; attempt++) {
+        try {
+          if (await evaluate("location.pathname==='/dashboard.html' && document.getElementById('panel-settings') && !document.getElementById('panel-settings').hidden")) break;
+        } catch (error) {
+          if (!/navigated|context|closed/i.test(error.message)) throw error;
+        }
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      assert.equal(await evaluate("!document.getElementById('panel-settings').hidden"), true);
+      assert.equal(await evaluate("location.pathname"), "/dashboard.html");
+      await evaluate("testState.receiptRecovery={token:'synthetic'}");
+      await until("!document.getElementById('receipt-recovery').hidden");
+      await evaluate("document.getElementById('tab-results').click();document.getElementById('receipt-open-scan').click()");
+      assert.equal(await evaluate("!document.getElementById('panel-scan').hidden"), true);
+      await evaluate("document.getElementById('tab-results').click();document.getElementById('receipt-recovery-clear').click()");
+      await until("document.getElementById('receipt-recovery').hidden");
+      assert.equal(await evaluate("testCalls.filter(call=>['deletePermanently','deleteBatch','clearAll'].includes(call.type)).length"), 0);
       await evaluate(`document.getElementById('tab-results').click();
         testState.folderJob={id:'ui-audit',status:'running',folder:{id:'inbox',accountId:'test',path:'/Inbox'},total:100,completed:0,discovered:100,scanning:1,counts:{clean:0,detected:0,incomplete:0,error:0}};`);
       await until("!document.getElementById('folder-progress').hidden");
@@ -334,6 +360,20 @@ try {
       await evaluate("document.querySelector('#panel-results .operation-error button').click()");
       await dismissMessage();
       await until("!document.getElementById('delete-selected').disabled");
+      // A long persistent notice must not cover keyboard focus on a small viewport.
+      await call("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });
+      await evaluate("document.getElementById('tab-settings').click();document.getElementById('notifications').focus()");
+      for (let step = 0; step < 60 && await evaluate("document.activeElement.id!=='health'"); step++) {
+        await call("Input.dispatchKeyEvent", {type:"keyDown",key:"Tab",code:"Tab",windowsVirtualKeyCode:9});
+        await call("Input.dispatchKeyEvent", {type:"keyUp",key:"Tab",code:"Tab",windowsVirtualKeyCode:9});
+      }
+      assert.equal(await evaluate("document.activeElement.id==='health'"), true);
+      assert.equal(await evaluate(`(() => {
+        const button=document.getElementById('health'), r=button.getBoundingClientRect();
+        return button.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));
+      })()`), true);
+      await call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await evaluate("document.getElementById('tab-results').click()");
       await evaluate("failPrepareDelete=false;failRetry=true;document.querySelector('#results tr button:nth-child(2)').focus();document.querySelector('#results tr button:nth-child(2)').click()");
       await until("document.getElementById('message-dialog').open && document.getElementById('message-detail').textContent.includes('synthetic retry failure')");
       await dismissMessage();

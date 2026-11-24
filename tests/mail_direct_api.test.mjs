@@ -73,3 +73,44 @@ test("macOS refuses an untrusted owner, writable path, unsafe symlink and old Py
 test("unsupported systems fail before starting a scanner", async () => {
   await assert.rejects(api("WINNT").exposed.open(), /Unsupported scanner operating system/);
 });
+
+test("close force-closes stdin and kills without awaiting a blocked write", async () => {
+  const value = api();
+  let release, killed = false, forced;
+  const gate = new Promise(resolve => { release = resolve; });
+  value.instance.sessions.set("test", {
+    process: { stdin: { close(force) { forced = force; return gate; } },
+      async kill() { killed = true; release(); } },
+    errors: Promise.resolve(), directory: "/synthetic/runtime"
+  });
+  const closing = value.instance.close("test");
+  assert.equal(value.instance.close("test"), closing);
+  assert(value.instance.sessions.has("test"), "closing session remains counted");
+  await closing;
+  assert.equal(forced, true);
+  assert.equal(killed, true);
+  assert.equal(value.removals(), 1);
+  assert.equal(value.instance.sessions.has("test"), false);
+});
+test("a synchronous pipe failure cannot skip termination", async () => {
+  const value = api(); let killed = false;
+  value.instance.sessions.set("test", {
+    process: { stdin: { close() { throw Error("broken pipe"); } }, async kill() { killed = true; } },
+    errors: Promise.resolve(), directory: "/synthetic/runtime"
+  });
+  await value.instance.close("test");
+  assert.equal(killed, true);
+  assert.equal(value.removals(), 1);
+});
+test("failed cleanup remains counted and rejects further requests", async () => {
+  const value = api();
+  value.sandbox.console = { error() {} };
+  value.sandbox.IOUtils.remove = async () => { throw Error("cleanup failed"); };
+  value.instance.sessions.set("test", {
+    process: { stdin: { close() {} }, async kill() {} },
+    errors: Promise.resolve(), pending: 0, directory: "/synthetic/runtime"
+  });
+  await assert.rejects(value.instance.close("test"), /cleanup failed/);
+  assert(value.instance.sessions.has("test"));
+  await assert.rejects(value.exposed.request("test", '{"op":"health","id":"1"}'));
+});

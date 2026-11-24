@@ -119,6 +119,6 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid GrayText
 .operation-error p, #message-detail, #message-guidance { white-space: pre-wrap; overflow-wrap: anywhere; }
 .operation-status:empty { display: none; }
 .background-error { max-height: 25vh; overflow: auto; }
-body { padding-bottom: 120px; }
+body { padding-bottom: 24px; }
 
 body:has(dialog[open]) .operation-toast { visibility: hidden; }

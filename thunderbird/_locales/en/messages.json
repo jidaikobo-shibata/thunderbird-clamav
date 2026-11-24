@@ -3119,5 +3119,20 @@
   },
   "messageEffects": {
     "message": "The operation may have taken partial effect. Check the scan results and the messages before running it again."
+  },
+  "receiptRecoveryTitle": {
+    "message": "Check for uninspected messages"
+  },
+  "receiptRecoveryHint": {
+    "message": "Incoming message intake reached its limit. Some messages may remain uninspected. Use the Scan tab to inspect inboxes and filter destination folders in accounts that had automatic inspection enabled. Dismiss this notice only after reinspection."
+  },
+  "receiptRecoveryScan": {
+    "message": "Choose folders to inspect"
+  },
+  "receiptRecoveryClear": {
+    "message": "Reinspection finished: dismiss this notice"
+  },
+  "receiptRecoveryChanged": {
+    "message": "More messages require reinspection. Review the notice again."
   }
 }

@@ -42,7 +42,7 @@ python3 -B scripts/smoke_direct_mail_check.py --scenario recovery
 node scripts/smoke_mail_ui.mjs --direct
 ```
 
-ビルド結果は `dist/clam-mail-check-direct-0.20.0a43.xpi` です。テスト用のメール取り込み・自動更新・診断APIはこの配布物へ含めません。Ubuntuの実機検証は独立Wayland・D-Bus・XDG設定、macOSは独立したThunderbirdインスタンスと使い捨てプロファイルを使用し、オフラインで起動します。実画面の操作・Xwayland・リモート操作用の権限変更は使いません。
+ビルド結果は `dist/clam-mail-check-direct-0.20.0a44.xpi` です。テスト用のメール取り込み・自動更新・診断APIはこの配布物へ含めません。Ubuntuの実機検証は独立Wayland・D-Bus・XDG設定、macOSは独立したThunderbirdインスタンスと使い捨てプロファイルを使用し、オフラインで起動します。実画面の操作・Xwayland・リモート操作用の権限変更は使いません。
 
 詳細な診断結果はGit除外の出力先へ、監視処理の詳細は非公開の作業メモへ保存しています。公式アドオンサイトへの公開・申請は行っていません。独自Experiment APIの公開条件については引き続き確認が必要です。
 
@@ -363,7 +363,7 @@ feedback.mjsで明示操作のエラー/部分失敗、通常進捗/完了、タ
 [GNOME HIG Dialogs](https://developer.gnome.org/hig/patterns/feedback/dialogs.html)と[Notifications](https://developer.gnome.org/hig/patterns/feedback/notifications.html)を参考に、必要な操作失敗だけを遮る。エラーダイアログで自動再実行はせず、完全削除の既存同一性照合/最終確認を維持。
 
 
-## 0.20.0a43 ツールバー描画待ちを検査から分離
+## 0.20.0a44 ツールバー描画待ちを検査から分離
 
 ThunderbirdのbrowserAction更新はウィンドウのrequestAnimationFrameを待つため、描画されないメイン画面へのsetIcon等の完了を待つと、初期化や直列の新着受付まで停止し得る。toolbar-updates.mjsへ表示更新を分離し、updateBadgeは描画完了を待たず戻る。アイコン・件数・色・タイトルは独立し、各項目1件の実行中要求と最新希望値だけを保持。未変更値は送らず、保留中の多数の変更は最新の値にまとめ、同じ項目の古い応答で新しい表示を上書きしない。
 

@@ -129,7 +129,7 @@ var clamDirect = (() => {
           while (true) {
             const bytes = await process.stderr.read();
             if (!bytes.byteLength) break;
-            if ((size += bytes.byteLength) > MAX_FRAME) { void this.close(token); break; }
+            if ((size += bytes.byteLength) > MAX_FRAME) { void this.close(token).catch(() => {}); break; }
           }
         })().catch(() => {});
         return token;
@@ -142,7 +142,7 @@ var clamDirect = (() => {
 
     request(token, data) {
       const session = this.sessions.get(token);
-      if (!session || this.stopped || session.pending >= 4) return Promise.reject(new Error("Scanner connection closed or busy"));
+      if (!session || session.closing || this.stopped || session.pending >= 4) return Promise.reject(new Error("Scanner connection closed or busy"));
       const bytes = new TextEncoder().encode(data);
       if (bytes.length > MAX_FRAME) return Promise.reject(new Error("Scanner frame too large"));
       let value;
@@ -150,9 +150,9 @@ var clamDirect = (() => {
       if (!value || !OPERATIONS.has(value.op) || typeof value.id !== "string" || value.id.length > 80) return Promise.reject(new Error("Unsupported scanner request"));
       session.pending++;
       const work = async () => {
-        if (this.sessions.get(token) !== session) throw new Error("Scanner connection closed");
+        if (this.sessions.get(token) !== session || session.closing) throw new Error("Scanner connection closed");
         let timer;
-        const expired = new Promise((_, reject) => { timer = setTimeout(() => { void this.close(token); reject(new Error("Scanner request timed out")); }, value.op === "end" ? (Services.appinfo.OS === "Darwin" ? 360000 : 225000) : 15000); });
+        const expired = new Promise((_, reject) => { timer = setTimeout(() => { void this.close(token).catch(() => {}); reject(new Error("Scanner request timed out")); }, value.op === "end" ? (Services.appinfo.OS === "Darwin" ? 360000 : 225000) : 15000); });
         const transfer = async () => {
           await session.process.stdin.write(new Uint32Array([bytes.length]).buffer);
           await session.process.stdin.write(bytes.buffer);
@@ -165,7 +165,7 @@ var clamDirect = (() => {
           return response;
         };
         try { return await Promise.race([transfer(), expired]); }
-        catch (error) { void this.close(token); throw error; }
+        catch (error) { void this.close(token).catch(() => {}); throw error; }
         finally { clearTimeout(timer); session.pending--; }
       };
       const result = session.queue.catch(() => {}).then(work);
@@ -173,15 +173,27 @@ var clamDirect = (() => {
       return result;
     }
 
-    async close(token) {
+    close(token) {
       const session = this.sessions.get(token);
-      if (!session) return;
-      this.sessions.delete(token);
-      await session.process.stdin.close().catch(() => {});
-      // SIGTERM reaches the guardian, which kills its scanner group and cleans files.
-      await session.process.kill(3000).catch(() => {});
-      await session.errors;
-      await IOUtils.remove(session.directory, { recursive: true, ignoreAbsent: true });
+      if (!session) return Promise.resolve();
+      if (session.closing) return session.closing;
+      // Publish the closing promise before touching IO, including synchronous
+      // failures. Keep this session counted until termination and cleanup end.
+      session.closing = Promise.resolve().then(async () => {
+        const pipe = Promise.resolve().then(() => session.process.stdin.close(true)).catch(() => {});
+        try {
+          await session.process.kill(3000);
+          await pipe;
+          await session.errors;
+          await IOUtils.remove(session.directory, { recursive: true, ignoreAbsent: true });
+        } catch (error) {
+          // A failed cleanup remains counted; never open unlimited replacements.
+          console.error("Scanner termination or cleanup failed:", error);
+          throw error;
+        }
+        if (this.sessions.get(token) === session) this.sessions.delete(token);
+      });
+      return session.closing;
     }
 
     async backup(snapshot) {
