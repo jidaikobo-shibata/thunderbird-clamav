@@ -2995,5 +2995,17 @@
   },
   "startupRecovery": {
     "message": "Initialization failed. Check that storage is available, then click Check connection again to retry."
+  },
+  "directMissingDefinitions": {
+    "message": "Definitions are missing or outdated. Update them with FreshClam."
+  },
+  "directWindowsHeading": {
+    "message": "Install ClamAV on Windows"
+  },
+  "directWindowsInstall": {
+    "message": "Install official 64-bit ClamAV under Program Files and python.org Python 3.13–3.15 (64-bit) in the default per-user location. Run these PowerShell commands to prepare the definitions."
+  },
+  "directWindowsDefinitions": {
+    "message": "After FreshClam finishes, choose Check connection again. Update the definitions regularly. Definitions older than three days prevent scanning."
   }
 }

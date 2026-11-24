@@ -140,6 +140,10 @@ _MESSAGE_KEYS["検査が制限時間内に完了しませんでした。"] = "sc
 _EN_MESSAGES.update({"MIME解析の上限に達したため、検査範囲を確認できない部分があります。": "MIME analysis reached its resource limit; some scan coverage could not be verified.", " MIME解析の上限に達した部分があります。脅威の検出結果は保持しています。": " MIME analysis reached its resource limit. The malware detection is preserved."})
 _MESSAGE_KEYS.update({"MIME解析の上限に達したため、検査範囲を確認できない部分があります。": "mimeLimited", " MIME解析の上限に達した部分があります。脅威の検出結果は保持しています。": "mimeLimitedThreat"})
 
+_EN_MESSAGES["定義が不足しているか古くなっています。FreshClamで更新してください。"] = "Definitions are missing or outdated. Update them with FreshClam."
+_MESSAGE_KEYS["定義が不足しているか古くなっています。FreshClamで更新してください。"] = "directMissingDefinitions"
+
+
 def tr(message):
     text = message if _LANGUAGE == "ja" else _EN_MESSAGES.get(message, message)
     key = _MESSAGE_KEYS.get(message)
@@ -209,8 +213,25 @@ def macos_clamav():
     return None, None, prefix + "/var/lib/clamav", rejected
 
 
+def windows_clamav():
+    import winreg
+    database = str(Path(os.environ["LOCALAPPDATA"]) / "ClamAV" / "database")
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion",
+                            access=winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+            prefix = Path(winreg.QueryValueEx(key, "ProgramFilesDir")[0])
+        executable = prefix / "ClamAV" / "clamscan.exe"
+        if not executable.is_absolute() or executable.resolve() != executable:
+            raise OSError("Unexpected ClamAV installation path")
+        return str(executable) if executable.is_file() else None, None, database, False
+    except OSError:
+        return None, None, database, True
+
+
 if sys.platform == "darwin":
     CLAMSCAN, CLAMD, DATABASE, CLAMAV_TRUST_ERROR = macos_clamav()
+elif sys.platform == "win32":
+    CLAMSCAN, CLAMD, DATABASE, CLAMAV_TRUST_ERROR = windows_clamav()
 
 
 def macos_rss(pid):
@@ -373,7 +394,11 @@ def encrypted_mail(data):
 def mime_worker():
     # Fail closed if limits or parent monitoring cannot be applied.
     try:
-        import resource
+        if sys.platform == "win32":
+            import runpy
+            runpy.run_path(str(Path(__file__).with_name("windows.py")))["limit_mime"]()
+        else:
+            import resource
         if sys.platform == "linux":
             resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
         elif sys.platform == "darwin":
@@ -385,11 +410,12 @@ def mime_worker():
 
             signal.signal(signal.SIGALRM, check_parent)
             signal.setitimer(signal.ITIMER_REAL, 0.1, 0.1)
-        else:
+        elif sys.platform != "win32":
             return 1
-        resource.setrlimit(resource.RLIMIT_CPU, (3, 3))
-        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-        child_lifetime(os.getppid())
+        if sys.platform != "win32":
+            resource.setrlimit(resource.RLIMIT_CPU, (3, 3))
+            resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+            child_lifetime(os.getppid())
         data = sys.stdin.buffer.read(MAX_TRANSFER + 1)
         if len(data) > MAX_TRANSFER:
             return 1
@@ -408,6 +434,8 @@ def mime_worker():
 def mime_inspection(data):
     try:
         command = [sys.executable, "-I", "-B", str(Path(__file__).absolute()), "--mime-check"]
+        if sys.platform == "win32":
+            command.insert(2, "-S")
         if sys.platform == "darwin":
             with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as child:
                 deadline = time.monotonic() + 5
@@ -642,11 +670,24 @@ class MailDaemon:
             self.temp = None
 
 
+def windows_definitions_present():
+    directory = Path(DATABASE)
+    return all(any((directory / (name + extension)).is_file() for extension in (".cvd", ".cld"))
+               for name in ("daily", "main", "bytecode"))
+
+
+def definitions_error():
+    return {"status": "error", "code": "definitions_unavailable", "signatures": [],
+            "detail": tr("定義が不足しているか古くなっています。FreshClamで更新してください。")}
+
+
 def scan_clamscan(data, options=None):
     if CLAMAV_TRUST_ERROR:
         return {"status": "error", "signatures": [], "detail": tr('ClamAVを起動・確認できません。導入状態と実行権限を確認してください。')}
     if not CLAMSCAN:
         return {"status": "error", "signatures": [], "detail": tr('ClamAVが対応する導入先に見つかりません。設定の導入案内を確認してください。')}
+    if sys.platform == "win32" and not windows_definitions_present():
+        return definitions_error()
     options = scan_options(options)
     args = [CLAMSCAN, "--stdout", "--no-summary", "--scan-mail=yes",
             "--allmatch=yes", "--alert-encrypted=yes", "--alert-exceeds-max=yes",
@@ -660,7 +701,7 @@ def scan_clamscan(data, options=None):
         "--phishing-scan-urls=" + ("yes" if options["phishing"] != "off" else "no"),
         "--alert-macros=" + ("yes" if options["macros"] != "off" else "no"),
         "--detect-pua=" + ("yes" if options["pua"] != "off" else "no")]
-    if sys.platform == "darwin":
+    if sys.platform in ("darwin", "win32"):
         args.insert(1, "--database=" + DATABASE)
     try:
         # ClamAV may unpack containers internally. Give it a private temporary
@@ -731,13 +772,26 @@ def health():
     if not CLAMSCAN or not Path(CLAMSCAN).is_file():
         return {"status": "error", "code": "clamav_missing", "detail": tr('ClamAVが対応する導入先に見つかりません。設定の導入案内を確認してください。')}
     try:
-        result = subprocess.run([CLAMSCAN, "--version"], capture_output=True,
+        command = [CLAMSCAN, "--version"]
+        if sys.platform == "win32":
+            command.insert(1, "--database=" + DATABASE)
+        result = subprocess.run(command, capture_output=True,
                                 timeout=10, check=False)
         if result.returncode:
             raise OSError("version failed")
         version = result.stdout.decode("utf-8", "replace").strip()[:300]
         if not version.startswith("ClamAV "):
             raise OSError("invalid version")
+        if sys.platform == "win32":
+            if not windows_definitions_present():
+                return definitions_error()
+            fields = version.split("/")
+            if len(fields) != 3 or not fields[1].isdigit():
+                return definitions_error()
+            import email.utils
+            stamp = email.utils.parsedate(fields[2])
+            if not stamp or not 0 <= time.time() - time.mktime(stamp) <= 3 * 86400:
+                return definitions_error()
     except (OSError, subprocess.TimeoutExpired):
         return {"status": "error", "code": "clamav_unusable", "detail": tr('ClamAVを起動・確認できません。導入状態と実行権限を確認してください。')}
     return {"status": "ready", "protocol": PROTOCOL, "engine": version,
@@ -751,13 +805,14 @@ class Session:
         self.buffer = None
         self.expected = 0
         self.sequence = 0
-        self.scanner = MailDaemon()
+        self.scanner = None if sys.platform == "win32" else MailDaemon()
         self.administration = None
         self.scan_settings = None
 
     def close(self):
         self.reset()
-        self.scanner.close()
+        if self.scanner:
+            self.scanner.close()
         if self.administration is not None:
             self.administration.close()
 
@@ -772,6 +827,8 @@ class Session:
     def handle(self, request):
         set_language(request.get("language", "ja"))
         operation = request.get("op")
+        if DIRECT_RUNTIME and operation not in {"health", "begin", "chunk", "end", "abort"}:
+            raise ProtocolError("Unsupported direct scan operation")
         if operation == "health":
             return health()
         if operation in {"manageInfo", "managePlan", "manageApply"}:
@@ -789,7 +846,8 @@ class Session:
                     return self.administration.info()
                 if operation == "managePlan":
                     return self.administration.prepare(request.get("operation"), request.get("package"))
-                self.scanner.close()
+                if self.scanner:
+                    self.scanner.close()
                 return self.administration.apply(request.get("token"))
             except (ImportError, OSError, ValueError) as error:
                 raise ProtocolError(tr('管理機能を利用できません。CLIで導入・修復してください。') + str(error)) from error

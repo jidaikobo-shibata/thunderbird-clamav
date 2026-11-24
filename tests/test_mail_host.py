@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 import struct
+import sys
 import subprocess
 import tempfile
 import unittest
@@ -99,6 +100,7 @@ class ScannerTests(unittest.TestCase):
             with self.subTest(output=output):
                 self.assertEqual(host.classify(code, output)["status"], expected)
 
+    @unittest.skipIf(sys.platform == "win32", "Checks POSIX file modes; Windows uses a private DACL")
     def test_private_temporary_directory_fixed_flags_and_no_shell(self):
         def fake_run(args, **kwargs):
             self.assertEqual(args[0], host.CLAMSCAN)
@@ -116,6 +118,9 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(result["status"], "clean")
         self.assertFalse(self.temp.exists())
 
+    @patch.object(host, "CLAMSCAN", "synthetic-scanner")
+    @patch.object(host, "TEMP_ROOT", None)
+    @patch.object(host, "windows_definitions_present", lambda: True)
     def test_encrypted_mail_warnings_and_timeout_never_clean(self):
         encrypted = b'Content-Type: multipart/encrypted; boundary="x"\r\n\r\n--x--\r\n'
         with patch.object(host.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"stdin: OK\n", b"")):
@@ -133,6 +138,7 @@ class ScannerTests(unittest.TestCase):
         self.assertFalse(host.encrypted_mail(b"Content-Type: application/pkcs7-mime; smime-type=signed-data\r\n\r\nexample"))
 
 
+@unittest.skipIf(sys.platform == "win32", "POSIX private clamd")
 class DaemonTests(unittest.TestCase):
     def version(self):
         from datetime import datetime
@@ -277,6 +283,7 @@ class PrerequisiteTests(unittest.TestCase):
                 self.assertEqual(host.health()["code"], "clamav_unusable")
 
 
+@unittest.skipIf(sys.platform == "win32", "Legacy POSIX installer")
 class PackagingTests(unittest.TestCase):
     def test_build_and_registration_are_local_and_never_overwrite(self):
         root = Path(__file__).resolve().parents[1]
@@ -309,6 +316,17 @@ class PackagingTests(unittest.TestCase):
 
 
 class MimeIsolationTests(unittest.TestCase):
+    def setUp(self):
+        if sys.platform == "win32":
+            import shutil
+            temp = tempfile.TemporaryDirectory()
+            self.addCleanup(temp.cleanup)
+            target = Path(temp.name, "host.py")
+            shutil.copyfile(host.__file__, target)
+            guardian = Path(__file__).resolve().parents[1] / "experiments/direct-runtime/windows.py"
+            shutil.copyfile(guardian, target.with_name("windows.py"))
+            self.enterContext(patch.object(host, "__file__", str(target)))
+
     def test_worker_handles_clear_and_encrypted_mail(self):
         self.assertEqual(host.mime_inspection(b"Subject: sample\r\n\r\nhello"), "clear")
         self.assertEqual(host.mime_inspection(b"Content-Type: text/plain\r\n\r\n-----BEGIN PGP MESSAGE-----"), "encrypted")

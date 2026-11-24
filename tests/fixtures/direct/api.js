@@ -33,6 +33,10 @@ var testFixture = (() => {
             history: context.extension.folderManager.convert(folder("DirectHistory")),
             quarantine: context.extension.folderManager.convert(folder("DirectQuarantine")) };
         },
+        failNextScan: async () => {
+          await guard();
+          context.extension.__failNextScan = true;
+        },
         inject: async id => {
           await guard();
           const message = context.extension.messageManager.get(id);
@@ -61,11 +65,12 @@ var testFixture = (() => {
         },
         finish: async action => {
           await guard();
-          if (!["quit", "uninstall"].includes(action)) throw new Error("Invalid test lifecycle action");
+          if (!["quit", "uninstall", "disable"].includes(action)) throw new Error("Invalid test lifecycle action");
           const marker = PathUtils.join(profile, "direct-action-ready");
           for (let attempt = 0; attempt < 600; attempt++) {
             if (await IOUtils.exists(marker)) {
               if (action === "quit") Services.startup.quit(Ci.nsIAppStartup.eAttemptQuit);
+              else if (action === "disable") await (await AddonManager.getAddonByID(context.extension.id)).disable();
               else await (await AddonManager.getAddonByID(context.extension.id)).uninstall();
               return;
             }

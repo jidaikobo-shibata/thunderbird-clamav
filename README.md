@@ -1,14 +1,14 @@
 # ClamAV Mail Check / ClamAV メール検査
 
 Thunderbirdのメールを、コンピューターにインストールしたClamAVで検査する拡張機能です。
-このブランチは **0.20.0a10（試用版）** です。補助プログラムの別途インストールは不要です。
+このブランチは **0.20.0a11（試用版）** です。補助プログラムの別途インストールは不要です。
 公開済みの0.20.0a5はUbuntu向けです。このブランチのXPIは末尾のビルド手順で作成できます。GitHubにはまだ公開していません。
 
 [English installation guide](README.en.md)
 
 ## インストール
 
-1. このブランチから作成した`dist/clam-mail-check-direct-0.20.0a10.xpi`を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
+1. このブランチから作成した`dist/clam-mail-check-direct-0.20.0a11.xpi`を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
 2. Thunderbirdのアドオンマネージャーで、歯車メニューの「ファイルからアドオンをインストール」を選び、XPIを指定します。
 3. 表示される権限を確認してインストールします。Experiment APIを使用するため、Thunderbirdとコンピューターへの全面アクセス権限が必要です。
 4. ツールバーのアイコンから画面を開き、「設定」末尾の「ClamAVの状態」で「接続を再確認」を押します。ClamAVが未導入なら、表示される導入手順に従います。ウイルス定義の初回更新も完了させてください。
@@ -18,10 +18,11 @@ Thunderbirdのメールを、コンピューターにインストールしたCla
 
 - Ubuntu、通常パッケージ版のThunderbird **153系**。153.7.0esr（64ビット）で検証しています。
 - macOS 15.6.1、Apple Silicon（arm64）、Thunderbird 153.5.1esr。macOSでの最新の確認結果・未確認事項は[検証記録](experiments/direct-runtime/README.md)を参照してください。
-- Python 3.10以降。Ubuntuは`/usr/bin/python3`、macOSはHomebrew版またはpython.org版を使用します。macOS付属の古いPythonや開発ツール導入用の起動ファイルは使用しません。
+- Windows 11 x64、Thunderbird 153.7.0 ESR、ClamAV 1.5.5、Python 3.15.2 で検証しました。
+- Ubuntu・macOS は Python 3.10以降。Ubuntuは`/usr/bin/python3`、macOSはHomebrew版またはpython.org版を使用します。macOS付属の古いPythonや開発ツール導入用の起動ファイルは使用しません。
 - ClamAVと更新済みの定義。Ubuntuは`/usr/bin/clamscan`・`/usr/sbin/clamd`、macOSはHomebrew版を使用します。
 - 0.20.0a7は利用者からUbuntu・Apple Silicon Mac双方で動作良好との報告がありました。
-- Intel Macは実機未検証で、今後確認予定です。Windowsは現在未対応で、今後対応を進める予定です。
+- Intel Macは実機未検証で、今後確認予定です。
 - Snap・Flatpak版、Thunderbirdの他のメジャーバージョンは未検証です。XPIの対応範囲は153系に限定しています。
 
 ClamAVは別途必要です。Ubuntu / Debian向けの導入例は次のとおりです。OSのパッケージを変更する操作です。
@@ -31,6 +32,24 @@ sudo apt install clamav clamav-daemon clamav-freshclam
 ```
 
 [ClamAV公式の導入ガイド](https://docs.clamav.net/manual/Installing/Packages.html)
+
+### Windows x64 の準備
+
+Thunderbird 153.x、公式 Windows x64 版 ClamAV（MSI の標準配置）、python.org の 64 ビット版 CPython 3.13〜3.15 が必要です。Python はユーザー単位の標準配置を選びます。探索先は `%LOCALAPPDATA%` 配下の `Python\pythoncore-3.XX-64` と `Programs\Python\Python3XX` です（XX は 13、14、15）。再解析ポイントは拒否します。ClamAV は 64 ビットの Program Files 内の `ClamAV\clamscan.exe` を使用します。既定のアクセス権のまま使用してください。[ClamAV 公式配布](https://www.clamav.net/downloads)・[Python 公式配布](https://www.python.org/downloads/windows/)
+
+通常ユーザーの PowerShell で次を実行します。初回は公式定義をダウンロードします。設定ファイルが既にある場合はその内容を確認してください。
+
+~~~powershell
+$db = Join-Path $env:LOCALAPPDATA "ClamAV\database"
+New-Item -ItemType Directory -Force $db | Out-Null
+$conf = Join-Path $db "mail-freshclam.conf"
+if (!(Test-Path -LiteralPath $conf)) { "DatabaseMirror database.clamav.net" | Out-File -Encoding ascii -NoClobber $conf }
+& "$env:ProgramFiles\ClamAV\freshclam.exe" "--config-file=$conf" "--datadir=$db"
+~~~
+
+更新時も同じコマンドを実行します。3日より古い定義では検査できません。XPI をファイルから導入し、「設定」で接続を再確認してください。Windows 版は1通ごとに定義を読み込むため、連続検査には時間がかかります。サービスや別途登録する補助プログラムは不要です。
+
+アドオン更新時は旧版に上書きして設定・履歴を引き継ぎます。削除はアドオンマネージャーから行います。Python、ClamAV、ユーザー別の定義と設定ファイルは残ります。
 
 ### macOSの準備
 
@@ -102,7 +121,7 @@ ClamAVが検出しないメールの安全性を保証するものではあり�
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-成果物は`dist/clam-mail-check-direct-0.20.0a10.xpi`です。同じXPIにUbuntu/macOS用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
+成果物は`dist/clam-mail-check-direct-0.20.0a11.xpi`です。同じXPIにUbuntu/macOS/Windows用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
 
 ```bash
 for test_file in tests/*.test.mjs; do

@@ -43,7 +43,18 @@ export async function configureDirectView() {
   replace("clamavDefinitions", "directDefinitions", "FreshClamで定義を更新してから接続を再確認してください。");
   replace("mail341", "directLimitsHelp", "検査上限は設定で指定します。暗号化や上限超過は未検査として案内します。");
   const platform = await globalThis.messenger.runtime.getPlatformInfo?.();
-  if (platform?.os === "mac") {
+  if (platform?.os === "win") {
+    replace("clamavInstallHeading", "directWindowsHeading", "ClamAV の導入方法（Windows）");
+    replace("clamavInstallInstructions", "directWindowsInstall", "公式の64ビット版 ClamAV と Python を標準の場所に導入します。");
+    $("clamav-install-guide").querySelector("pre code").textContent = [
+      '$db = Join-Path $env:LOCALAPPDATA "ClamAV\\database"',
+      'New-Item -ItemType Directory -Force $db | Out-Null',
+      '$conf = Join-Path $db "mail-freshclam.conf"',
+      'if (!(Test-Path -LiteralPath $conf)) { "DatabaseMirror database.clamav.net" | Out-File -Encoding ascii -NoClobber $conf }',
+      '& "$env:ProgramFiles\\ClamAV\\freshclam.exe" "--config-file=$conf" "--datadir=$db"'
+    ].join("\n");
+    replace("clamavDefinitions", "directWindowsDefinitions", "FreshClam で定義を更新してから接続を再確認します。");
+  } else if (platform?.os === "mac") {
     replace("clamavInstallHeading", "directMacInstallHeading", "ClamAVの導入方法（macOS）");
     replace("clamavInstallInstructions", "directMacInstallInstructions", "HomebrewでClamAVとPython 3.10以降を導入します。別の補助プログラムや常駐サービスは不要です。");
     const prefix = platform.arch === "aarch64" || platform.arch === "arm" ? "/opt/homebrew" : "/usr/local";

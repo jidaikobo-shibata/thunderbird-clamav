@@ -1,4 +1,4 @@
-/* Packaged, ephemeral scanner transport for Linux and macOS / 153 ESR. */
+/* Packaged, ephemeral scanner transport for Thunderbird 153 ESR. */
 var clamDirect = (() => {
   Cu.importGlobalProperties(["TextEncoder", "TextDecoder"]);
   const { ExtensionCommon } = ChromeUtils.importESModule("resource://gre/modules/ExtensionCommon.sys.mjs");
@@ -8,7 +8,28 @@ var clamDirect = (() => {
   const { setTimeout, clearTimeout } = ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs");
   const MAX_FRAME = 128 * 1024;
   const OPERATIONS = new Set(["health", "begin", "chunk", "end", "abort"]);
-  const ENVIRONMENT = { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" };
+  // SDDL may express file masks using generic or directory-service abbreviations.
+  const readRights = /^(FR|FX|GR|GX|RC|CC|SW|WP|LO)*$/;
+  const ancestorRights = /^(FR|FX|GR|GX|RC|CC|SW|WP|LO|DC|LC)*$/;
+  function verifyWindowsDescriptor(sddl, trusted, ancestor) {
+    const owner = /^O:(.+?)D:/.exec(sddl);
+    if (!owner || !trusted.has(owner[1]) || sddl.includes("NO_ACCESS_CONTROL") || /\([^()]*\(/.test(sddl)) throw new Error("Untrusted installation owner or DACL");
+    for (const entry of sddl.matchAll(/\(([^()]*)\)/g)) {
+      const [type, flags, rights, , , sid] = entry[1].split(";");
+      if (flags.includes("IO") || trusted.has(sid) || type === "D") continue;
+      if (type !== "A") throw new Error("Unsupported installation permissions");
+      // Ancestors may allow creation of unrelated siblings (the drive root does).
+      const allowed = ancestor ? 0x1200af : 0x1200a9;
+      const safe = /^0x[0-9a-f]+$/i.test(rights) ? (Number(rights) & ~allowed) === 0 :
+        (ancestor ? ancestorRights : readRights).test(rights);
+      if (!safe) throw new Error("Unexpected installation permissions (" + rights + ")");
+    }
+  }
+  const windows = Services.appinfo.OS === "WINNT";
+  const ENVIRONMENT = windows ? {
+    SystemRoot: Services.dirsvc.get("WinD", Ci.nsIFile).path,
+    LOCALAPPDATA: Services.dirsvc.get("LocalAppData", Ci.nsIFile).path
+  } : { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" };
   return class extends ExtensionCommon.ExtensionAPI {
     sessions = new Map();
     opening = 0;
@@ -36,7 +57,75 @@ var clamDirect = (() => {
       } finally { clearTimeout(timer); }
     }
 
+    async windowsPrincipals() {
+      if (this.trustedPrincipals) return this.trustedPrincipals;
+      const who = await this.smallCommand(PathUtils.join(ENVIRONMENT.SystemRoot, "System32", "whoami.exe"),
+        ["/user", "/fo", "csv", "/nh"]);
+      const user = who.match(/,"(S-1-[0-9-]+)"$/i)?.[1];
+      if (!user) throw new Error("Cannot verify current Windows user");
+      // Current user, local administrators, LocalSystem and TrustedInstaller.
+      this.trustedPrincipals = new Set([user, "BA", "SY", "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"]);
+      return this.trustedPrincipals;
+    }
+
+    async checkWindowsPermissions(command) {
+      // Ask Windows for the owner and effective (non-inherit-only) allow ACEs.
+      // An unknown permission representation fails closed on customized installations.
+      const { ctypes: c } = ChromeUtils.importESModule("resource://gre/modules/ctypes.sys.mjs");
+      const security = c.open("advapi32.dll");
+      const kernel = c.open("kernel32.dll");
+      try {
+        const u32 = c.uint32_t, str = c.char16_t.ptr, ptr = c.voidptr_t;
+        const get = security.declare("GetFileSecurityW", c.winapi_abi, c.int, str, u32, ptr, u32, u32.ptr);
+        const convert = security.declare("ConvertSecurityDescriptorToStringSecurityDescriptorW",
+          c.winapi_abi, c.int, ptr, u32, u32, str.ptr, u32.ptr);
+        const free = kernel.declare("LocalFree", c.winapi_abi, ptr, ptr);
+        const trusted = await this.windowsPrincipals();
+        for (let path = command; path; path = PathUtils.parent(path)) {
+          const absolute = /^[A-Za-z]:$/.test(path) ? path + "\\" : path;
+          const length = u32();
+          get(absolute, 5, null, 0, length.address()); // OWNER | DACL
+          if (!length.value || length.value > 65536) throw new Error("Invalid installation security descriptor");
+          const data = c.uint8_t.array(length.value)(), string = str();
+          if (!get(absolute, 5, data, length.value, length.address()) ||
+              !convert(data, 1, 5, string.address(), null)) throw new Error("Cannot read installation permissions");
+          let sddl;
+          try { sddl = string.readString(); } finally { free(string); }
+          verifyWindowsDescriptor(sddl, trusted, path !== command && path !== PathUtils.parent(command));
+        }
+      } finally { security.close(); kernel.close(); }
+    }
+
+    async windowsPython() {
+      if (!/^x86_64-/.test(Services.appinfo.XPCOMABI)) throw new Error("Windows x64 Thunderbird is required");
+      const local = ENVIRONMENT.LOCALAPPDATA;
+      const { ctypes } = ChromeUtils.importESModule("resource://gre/modules/ctypes.sys.mjs");
+      const kernel = ctypes.open("kernel32.dll");
+      try {
+        const attrs = kernel.declare("GetFileAttributesW", ctypes.winapi_abi, ctypes.uint32_t, ctypes.char16_t.ptr);
+        for (const minor of [15, 14, 13]) {
+          for (const parts of [["Python", "pythoncore-3." + minor + "-64"], ["Programs", "Python", "Python3" + minor]]) {
+            const command = PathUtils.join(local, ...parts, "python.exe");
+            if (!await IOUtils.exists(command)) continue;
+            for (let path = command; path; path = PathUtils.parent(path)) {
+              const flags = attrs(/^[A-Za-z]:$/.test(path) ? path + "\\" : path);
+              if (flags === 0xffffffff || (flags & 0x400)) throw new Error("Untrusted Python installation path");
+            }
+            await this.checkWindowsPermissions(command);
+            const scanner = PathUtils.join(Services.dirsvc.get("ProgF", Ci.nsIFile).path, "ClamAV", "clamscan.exe");
+            if (await IOUtils.exists(scanner)) await this.checkWindowsPermissions(scanner);
+            const probe = await this.smallCommand(command, ["-I", "-S", "-B", "-c",
+              "import sys; print(sys.version_info.major, sys.version_info.minor, sys.maxsize.bit_length())"]);
+            if (probe !== "3 " + minor + " 63") throw new Error("Unexpected Windows Python runtime");
+            return command;
+          }
+        }
+      } finally { kernel.close(); }
+      throw new Error("Python3 unavailable in supported Windows installation locations");
+    }
+
     async python() {
+      if (windows) return this.windowsPython();
       if (Services.appinfo.OS === "Linux") {
         if (!await IOUtils.exists("/usr/bin/python3")) throw new Error("Python3 is not available at /usr/bin/python3");
         return "/usr/bin/python3";
@@ -109,15 +198,21 @@ var clamDirect = (() => {
       if (this.stopped || this.sessions.size + this.opening >= 8) throw new Error("Scanner session is unavailable or busy");
       this.opening++;
       const directory = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
-      directory.initWithPath("/tmp"); directory.append("clam-mail-direct-" + Services.uuid.generateUUID().toString().replace(/[{}-]/g, "").slice(0, 16));
+      directory.initWithPath(windows ? ENVIRONMENT.LOCALAPPDATA : "/tmp"); directory.append("clam-mail-direct-" + Services.uuid.generateUUID().toString().replace(/[{}-]/g, "").slice(0, 16));
       let process, created = false;
       try {
         const python = await this.python();
         directory.createUnique(Ci.nsIFile.DIRECTORY_TYPE, 0o700); created = true;
-        for (const name of ["host.py", "guardian.py"]) await IOUtils.write(PathUtils.join(directory.path, name), await this.source(name), { permissions: 0o600 });
+        const guardian = windows ? "windows.py" : "guardian.py";
+        if (windows) await this.checkWindowsPermissions(directory.path);
+        for (const name of ["host.py", guardian]) {
+          const path = PathUtils.join(directory.path, name);
+          await IOUtils.write(path, await this.source(name), { permissions: 0o600 });
+          if (windows) await this.checkWindowsPermissions(path);
+        }
         if (this.stopped) throw new Error("Scanner is shutting down");
         process = await Subprocess.call({ command: python,
-          arguments: ["-I", "-B", PathUtils.join(directory.path, "guardian.py"), String(Services.appinfo.processID)],
+          arguments: ["-I", ...(windows ? ["-S"] : []), "-B", PathUtils.join(directory.path, guardian), String(Services.appinfo.processID)],
           environment: ENVIRONMENT, stderr: "pipe" });
         if (this.stopped) { await process.kill(1000); throw new Error("Scanner shut down during startup"); }
         const token = Services.uuid.generateUUID().toString();
@@ -177,11 +272,28 @@ var clamDirect = (() => {
       const session = this.sessions.get(token);
       if (!session) return;
       this.sessions.delete(token);
+      // Keep the Windows guardian alive to clean the directory even if Thunderbird
+      // exits while clamscan is busy. Closing the job handle terminates its descendants.
+      if (windows) {
+        let timer;
+        try {
+          await IOUtils.write(PathUtils.join(session.directory, "stop"), new Uint8Array());
+          await Promise.race([session.process.wait(), new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error("Guardian shutdown timed out")), 5000);
+          })]);
+        } catch { await session.process.kill(0).catch(() => {}); }
+        finally { clearTimeout(timer); }
+      }
       await session.process.stdin.close().catch(() => {});
-      // SIGTERM reaches the guardian, which kills its scanner group and cleans files.
-      await session.process.kill(3000).catch(() => {});
+      if (!windows) await session.process.kill(3000).catch(() => {});
       await session.errors;
-      await IOUtils.remove(session.directory, { recursive: true, ignoreAbsent: true });
+      for (let attempt = 0; ; attempt++) {
+        try { await IOUtils.remove(session.directory, { recursive: true, ignoreAbsent: true }); break; }
+        catch (error) {
+          if (!windows || attempt >= 60) throw error;
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+      }
     }
 
     async backup(snapshot) {

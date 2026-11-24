@@ -643,7 +643,7 @@ function renderConnection() {
   guide.hidden = health?.status === "ready";
   if (guide.dataset.code !== (health?.code || "unknown")) {
     guide.dataset.code = health?.code || "unknown";
-    guide.open = health?.code === "clamav_missing";
+    guide.open = health?.code === "clamav_missing" || (DIRECT && ["direct_unavailable", "definitions_unavailable", "clamav_unusable"].includes(health?.code));
   }
   const scan = latest.lastScan;
   setText($("last-scan-result"), scan ? t("mail157", "最終実検査：$1 ／ $2 ／ $3", [new Date(scan.checkedAt).toLocaleString(uiLanguage()), scan.engine?.includes("(clamd)") ? "clamd" : "clamscan", scan.engine || ""]) : t("mail158", "実検査の記録はありません。"));

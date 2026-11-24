@@ -344,3 +344,14 @@ python3 scripts/build_mail_check.py
 - 実行：専用clamdはエンジン設定変更時のみ再起動し、通知切替だけなら再利用。追加判定時はALLMATCHSCANで全件検出し、所有者限定の一時入力を成功/例外時に削除。代替clamscanも同じ設定とallmatchを指定。任意オプション・無制限指定は受け付けない。OSのClamAV設定/実メール/実設定は未変更。新規依存・権限なし。
 - 検証：JS144件・Python58件（計202）通過。上下限/不正型/設定照合/旧補助拒否/カテゴリ通知/検査中変更/注意情報集計/通知枠/一時ファイル削除を検証。日英模擬UIで保存・入力制限・復元・入力中保持・注意情報/適用条件を確認。実ClamAV1.5.4でカスタム設定の合成4種・clamscan代替・フィッシング判定・フィッシング+EICAR同時検出を確認。再実行用にsmoke_mail_check.pyへ--custom-settings追加。XPIと同梱CLI/補助のソース一致を確認。
 - 次：0.18.0を削除せず上書きし、セットアップで補助プログラムも更新してから設定を変更。実ThunderbirdのUI/実メールでの新条件検査は未確認。設定変更後の初回は定義再読込が発生する場合がある。
+
+## 2026-11-20 Windows 作業の再開地点
+1. feature/windows の未コミット差分を確認。windows.py を保持し .idea は対象外。main は 0.20.0a10、試用版のビルド番号は 0.20.0a11。dist の XPI は UI の最終編集より前の中間生成物。
+2. full / missing は Windows の隔離153環境で通過済み。再現には scripts/smoke_direct_mail_check.py に --windows-thunderbird .codex-private/windows/tb/core/thunderbird.exe --windows-database .codex-private/windows/db を付ける。定義が古ければ専用の freshclam.conf と db で更新。実メール禁止。
+3. Windows の日英ロケール（directWindowsHeading/Install/Definitions）と README 日英、検証記録を完成させる。固定探索先・Python 3.13〜3.15 x64・ユーザー別定義・インストール/更新/削除と制約を明記する。
+4. Windows のパス/ACL、Jobの終了競合、清掃、定義不足・古さの表示を再点検。quit / uninstall / recovery の実機試験、無効化・監視/ワーカー異常終了、未導入時の再開拒否、再開成功、自動オフ、日英、上限を検証し、模擬と実機を区別する。
+5. 初回JSは179/180（旧Windows非対応期待）。テスト修正・追加後の再実行は未実施。WindowsでのPython全探索は45件中10失敗・14エラー・3スキップ（POSIX限定と環境依存を含む）。ログは .codex-private/windows。Linux/macOSで再試験していない。WSL一覧取得の承認操作中に中断。
+6. 配布用XPIを再ビルドして内容を検証。最終成果・未確認事項を記録して依頼されたローカルコミットを作成。push・PR・main統合・公開には別途指示が必要。
+
+## 2026-11-24 Windows 検証後
+前節の中断時点から再開し、Windows x64 向けの実装、日英案内、試験を追加した。対象は Thunderbird 153.x。配布用 XPI は dist/clam-mail-check-direct-0.20.0a11.xpi。再試験の入口、制約、残る実機未確認事項は experiments/direct-runtime/README.md の Windows 節に記載。専用定義を更新する際は .codex-private/windows の検証用設定と db を使用する。変更は feature/windows のローカルコミットまで。外部への公開には別途指示が必要。

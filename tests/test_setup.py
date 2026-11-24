@@ -8,6 +8,9 @@ import unittest
 import sys
 from unittest.mock import patch
 
+if sys.platform == "win32":
+    raise unittest.SkipTest("Legacy POSIX installer")
+
 from setup.manager import Manager, SetupError, PAYLOAD, PRODUCT
 from scripts.build_mail_check import build, build_setup
 

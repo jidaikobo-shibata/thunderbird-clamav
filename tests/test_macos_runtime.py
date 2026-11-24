@@ -1,9 +1,12 @@
 """Platform selection and fail-closed behavior without system modifications."""
 import errno
 import io
+import sys
+import unittest
+if sys.platform == "win32":
+    raise unittest.SkipTest("POSIX runtime probes")
 import resource
 import subprocess
-import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch

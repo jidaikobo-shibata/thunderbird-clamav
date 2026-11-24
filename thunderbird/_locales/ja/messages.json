@@ -2995,5 +2995,17 @@
   },
   "startupRecovery": {
     "message": "初期化に失敗しました。保存先の状態を確認し、「接続を再確認」で再試行してください。"
+  },
+  "directMissingDefinitions": {
+    "message": "定義が不足しているか古くなっています。FreshClamで更新してください。"
+  },
+  "directWindowsHeading": {
+    "message": "ClamAV の導入方法（Windows）"
+  },
+  "directWindowsInstall": {
+    "message": "公式の64ビット版 ClamAV を Program Files に、python.org 版 Python 3.13〜3.15（64ビット）を現在のユーザーの標準の場所に導入します。次の PowerShell コマンドで定義を準備してください。"
+  },
+  "directWindowsDefinitions": {
+    "message": "FreshClam による更新後、「接続を再確認」を押してください。定義は定期的に更新してください。3日より古い定義では検査できません。"
   }
 }

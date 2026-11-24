@@ -14,6 +14,9 @@ from unittest.mock import patch
 import zipfile
 
 from native import host
+if sys.platform == "win32":
+    raise unittest.SkipTest("Legacy POSIX installer")
+
 from setup.cli import Administration, unpack, run
 from setup.manager import Manager, SetupError, CLI_PAYLOAD, PAYLOAD
 from scripts.build_mail_check import installer_bytes
