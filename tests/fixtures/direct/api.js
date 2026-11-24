@@ -55,6 +55,29 @@ var testFixture = (() => {
           if (PathUtils.parent(path) !== profile || !PathUtils.filename(path).startsWith("clam-mail-check-backup-")) throw new Error("Invalid test backup path");
           return IOUtils.readJSON(path);
         },
+        coverMain: async () => {
+          await guard();
+          const main = Services.wm.getMostRecentWindow("mail:3pane");
+          const account = [...MailServices.accounts.accounts].find(value => value.incomingServer.key === server().key);
+          const identity = MailServices.accounts.createIdentity();
+          identity.email = "synthetic@example.invalid"; account.addIdentity(identity);
+          const params = Cc["@mozilla.org/messengercompose/composeparams;1"].createInstance(Ci.nsIMsgComposeParams);
+          params.type = Ci.nsIMsgCompType.New; params.format = Ci.nsIMsgCompFormat.PlainText; params.identity = identity;
+          params.composeFields = Cc["@mozilla.org/messengercompose/composefields;1"].createInstance(Ci.nsIMsgCompFields);
+          MailServices.compose.OpenComposeWindowWithParams(null, params);
+          let compose;
+          for (let attempt = 0; attempt < 100; attempt++) {
+            compose = Services.wm.getMostRecentWindow("msgcompose");
+            if (compose?.document.getElementById("messageEditor") && compose.GetCurrentEditor?.()) break;
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+          if (!compose?.GetCurrentEditor?.()) throw new Error("Synthetic compose window not ready");
+          await new Promise(resolve => setTimeout(resolve, 500));
+          let painted = false;
+          main.requestAnimationFrame(() => { painted = true; });
+          await new Promise(resolve => setTimeout(resolve, 250));
+          return { composeURL: compose.document.documentURI, mainFramePending: !painted };
+        },
         runtime: async () => {
           await guard();
           const transport = context.extension.__testDirect;

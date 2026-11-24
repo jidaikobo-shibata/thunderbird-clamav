@@ -53,7 +53,7 @@ def fixture_xpi(target, original, version, scenario="full"):
     manifest["experiment_apis"]["testFixture"] = {"schema": "fixture/schema.json", "parent": {"scopes": ["addon_parent"], "paths": [["testFixture"]], "script": "fixture/api.js"}}
     params = {"prepare": [], "inject": [{"name": "message", "type": "integer"}], "update": [],
               "backup": [{"name": "path", "type": "string"}], "runtime": [], "report": [{"name": "data", "type": "string"}],
-              "finish": [{"name": "action", "type": "string"}], "idle": []}
+              "finish": [{"name": "action", "type": "string"}], "idle": [], "coverMain": []}
     payload["fixture/schema.json"] = json.dumps([{"namespace": "testFixture", "functions": [{"name": name, "type": "function", "async": True, "parameters": values} for name, values in params.items()]}]).encode()
     payload["fixture/mail.json"] = json.dumps(mails()).encode()
     payload["fixture/options.json"] = json.dumps({"scenario": scenario}).encode()

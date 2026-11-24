@@ -1,3 +1,4 @@
+import { toolbarUpdates } from "./toolbar-updates.mjs";
 import { StateStorage, readStoredState } from "./state-storage.mjs";
 import { ScanConnection } from "./scan-connection.mjs";
 import { readScannerHealth, applyScannerHealth, scannerReady } from "./scanner-health.mjs";
@@ -16,6 +17,7 @@ import { canDelete, canForget, canRetry } from "./results.mjs";
 import { FolderScan, FOLDER_STATES, realFolder, checkpointHint, refreshScanFolders } from "./folder-scan.mjs";
 
 const api = messenger;
+const toolbar = toolbarUpdates(api.browserAction);
 const stateStorage = new StateStorage(api.storage.local);
 const DIRECT = directRuntime(api.runtime);
 const scanConnection = new ScanConnection(() => new NativeClient(api.runtime), DIRECT ? {} : { idleMs: 0 });
@@ -680,11 +682,7 @@ function toolbarState() {
   return toolbarNotice(installation, api.runtime.getManifest().version, issue, records.filter(needsAttention).length + (overflowReport?.recent || []).filter(needsAttention).length);
 }
 async function updateBadge() {
-  const notice = toolbarState();
-  await api.browserAction.setIcon({ path: notice.dot ? `icon-${notice.dot}.svg` : "icon.svg" });
-  await api.browserAction.setBadgeText({ text: notice.text });
-  await api.browserAction.setBadgeBackgroundColor({ color: notice.color });
-  await api.browserAction.setTitle({ title: notice.title });
+  toolbar.update(toolbarState());
 }
 
 function moveResultStamp(record) {

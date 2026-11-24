@@ -11,7 +11,7 @@ function event() {
 
 let caseId = 0;
 async function harness({ failReads = [], failWrites = [], direct = false, backupFailure = false, saved = {}, mails = [], nativeFailure = false, oversized = false, deleteAllowed = false, deleteFailure = false, deleteFailureIds = [], scanResult = {}, scanGate = null,
-  manageInfo = null, healthResult = null, configureMessages = null, folderRefs = [{ id: "inbox", accountId: "one", path: "/Inbox", name: "受信トレイ" }] } = {}) {
+  manageInfo = null, healthResult = null, configureMessages = null, configureToolbar = null, folderRefs = [{ id: "inbox", accountId: "one", path: "/Inbox", name: "受信トレイ" }] } = {}) {
   let stored = structuredClone(saved);
   const storageCounts = { reads: 0, writes: 0 };
   const notifications = [], opened = [], rawReads = [], timers = [], deleted = [], nativePorts = [];
@@ -102,6 +102,7 @@ async function harness({ failReads = [], failWrites = [], direct = false, backup
     };
   }
   configureMessages?.(api.messages);
+  configureToolbar?.(api.browserAction);
   globalThis.messenger = api;
   const idleTimers = [], inputTimers = [], reviewTimers = [];
   const realTimeout = globalThis.setTimeout, realClearTimeout = globalThis.clearTimeout;
@@ -4498,4 +4499,19 @@ test('an early cancellation is scoped to its preparation and cannot cancel anoth
  const normal=await h.send('prepareDeleteBatch',{keys:['k1','k2'],preparationId:'other-preparation'});
  assert.equal(normal.targets.length,2);assert.equal(h.deleted.length,0);
  await h.send('cancelDeleteBatch',{token:normal.token});
+});
+
+
+test('hidden toolbar rendering cannot hold initialization or automatic mail admission',async()=>{
+ const messages=[mail(1),mail(2),mail(3)];let release;const gate=new Promise(r=>{release=r;});const calls=[];
+ const h=await harness({direct:true,mails:messages,saved:{settings:{enabled:true,accountIds:['one'],notifications:false}},configureToolbar:action=>{
+  for(const name of ['setIcon','setBadgeText','setBadgeBackgroundColor','setTitle'])action[name]=async value=>{calls.push([name,value]);await gate;};
+ }});
+ assert.equal((await h.send('state')).ok,true);
+ for(const m of messages)h.events.newMail.listeners[0](m.folder,{messages:[m]});
+ await settle(h,s=>s.records.filter(r=>r.status==='clean').length===3);
+ assert.equal(calls.length,4,'only one pending call per property despite repeated scan saves');
+ assert.equal(h.stored().records.filter(r=>r.status==='clean').length,3);
+ release();await new Promise(r=>setImmediate(r));
+ assert.equal((await h.send('state')).records.length,3);
 });

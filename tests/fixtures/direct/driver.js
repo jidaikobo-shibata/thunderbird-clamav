@@ -615,6 +615,23 @@ try {
     document.getElementById('message-close').click();
     await messenger.storage.local.remove('fixtureDeleteMismatchId');
     report.operationFeedback=true;
+    report.coveredMain=await messenger.testFixture.coverMain();
+    check(report.coveredMain.mainFramePending,"Main window frames are actually paused behind compose");
+    const hiddenIds=[];
+    for(let index=0;index<2;index++) {
+      const raw=fixture.mails.plain.replace(/Subject: [^\r\n]+/,"Subject: Synthetic hidden toolbar "+index).replace(/Message-ID: [^\r\n]+/i,"Message-ID: <hidden-toolbar-"+index+"@example.invalid>");
+      const message=await messenger.messages.import(new File([raw],"hidden.eml",{type:"message/rfc822"}),fixture.source.id,{read:false,new:true});
+      hiddenIds.push(message.id);
+      await messenger.storage.local.set({fixtureReviewReplayId:message.id});
+    }
+    for(let attempt=0;attempt<600;attempt++) {
+      state=await request('state');
+      if(hiddenIds.every(id=>state.records.some(record=>record.messageId===id&&record.status==='clean')))break;
+      await wait(100);
+    }
+    check(hiddenIds.every(id=>state.records.some(record=>record.messageId===id&&record.status==='clean')),"Automatic admission and scanning continue with main frames paused");
+    report.hiddenToolbarIsolation=true;
+
 
     state=await request('state');
 

@@ -1,6 +1,6 @@
 # ClamAV Mail Check
 
-This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a42**, a prerelease of the integrated Ubuntu/macOS scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a41 has not been published.
+This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a43**, a prerelease of the integrated Ubuntu/macOS scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; this version has not been published.
 
 ## Requirements
 
@@ -53,7 +53,7 @@ No additional Python or npm packages are needed:
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-Install `dist/clam-mail-check-direct-0.20.0a42.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
+Install `dist/clam-mail-check-direct-0.20.0a43.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
 
 Open Settings and choose Check connection again. Start with a small manual folder scan. Automatic scanning is disabled for a new installation; select accounts only after checking results.
 
@@ -76,6 +76,8 @@ Review changes and manual quarantine are disabled while scanning or deletion is 
 For bulk permanent deletion, the dialog opens immediately and shows how many messages have been verified. You can cancel during verification; no messages are deleted at this stage. Once verification finishes, the same dialog displays the targets for final confirmation.
 
 When an operation cannot be completed, a dialog explains the reason and the next step. After closing it, you can review the notice in the originating tab until the page is closed. Partial batch failures explicitly state that successful operations have already taken effect. Progress and completion messages appear in the originating tab and at the bottom of the view; input errors remain beside their fields. Refresh failures show a reload notice. Automatic scan results do not open unexpected dialogs.
+
+Toolbar rendering is independent of mail admission, scanning and storage. A hidden main window does not make those operations wait for a paint. Each toolbar property has at most one pending update, and subsequent changes are coalesced to the latest value.
 
 Desktop notifications are submitted independently of scanning. Slow notification responses cannot hold later inspections or folder completion. Identical in-flight results are not submitted twice, and failures are not treated as delivered notices. Late responses cannot overwrite the delivery state of a newer result; relevant failures are shown in the status area.
 
