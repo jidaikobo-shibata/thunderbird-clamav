@@ -468,3 +468,8 @@
 ## 2026-11-24 Windows 11 / Thunderbird 160.0
 
 feature/windows に 160 系専用ビルドを追加。153 系が既定。160 系は `python scripts/build_direct_mail_check.py --thunderbird-major 160` で生成する。Windows 11 x64 / Thunderbird 160.0 の独立プロファイルで製品 XPI の有効化、合成メールの全9シナリオを確認。初回に再検査直後の隔離が処理中として拒否されたため、試験用 XPI だけで検査終了を待つよう修正して再実行した。製品の隔離条件は維持。JS 182件、パッケージ回帰試験2件通過。範囲と制約は experiments/direct-runtime/README.md に記載。
+
+## 2026-11-24 Windows の clamav-gui 定義共有（0.20.0a12）
+
+計画と評価：従来の定義を既定に保ち、GUI の固定参照先を明示選択可能にする。状態確認と実検査で参照先を照合し、更新中の読取や以前の結果の取り違えを防ぐ。設定はメール転送開始時に固定。GUI と共通のファイルに Windows の共有読取ロックを取り、実際に検査した定義の版を記録する。
+結果：Windows 11 x64 / Thunderbird 153.7.0 ESR と 160.0 で、専用プロファイルと合成メールによる共有、上書き保持、従来の参照先への切り戻しが通過。160 で依存不足2シナリオも成功。GUI の実 FreshClam と専用定義で更新中の検査拒否と更新後の合成メール再検査を確認。単体ハーネスは配布時と同じ MIME ワーカーを配置して実行。JS 183件、Windows Python 58件中33成功・25スキップ、WSL Linux のホスト回帰26件成功。実ユーザーのタスクスケジューラーの定時起動は未検証。試験手順と制約は experiments/direct-runtime/README.md。作業ブランチは feature/windows、成果物は dist の 153 系用および tb160 用 a12 XPI。

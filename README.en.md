@@ -1,6 +1,6 @@
 # ClamAV Mail Check
 
-This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a11**, a prerelease of the integrated Ubuntu/macOS/Windows scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a11 has not been published.
+This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a12**, a prerelease of the integrated Ubuntu/macOS/Windows scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a12 has not been published.
 
 ## Requirements
 
@@ -50,7 +50,11 @@ Executable discovery uses fixed installation locations, validates symlink target
 
 Use Thunderbird 153.x or 160.x, the official x64 ClamAV MSI in its default Program Files location, and a per-user installation of 64-bit python.org CPython 3.13, 3.14 or 3.15. The extension checks the default Python install manager and classic installer directories under `%LOCALAPPDATA%` (`Python\pythoncore-3.XX-64` or `Programs\Python\Python3XX`). Reparse points are rejected. Keep the default installation directory permissions. [ClamAV downloads](https://www.clamav.net/downloads) and [Python for Windows](https://www.python.org/downloads/windows/).
 
-Run the following in an ordinary PowerShell session to download definitions for your account. Review an existing configuration before reusing it.
+**To share definitions with clamav-gui**, complete a definition update in the GUI under the same Windows account. In the add-on’s Settings, select `%LOCALAPPDATA%\clamav-gui\database` under **Virus definition folder**. The connection check displays the version and date reported by ClamAV. Use the GUI’s definition update task for subsequent updates. If an update is in progress or definitions are missing or stale, check again and retry the scan after the update. If a manual GUI update reports an update in progress while mail is being scanned, retry after the scan.
+
+An add-on upgrade preserves the previous selection. Select `%LOCALAPPDATA%\ClamAV\database` to switch back. Switching leaves both folders in place.
+
+**For the add-on’s own definitions**, run the following in an ordinary PowerShell session. Review an existing configuration before reusing it.
 
 ~~~powershell
 $db = Join-Path $env:LOCALAPPDATA "ClamAV\database"
@@ -72,7 +76,7 @@ No additional Python or npm packages are needed:
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-For Thunderbird 160 on Windows, build with `python scripts/build_direct_mail_check.py --thunderbird-major 160`. Install `dist/clam-mail-check-direct-0.20.0a11-tb160.xpi` for 160.x or `dist/clam-mail-check-direct-0.20.0a11.xpi` for 153.x through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
+For Thunderbird 160 on Windows, build with `python scripts/build_direct_mail_check.py --thunderbird-major 160`. Install `dist/clam-mail-check-direct-0.20.0a12-tb160.xpi` for 160.x or `dist/clam-mail-check-direct-0.20.0a12.xpi` for 153.x through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
 
 Open Settings and choose Check connection again. Start with a small manual folder scan. Automatic scanning is disabled for a new installation; select accounts only after checking results.
 

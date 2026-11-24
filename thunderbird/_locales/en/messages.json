@@ -2999,6 +2999,10 @@
   "directMissingDefinitions": {
     "message": "Definitions are missing or outdated. Update them with FreshClam."
   },
+  "definitionSourceHeading": { "message": "Virus definition folder" },
+  "definitionSourceHelp": { "message": "To share clamav-gui definitions, finish updating definitions in the GUI under the same Windows account." },
+  "definitionSourceMismatch": { "message": "Could not verify the selected definition folder." },
+  "guiDefinitionsUnavailable": { "message": "Cannot read clamav-gui definitions. Complete a definition update in the GUI and try again." },
   "directWindowsHeading": {
     "message": "Install ClamAV on Windows"
   },

@@ -15,6 +15,7 @@ export function normalizeAutomaticSettings(value = {}) {
   const ids = Array.isArray(settings.accountIds) ? [...new Set(settings.accountIds.filter(id => typeof id === "string"))] : [];
   const accountIds = settings.enabled === true ? ids : [];
   return { enabled: accountIds.length > 0, notifications: settings.notifications, accountIds,
+    ...(value.definitionSource === "gui" ? { definitionSource: "gui" } : {}),
     ...(value.quarantine ? { quarantine: structuredClone(value.quarantine) } : {}),
     ...(value.scanSettings ? { scanSettings: scanPolicy(value.scanSettings) } : {}) };
 }
@@ -59,6 +60,7 @@ export function validateSettings(value, knownIds) {
     throw new Error(t("mail092", "自動検査するアカウントを選択してください。"));
   }
   if (value.scanSettings !== undefined) scanPolicy(value.scanSettings);
+  if (value.definitionSource !== undefined && !["addon", "gui"].includes(value.definitionSource)) throw new Error(t("mail091", "設定値が不正です。画面を開き直してください。"));
   return normalizeAutomaticSettings(value);
 }
 
@@ -92,11 +94,12 @@ export async function* messagePages(api, first) {
 }
 
 export class NativeClient {
-  constructor(runtime) {
+  constructor(runtime, definitionSource) {
+    this.definitionSource = definitionSource;
     this.direct = directRuntime(runtime);
     this.macOS = false;
     this.platformReady = this.direct ? Promise.resolve().then(() => runtime.getPlatformInfo?.())
-      .then(platform => { this.macOS = platform?.os === "mac"; }).catch(() => {}) : Promise.resolve();
+      .then(platform => { this.macOS = platform?.os === "mac"; this.platform = platform?.os; }).catch(() => {}) : Promise.resolve();
     this.port = this.direct ? directPort(globalThis.messenger.clamDirect) : runtime.connectNative(HOST);
     this.pending = new Map();
     this.sequence = 0;
@@ -107,7 +110,9 @@ export class NativeClient {
       clearTimeout(request.timer);
       this.pending.delete(message.id);
       if (message.detailMessages) message.detail = localizeDetail(message);
-      request.resolve(message);
+      if (request.shared && ["ready", "accepted"].includes(message.status) && message.definitionSource !== "gui") {
+        request.reject(new Error(t("definitionSourceMismatch", "選択したウイルス定義の参照先を確認できません。")));
+      } else request.resolve(message);
     });
     this.port.onDisconnect.addListener(() => this.close(
       this.direct ? t("directDisconnected", "内蔵の検査処理との接続が切れました。設定で状態を確認してください。") + (this.port.error?.message ? " " + String(this.port.error.message).slice(0, 300) : "") : t("mail093", "補助プログラムとの接続が切れました。登録状態を確認してください。")
@@ -126,8 +131,10 @@ export class NativeClient {
     const id = String(++this.sequence);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => this.close(this.direct ? t("directUnavailable", "内蔵の検査処理を開始できません。設定で状態を確認してください。") : t("mail095", "補助プログラムの応答がありません。")), timeout);
-      this.pending.set(id, { resolve, reject, timer });
-      try { this.port.postMessage({ ...values, language: uiLanguage(), op, id }); }
+      const shared = this.direct && (!this.platform || this.platform === "win") && this.definitionSource === "gui" && ["health", "begin"].includes(op);
+      this.pending.set(id, { resolve, reject, timer, shared });
+      const source = shared ? { definitionSource: "gui" } : {};
+      try { this.port.postMessage({ ...values, ...source, language: uiLanguage(), op, id }); }
       catch { this.close(t("mail096", "補助プログラムに送信できません。")); }
     });
   }

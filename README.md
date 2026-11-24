@@ -1,14 +1,14 @@
 # ClamAV Mail Check / ClamAV メール検査
 
 Thunderbirdのメールを、コンピューターにインストールしたClamAVで検査する拡張機能です。
-このブランチは **0.20.0a11（試用版）** です。補助プログラムの別途インストールは不要です。
+このブランチは **0.20.0a12（試用版）** です。補助プログラムの別途インストールは不要です。
 公開済みの0.20.0a5はUbuntu向けです。このブランチのXPIは末尾のビルド手順で作成できます。GitHubにはまだ公開していません。
 
 [English installation guide](README.en.md)
 
 ## インストール
 
-1. Thunderbird 160 系の Windows 版には `dist/clam-mail-check-direct-0.20.0a11-tb160.xpi`、153 系には `dist/clam-mail-check-direct-0.20.0a11.xpi` を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
+1. Thunderbird 160 系の Windows 版には `dist/clam-mail-check-direct-0.20.0a12-tb160.xpi`、153 系には `dist/clam-mail-check-direct-0.20.0a12.xpi` を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
 2. Thunderbirdのアドオンマネージャーで、歯車メニューの「ファイルからアドオンをインストール」を選び、XPIを指定します。
 3. 表示される権限を確認してインストールします。Experiment APIを使用するため、Thunderbirdとコンピューターへの全面アクセス権限が必要です。
 4. ツールバーのアイコンから画面を開き、「設定」末尾の「ClamAVの状態」で「接続を再確認」を押します。ClamAVが未導入なら、表示される導入手順に従います。ウイルス定義の初回更新も完了させてください。
@@ -37,7 +37,11 @@ sudo apt install clamav clamav-daemon clamav-freshclam
 
 Thunderbird 153.x または 160.x、公式 Windows x64 版 ClamAV（MSI の標準配置）、python.org の 64 ビット版 CPython 3.13〜3.15 が必要です。Python はユーザー単位の標準配置を選びます。探索先は `%LOCALAPPDATA%` 配下の `Python\pythoncore-3.XX-64` と `Programs\Python\Python3XX` です（XX は 13、14、15）。再解析ポイントは拒否します。ClamAV は 64 ビットの Program Files 内の `ClamAV\clamscan.exe` を使用します。既定のアクセス権のまま使用してください。[ClamAV 公式配布](https://www.clamav.net/downloads)・[Python 公式配布](https://www.python.org/downloads/windows/)
 
-通常ユーザーの PowerShell で次を実行します。初回は公式定義をダウンロードします。設定ファイルが既にある場合はその内容を確認してください。
+**clamav-gui を併用する場合**は、同じ Windows ユーザーで GUI の定義更新を一度完了し、アドオンの「設定」→「ウイルス定義の参照先」で `%LOCALAPPDATA%\clamav-gui\database` を選びます。選択すると接続を確認し、読み取れた定義の版・日付を表示します。その後の更新は GUI の定義更新タスクで管理できます。GUI の更新中や定義不足・期限切れのときは、更新完了後に再確認・再検査してください。手動更新が検査と重なって GUI に「更新中」と表示されたときは、検査終了後に再試行してください。
+
+上書き更新時は以前の参照先を維持します。従来の `%LOCALAPPDATA%\ClamAV\database` を選べば元に戻せます。切り替えによる定義の移動・削除はありません。
+
+**アドオン用の定義を使う場合**は、通常ユーザーの PowerShell で次を実行します。初回は公式定義をダウンロードします。設定ファイルが既にある場合はその内容を確認してください。
 
 ~~~powershell
 $db = Join-Path $env:LOCALAPPDATA "ClamAV\database"
@@ -121,7 +125,7 @@ ClamAVが検出しないメールの安全性を保証するものではあり�
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-160 系用は `python scripts/build_direct_mail_check.py --thunderbird-major 160` でビルドします。既定の 153 系用の成果物は`dist/clam-mail-check-direct-0.20.0a11.xpi`です。同じXPIにUbuntu/macOS/Windows用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
+160 系用は `python scripts/build_direct_mail_check.py --thunderbird-major 160` でビルドします。既定の 153 系用の成果物は`dist/clam-mail-check-direct-0.20.0a12.xpi`です。同じXPIにUbuntu/macOS/Windows用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
 
 ```bash
 for test_file in tests/*.test.mjs; do

@@ -2999,6 +2999,10 @@
   "directMissingDefinitions": {
     "message": "定義が不足しているか古くなっています。FreshClamで更新してください。"
   },
+  "definitionSourceHeading": { "message": "ウイルス定義の参照先" },
+  "definitionSourceHelp": { "message": "clamav-gui の定義を使う場合は、同じ Windows ユーザーで GUI の定義更新を完了してください。" },
+  "definitionSourceMismatch": { "message": "選択したウイルス定義の参照先を確認できません。" },
+  "guiDefinitionsUnavailable": { "message": "clamav-gui の定義を読み込めません。GUI で定義更新を完了してから再試行してください。" },
   "directWindowsHeading": {
     "message": "ClamAV の導入方法（Windows）"
   },

@@ -97,6 +97,39 @@ exit 1
                         guardian.wait(timeout=10)
             self.assertFalse(session.exists())
 
+    def test_gui_definitions_are_pinned_and_respect_the_gui_update_lock(self):
+        import msvcrt
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, LOCALAPPDATA=str(Path(tmp).resolve())), \
+                patch.object(host, "DIRECT_RUNTIME", True):
+            root = Path(os.environ["LOCALAPPDATA"]) / "clamav-gui"
+            (root / "database").mkdir(parents=True)
+            session = host.Session()
+            shared = {"definitionSource": "gui"}
+            with patch.object(host, "health") as health:
+                self.assertEqual(session.handle({"op": "health", **shared})["status"], "error")
+                health.assert_not_called()
+                with (root / "freshclam.lock").open("a+b") as lock:
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                    self.assertEqual(session.handle({"op": "health", **shared})["status"], "error")
+                    health.assert_not_called()
+                    session.handle({"op": "begin", "size": 1, **shared})
+                    session.handle({"op": "chunk", "seq": 0, "data": "YQ=="})
+                    end = {"op": "end", "sha256": hashlib.sha256(b"a").hexdigest()}
+                    with patch.object(host, "scan") as scan:
+                        self.assertEqual(session.handle(end)["status"], "error")
+                        scan.assert_not_called()
+                health.return_value = {"status": "ready", "engine": "ClamAV test"}
+                self.assertEqual(session.handle({"op": "health", **shared})["definitionSource"], "gui")
+                health.assert_called_once_with(str(root / "database"))
+                session.handle({"op": "begin", "size": 1, **shared})
+                session.handle({"op": "health"})  # Must not switch the in-flight message.
+                session.handle({"op": "chunk", "seq": 0, "data": "YQ=="})
+                with patch.object(host, "scan", return_value={"status": "clean"}) as scan:
+                    session.handle(end)
+                    scan.assert_called_once_with(b"a", None, None, str(root / "database"))
+                with self.assertRaises(host.ProtocolError):
+                    session.handle({"op": "health", "definitionSource": str(root)})
+
     def test_partial_database_is_rejected_before_scanning(self):
         with tempfile.TemporaryDirectory(prefix="定義 test ") as directory:
             with patch.object(host, "DATABASE", directory), patch.object(host, "CLAMSCAN", sys.executable), \

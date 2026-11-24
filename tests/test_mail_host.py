@@ -120,7 +120,7 @@ class ScannerTests(unittest.TestCase):
 
     @patch.object(host, "CLAMSCAN", "synthetic-scanner")
     @patch.object(host, "TEMP_ROOT", None)
-    @patch.object(host, "windows_definitions_present", lambda: True)
+    @patch.object(host, "windows_definitions_present", lambda database=None: True)
     def test_encrypted_mail_warnings_and_timeout_never_clean(self):
         encrypted = b'Content-Type: multipart/encrypted; boundary="x"\r\n\r\n--x--\r\n'
         with patch.object(host.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"stdin: OK\n", b"")):

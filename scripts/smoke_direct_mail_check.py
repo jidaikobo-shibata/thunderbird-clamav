@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -44,7 +45,7 @@ def mails():
     return data
 
 
-def fixture_xpi(target, original, version, scenario="full", database=None):
+def fixture_xpi(target, original, version, scenario="full", database=None, shared_root=None):
     with zipfile.ZipFile(original) as source:
         payload = {name: source.read(name) for name in source.namelist()}
     manifest = json.loads(payload["manifest.json"])
@@ -56,7 +57,9 @@ def fixture_xpi(target, original, version, scenario="full", database=None):
               "finish": [{"name": "action", "type": "string"}], "idle": []}
     payload["fixture/schema.json"] = json.dumps([{"namespace": "testFixture", "functions": [{"name": name, "type": "function", "async": True, "parameters": values} for name, values in params.items()]}]).encode()
     payload["fixture/mail.json"] = json.dumps(mails()).encode()
-    payload["fixture/options.json"] = json.dumps({"scenario": scenario}).encode()
+    payload["fixture/options.json"] = json.dumps({"scenario": scenario, "shared": bool(shared_root)}).encode()
+    if shared_root:
+        payload["direct/host.py"] += f"\nos.environ['LOCALAPPDATA'] = {str(shared_root.resolve())!r}\n".encode()
     if database:
         payload["direct/host.py"] += f"\nDATABASE = {str(database.resolve())!r}\n".encode()
     log_path = str(target.parent / "direct-daemon.log")
@@ -245,7 +248,10 @@ def main():
     parser.add_argument("--windows-thunderbird", type=Path, help="Thunderbird 153 or 160 executable")
     parser.add_argument("--windows-database", type=Path, help="FreshClam database for the disposable fixture only")
     parser.add_argument("--scenario", choices=["full", "missing", "no-python", "quit", "uninstall", "disable", "guardian", "worker", "recovery"], default="full")
+    parser.add_argument("--shared-definitions", action="store_true", help="Exercise the Windows GUI definition selector with a disposable copy")
     options = parser.parse_args()
+    if options.shared_definitions and (sys.platform != "win32" or options.scenario != "full"):
+        parser.error("--shared-definitions requires the Windows full scenario")
     major = 153
     if sys.platform == "win32":
         if not options.windows_thunderbird or not options.windows_database:
@@ -258,15 +264,22 @@ def main():
         parser.error("This lifecycle fixture requires the Windows guardian")
     xpi = build(major)
     output = ROOT / ("dist/direct-mail-integration" + ("-tb160" if major == 160 else "") + ("-" + options.scenario if options.scenario != "full" else ""))
+    if options.shared_definitions:
+        output = output.with_name(output.name + "-shared")
     output.mkdir(parents=True, exist_ok=True)
     (output / "result.json").write_text('{"status":"running"}\n')
     with DisposableProfile(prefix="clam-direct-mail-") as temporary:
         directory = Path(temporary)
         runtime = directory / "runtime"; runtime.mkdir(mode=0o700)
         profile = directory / "profile"; (profile / "extensions").mkdir(parents=True)
-        fixture_xpi(profile / "extensions" / (ID + ".xpi"), xpi, "0.19.2", options.scenario, options.windows_database)
-        fixture_xpi(profile / "real-first.xpi", xpi, "0.20.0a1", options.scenario, options.windows_database)
-        fixture_xpi(profile / "real-next.xpi", xpi, "0.20.0a2", options.scenario, options.windows_database)
+        shared_root = directory / "shared" if options.shared_definitions else None
+        if shared_root:
+            gui = shared_root / "clamav-gui"
+            shutil.copytree(options.windows_database, gui / "database")
+            (gui / "freshclam.lock").touch()
+        for target, version in [(profile / "extensions" / (ID + ".xpi"), "0.19.2"),
+                                (profile / "real-first.xpi", "0.20.0a1"), (profile / "real-next.xpi", "0.20.0a2")]:
+            fixture_xpi(target, xpi, version, options.scenario, options.windows_database, shared_root)
         (profile / "real-mail-test-enabled").touch()
         prefs = {"extensions.autoDisableScopes": 0, "extensions.enabledScopes": 15, "extensions.startupScanScopes": 15,
             "extensions.logging.enabled": True, "mail.shell.checkDefaultClient": False, "mail.provider.enabled": False,

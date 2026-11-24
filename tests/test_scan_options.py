@@ -55,7 +55,7 @@ class ScanOptionsTests(unittest.TestCase):
 
     @patch.object(host, "CLAMSCAN", "synthetic-scanner")
     @patch.object(host, "TEMP_ROOT", None)
-    @patch.object(host, "windows_definitions_present", lambda: True)
+    @patch.object(host, "windows_definitions_present", lambda database=None: True)
     def test_clamscan_flags_and_timeout_are_bounded_without_shell_interpretation(self):
         options = host.scan_options({"phishing": "notify", "macros": "display", "pua": "display", "mailMiB": 50, "expandedMiB": 200, "seconds": 120})
         with patch.object(host.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"stdin: OK\n", b"")) as run:

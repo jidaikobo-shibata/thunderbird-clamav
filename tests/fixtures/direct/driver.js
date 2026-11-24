@@ -54,6 +54,20 @@ try {
   let state = await request("state");
   const fixture = await messenger.testFixture.prepare();
   check(state.installation.state === "integrated", "Integrated scanner state");
+  if (options.shared) {
+    if (report.version === "0.20.0a1") {
+      check(!state.settings.definitionSource, "Existing installations keep their definition folder");
+      const select = document.getElementById("definition-source");
+      for (let i = 0; i < 100 && !document.querySelector("#accounts input:checked"); i++) await wait(100);
+      check(document.querySelector("#accounts input:checked") && !select.disabled, "Settings are ready");
+      select.value = "gui";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    state = await settled(value => value.settings.definitionSource === "gui" &&
+      (value.lastHealth?.definitionSource === "gui" || value.lastHealth?.status === "error"), 30);
+    check(state.lastHealth.status === "ready", "Shared folder health: " + JSON.stringify(state.lastHealth));
+    report.sharedDefinitions = true;
+  }
   if (["missing", "no-python"].includes(options.scenario)) {
     const missingPython = options.scenario === "no-python";
     check(state.lastHealth.code === (missingPython ? "direct_unavailable" : "clamav_missing"), "Missing prerequisite: " + JSON.stringify(state.lastHealth));
@@ -180,6 +194,16 @@ try {
     check(state.settings.scanSettings.mailMiB === 50 && state.settings.quarantine[fixture.accountId].auto, "Updated settings retained");
     check(state.records.some(record => record.status === "deleted") && state.records.some(record => record.quarantine?.status === "moved"), "Updated result history retained");
     check(!state.settings.enabled, "Automatic scanning stays disabled after update");
+    if (options.shared) {
+      const select = document.getElementById("definition-source");
+      for (let i = 0; i < 100 && (select.value !== "gui" || select.disabled); i++) await wait(100);
+      select.value = "addon";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      state = await settled(value => !value.settings.definitionSource && value.lastHealth?.status === "ready" &&
+        !value.lastHealth.definitionSource, 30);
+      check(!state.settings.enabled, "Switching back preserves automatic scanning off");
+      report.restoredDefaultDefinitions = true;
+    }
     report.experimentalUpdate = true;
   }
   // Leave one actual clamd alive so the launcher can verify update/crash cleanup.

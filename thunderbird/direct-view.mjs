@@ -44,6 +44,7 @@ export async function configureDirectView() {
   replace("mail341", "directLimitsHelp", "検査上限は設定で指定します。暗号化や上限超過は未検査として案内します。");
   const platform = await globalThis.messenger.runtime.getPlatformInfo?.();
   if (platform?.os === "win") {
+    $("windows-definitions").hidden = false;
     replace("clamavInstallHeading", "directWindowsHeading", "ClamAV の導入方法（Windows）");
     replace("clamavInstallInstructions", "directWindowsInstall", "公式の64ビット版 ClamAV と Python を標準の場所に導入します。");
     $("clamav-install-guide").querySelector("pre code").textContent = [
