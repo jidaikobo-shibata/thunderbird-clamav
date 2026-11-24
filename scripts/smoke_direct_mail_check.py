@@ -127,6 +127,8 @@ threading.Thread(target=crash_fixture, daemon=True).start()
         payload["background.html"] = payload["background.html"].replace(b"</html>", b'<iframe src="dashboard.html"></iframe></html>')
         payload["background.js"] = payload["background.js"].replace(
             b'api.runtime.onInstalled.addListener(() => { void openDashboard().catch(report); });', b'// Test iframe opens the dashboard.')
+        payload["background.js"] = payload["background.js"].replace(
+            b"ok: true, directMigrationBackup, settings", b"ok: true, fixtureScanRunning: running, directMigrationBackup, settings")
         payload["direct/api.js"] += b'''\nvar TestDirectBase = clamDirect; clamDirect = class extends TestDirectBase {
           trace = [];
           async smallCommand(command, args) {
@@ -240,20 +242,22 @@ class DisposableProfile(tempfile.TemporaryDirectory):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--windows-thunderbird", type=Path, help="Extracted Thunderbird 153 ESR executable")
+    parser.add_argument("--windows-thunderbird", type=Path, help="Thunderbird 153 or 160 executable")
     parser.add_argument("--windows-database", type=Path, help="FreshClam database for the disposable fixture only")
     parser.add_argument("--scenario", choices=["full", "missing", "no-python", "quit", "uninstall", "disable", "guardian", "worker", "recovery"], default="full")
     options = parser.parse_args()
+    major = 153
     if sys.platform == "win32":
         if not options.windows_thunderbird or not options.windows_database:
             parser.error("Windows requires explicit disposable executable and database paths")
         ini = options.windows_thunderbird.with_name("application.ini").read_text(encoding="utf-8")
-        if not any(line.startswith("Version=153.") for line in ini.splitlines()):
-            parser.error("Thunderbird 153.x required")
+        major = next((v for v in (153, 160) if any(line.startswith(f"Version={v}.") for line in ini.splitlines())), None)
+        if major is None:
+            parser.error("Thunderbird 153.x or 160.x required")
     if options.scenario in ("guardian", "worker", "no-python") and sys.platform != "win32":
         parser.error("This lifecycle fixture requires the Windows guardian")
-    xpi = build()
-    output = ROOT / ("dist/direct-mail-integration" + ("-" + options.scenario if options.scenario != "full" else ""))
+    xpi = build(major)
+    output = ROOT / ("dist/direct-mail-integration" + ("-tb160" if major == 160 else "") + ("-" + options.scenario if options.scenario != "full" else ""))
     output.mkdir(parents=True, exist_ok=True)
     (output / "result.json").write_text('{"status":"running"}\n')
     with DisposableProfile(prefix="clam-direct-mail-") as temporary:

@@ -464,3 +464,7 @@
 - 通常のフォルダー検査・新着・隔離・削除・再検査・更新に加え、未導入時の開始/再開拒否、通信失敗時の検出・メモ保持、更新後の自動オフを使い捨て 153 ESR で検証。監視・ワーカー・実エンジンの異常終了も個別に試験。日英の案内を追加。
 - 共通 JS 182件成功。Windows Python は公式定義を使う試験を含め31件成功・25件対象外。WSL は75件成功・10件対象外、Linux 版 ClamAV と cc がないため旧方式2件がエラー。元の main でも同じ2件がエラー。macOS 実機は再実行していない。
 - 配布物は MIT、同一アドオン ID、Thunderbird 153 系限定。試験 API・合成メールを配布物に含めない。配布 XPI のロードは153で有効、160で互換性対象外。環境固有情報と詳細なログは Git 管理外。検証方法・制約は experiments/direct-runtime/README.md の末尾。
+
+## 2026-11-24 Windows 11 / Thunderbird 160.0
+
+feature/windows に 160 系専用ビルドを追加。153 系が既定。160 系は `python scripts/build_direct_mail_check.py --thunderbird-major 160` で生成する。Windows 11 x64 / Thunderbird 160.0 の独立プロファイルで製品 XPI の有効化、合成メールの全9シナリオを確認。初回に再検査直後の隔離が処理中として拒否されたため、試験用 XPI だけで検査終了を待つよう修正して再実行した。製品の隔離条件は維持。JS 182件、パッケージ回帰試験2件通過。範囲と制約は experiments/direct-runtime/README.md に記載。

@@ -355,3 +355,7 @@ python3 scripts/build_mail_check.py
 
 ## 2026-11-24 Windows 検証後
 前節の中断時点から再開し、Windows x64 向けの実装、日英案内、試験を追加した。対象は Thunderbird 153.x。配布用 XPI は dist/clam-mail-check-direct-0.20.0a11.xpi。再試験の入口、制約、残る実機未確認事項は experiments/direct-runtime/README.md の Windows 節に記載。専用定義を更新する際は .codex-private/windows の検証用設定と db を使用する。変更は feature/windows のローカルコミットまで。外部への公開には別途指示が必要。
+
+## 2026-11-24 Windows 11 / Thunderbird 160.0
+
+feature/windows に 160 系専用ビルドを追加。153 系が既定。160 系は `python scripts/build_direct_mail_check.py --thunderbird-major 160` で生成する。Windows 11 x64 / Thunderbird 160.0 の独立プロファイルで製品 XPI の有効化、合成メールの全9シナリオを確認。初回に再検査直後の隔離が処理中として拒否されたため、試験用 XPI だけで検査終了を待つよう修正して再実行した。製品の隔離条件は維持。JS 182件、パッケージ回帰試験2件通過。範囲と制約は experiments/direct-runtime/README.md に記載。

@@ -141,7 +141,13 @@ macOS実機の確認結果は上記の先方の記録に基づき、今回のUbu
 
 ## Windows x64（0.20.0a11）
 
-Windows 11 x64、Mozilla Thunderbird 153.7.0 ESR、PSF Python 3.15.2、Cisco ClamAV 1.5.5 で確認しました。ビルドした配布 XPI を独立プロファイルのアドオンマネージャーが 153 で有効、160.0 で互換性対象外と判定しました。内蔵 Experiment が使う内部 API はメジャーバージョンに依存します。[Thunderbird の Experiment API](https://developer.thunderbird.net/add-ons/mailextensions/experiments)
+Windows 11 x64、Mozilla Thunderbird 153.7.0 ESR、PSF Python 3.15.2、Cisco ClamAV 1.5.5 で確認しました。153 系用の配布 XPI を独立プロファイルのアドオンマネージャーが 153 で有効、160.0 で互換性対象外と判定しました。内蔵 Experiment が使う内部 API はメジャーバージョンに依存します。[Thunderbird の Experiment API](https://developer.thunderbird.net/add-ons/mailextensions/experiments)
+
+### Thunderbird 160 系
+
+Windows 11 x64 の Thunderbird 160.0 で、160 系専用 XPI が使い捨てプロファイルで有効になることを確認しました。ビルドは `python scripts/build_direct_mail_check.py --thunderbird-major 160`。153 系用と同じアドオン ID・検査コードを使用し、マニフェストの互換バージョン指定だけが異なります。
+
+160.0 のヘッドレス・オフライン環境で既存の Windows 統合試験全9シナリオを実行しました。合成メール4種、手動・自動隔離と対象確認後の削除、再検査失敗時の履歴、更新後の設定、フォルダー中止・再開、依存不足・保存失敗からの復旧、終了・無効化・削除・異常終了時の清掃を確認しました。統合試験には検証用 XPI と専用の定義フォルダーを使用しました。160 系の他の更新版、他 OS 上の 160、実サーバーからの受信、普段のプロファイルを使う操作は未検証です。
 
 ### 起動と清掃
 

@@ -125,7 +125,8 @@ try {
     let threat = state.records.find(record => record.locator.subject === "Synthetic attachment");
     await messenger.testFixture.failNextScan();
     await request("retry", {key:threat.key});
-    state = await settled(value => value.records.find(row => row.key === threat.key)?.lastAttempt?.status === "error");
+    state = await settled(value => value.fixtureScanRunning === false &&
+      value.records.find(row => row.key === threat.key)?.lastAttempt?.status === "error");
     const previousThreat = state.records.find(row => row.key === threat.key);
     check(previousThreat.status === "detected" && previousThreat.sha256 === threat.sha256 &&
       JSON.stringify(previousThreat.signatures) === JSON.stringify(threat.signatures) &&
