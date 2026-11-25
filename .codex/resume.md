@@ -1,6 +1,7 @@
 # 再開メモ
 
 ## 現状
+- 0.20.0a11：通常移動でも本文を照合して既存履歴の位置/識別子を更新、検査中の古い場所への上書きも防止。確認メモ保持、コピー/曖昧/相違本文は統合せず既存重複も自動削除しない。JS189/Python80中77成功・Darwin3除外、Ubuntu独立実機で実往復移動/再通知/全操作/清掃とXPI一致を確認。成果物dist/clam-mail-check-direct-0.20.0a11.xpi。macOS実機未確認、push/公開未実施。
 - 0.20.0a10：初期化の保存失敗から接続再確認で復旧し、フォルダー開始保存失敗は旧進捗へ戻す。JS180/Python80中77成功・Darwin3除外。日英UI、Ubuntu独立実機の故障注入recovery/通常全操作/未導入/清掃とXPI一致を確認。成果物dist/clam-mail-check-direct-0.20.0a10.xpi。macOS実機は未確認、ローカル変更でpush/リリース未実施。
 - 0.20.0a9：接続判定をscanner-health.mjsへ分離、フォルダー開始/再開の対象再確認を共通化。動作・保存・権限は維持。JS175/Python80中77成功・Darwin3除外、日英UIとUbuntu独立実機の全操作/清掃/未導入を確認。成果物dist/clam-mail-check-direct-0.20.0a9.xpi。macOS実機のa9は未確認、ローカル変更でpush/公開未実施。
 - 0.20.0a8：日英の画面/アドオン名/説明から実験版を除去、試用版扱いは維持。a7のUbuntu/Apple Silicon動作良好の利用者報告を反映。Intel実機確認とWindows対応は今後、Windows現状未対応。関連4テスト・日英3環境模擬UI・XPI一致を確認。成果物dist/clam-mail-check-direct-0.20.0a8.xpi。ローカル変更でpush/新規リリース公開は未実施。

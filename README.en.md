@@ -113,3 +113,7 @@ The legacy Linux GUI launcher test is skipped on macOS. OS-specific validation a
 ## Recovering from startup storage errors
 
 If initialization fails, check available storage space and access, then use Check connection again in Settings to retry. Scanning and settings changes remain blocked until recovery. If saving a new folder scan fails, the previous scan progress and resume checkpoints are retained.
+
+## Moving messages
+
+Ordinary move events update the location of existing history after verifying the message contents. Verdicts and review notes are retained. Subsequent incoming notifications for the updated message do not add another history entry. Moves during scanning do not restore stale location information. Unreadable or ambiguous matches are not automatically linked, and copies remain separate messages. Duplicate histories created by earlier versions are not automatically deleted or merged.
