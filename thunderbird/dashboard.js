@@ -141,7 +141,7 @@ async function action(callback, success) {
   try {
     const result = await callback();
     const message = success || result?.message || (typeof result === "string" ? result : "") || t("mail105", "処理が完了しました。");
-    feedback.status(message, context);
+    if (!result?.warning) feedback.status(message, context);
     // A failed refresh must not misreport a completed operation as a failure.
     await refresh().catch(reportRefreshError);
     if (result?.warning) await feedback.error({ message, guidance: result.guidance }, context, { warning: true });
@@ -862,6 +862,7 @@ $("quarantine-selected").addEventListener("click", () => {
   });
 });
 function clearScanErrors() {
+  setText($("settings-status"), "");
   for (const input of $("settings-form").querySelectorAll("[id^=scan-]")) {
     input.removeAttribute("aria-invalid");
     input.removeAttribute("aria-describedby");
@@ -876,7 +877,7 @@ function showScanErrors(error) {
     input.insertAdjacentElement("afterend", detail);
     input.setAttribute("aria-invalid", "true"); input.setAttribute("aria-describedby", detail.id);
   }
-  setText($("settings-status"), error.message);
+  setText($("settings-status"), error.fields?.length ? "" : error.message);
   const first = error.fields?.[0];
   if (first) {
     const input = $("scan-" + first.key), details = input.closest("details");
@@ -902,21 +903,20 @@ $("settings-form").addEventListener("change", event => {
   const permission = quarantineNeedsPermission(latest.settings.quarantine, quarantine) ? requireMovePermission() : Promise.resolve();
   settingsSaving = true;
   void action(async () => {
-    setText($("settings-status"), t("mail166", "保存しています。"));
     try {
       await permission;
       await request("settings", { settings });
       latest.settings = settings;
       scanSettingsDirty = false;
       syncSettings(settings, true);
-      setText($("settings-status"), !accountIds.length && wasEnabled ? t("mail167", "対象アカウントがなくなったため、自動検査を停止して保存しました。") : t("mail168", "保存しました。"));
+      return !accountIds.length && wasEnabled ? t("mail167", "対象アカウントがなくなったため、自動検査を停止して保存しました。") : t("mail170", "設定を保存しました。");
     } catch (error) {
       scanSettingsDirty = false;
       syncSettings(latest.settings, true);
-      setText($("settings-status"), t("mail169", "保存できませんでした。変更前の設定に戻しました。"));
+      error.guidance = t("mail169", "保存できませんでした。変更前の設定に戻しました。");
       throw error;
     } finally { settingsSaving = false; }
-  }, t("mail170", "設定を保存しました。"));
+  });
 });
 $("health").addEventListener("click", () => {
   void action(async () => {

@@ -3143,5 +3143,16 @@
   },
   "idleAutomaticWaiting": {
     "message": "自動検査は無操作待ちです。PCを30秒間操作しないと開始します。待機中のメールは未検査です。"
+  },
+  "installerSavedLocation": {
+    "message": "保存先：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "installerSaved": {
+    "message": "導入用ファイルを保存しました。保存先のフォルダーで、表示されたコマンドを実行してください。"
   }
 }

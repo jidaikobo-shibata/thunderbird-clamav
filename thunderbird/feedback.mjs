@@ -6,7 +6,6 @@ export function operationFeedback({ document, t }) {
   const panels = new Map();
   for (const panel of document.querySelectorAll('[role="tabpanel"]')) {
     const host = document.createElement("div"); host.className = "operation-feedback";
-    const status = host.appendChild(document.createElement("p")); status.className = "operation-status";
     const error = host.appendChild(document.createElement("div")); error.className = "operation-error"; error.hidden = true;
     const heading = error.appendChild(document.createElement("strong")); heading.textContent = t("messagePrevious", "このタブで発生した問題");
     const detail = error.appendChild(document.createElement("p"));
@@ -16,7 +15,7 @@ export function operationFeedback({ document, t }) {
     dismiss.textContent = t("messageClear", "この案内を消す");
     dismiss.addEventListener("click", () => { error.hidden = true; panel.focus(); });
     panel.querySelector("h2").after(host);
-    panels.set(panel, { status, error, detail, button });
+    panels.set(panel, { error, detail, button });
   }
   function capture(origin = document.activeElement) {
     const source = origin?.closest('[role="tabpanel"]');
@@ -28,9 +27,6 @@ export function operationFeedback({ document, t }) {
     toastContext = context;
     $("action-status").textContent = message;
     $("operation-toast").hidden = !message;
-    $("message-reopen").hidden = true;
-    const local = panels.get(context?.panel);
-    if (local) local.status.textContent = message;
     protectFocus();
   }
   function restore(context) {
@@ -69,24 +65,25 @@ export function operationFeedback({ document, t }) {
       local.error.hidden = false;
       local.button.onclick = () => { void open({ ...item, context: { ...context, origin: local.button } }); };
     }
-    status(item.detail, context);
-    if (local) local.status.textContent = "";
-    $("message-reopen").hidden = false;
-    $("message-reopen").onclick = () => { void open({ ...item, context: { ...context, origin: $("message-reopen") } }); };
+    // Errors belong to the dialog and its persistent tab entry, not a second
+    // floating copy. Keep a single live announcement for ordinary status.
+    status("", context);
     return modal ? open(item) : Promise.resolve();
   }
-  // Hide only when the floating notice actually overlaps a focused control.
-  // The full notice remains available in its originating tab.
+  // Keep the sole status visible without covering keyboard focus.
+  // Prefer the bottom edge and move above only when needed.
   function protectFocus() {
     const toast = $("operation-toast"), target = document.activeElement;
     if (toast.hidden || toast.contains(target) || document.querySelector("dialog[open]")) return;
     if (!target?.matches("button,input,select,textarea,a[href],summary")) return;
+    toast.classList.remove("operation-toast-top");
     const control = target.getBoundingClientRect(), notice = toast.getBoundingClientRect();
     if (control.top < notice.bottom && control.bottom > notice.top &&
-        control.left < notice.right && control.right > notice.left) toast.hidden = true;
+        control.left < notice.right && control.right > notice.left) toast.classList.add("operation-toast-top");
   }
   document.addEventListener("focusin", protectFocus);
   document.addEventListener("scroll", protectFocus, true);
+  document.defaultView.addEventListener("resize", protectFocus);
   $("message-dismiss").addEventListener("click", () => {
     $("operation-toast").hidden = true;
     restore(toastContext || current);

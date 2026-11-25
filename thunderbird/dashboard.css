@@ -114,11 +114,13 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid GrayText
 [aria-invalid="true"] { border: 2px solid light-dark(#a40000, #ffb4ab); }
 
 .operation-toast { position: fixed; bottom: 16px; inset-inline: 16px; margin: auto; width: fit-content; max-width: min(850px, calc(100% - 32px)); max-height: 35vh; overflow: auto; box-sizing: border-box; z-index: 10; background: Canvas; color: CanvasText; border: 2px solid GrayText; border-radius: 8px; padding: 8px 16px; box-shadow: 0 3px 12px rgb(0 0 0 / 25%); }
+.operation-toast.operation-toast-top { top: 16px; bottom: auto; }
 .operation-toast p { margin: 4px 0 8px; }
 .operation-error, .background-error { border: 2px solid GrayText; border-inline-start-width: 6px; padding: 12px; margin: 12px 0; overflow-wrap: anywhere; }
 .operation-error p, #message-detail, #message-guidance { white-space: pre-wrap; overflow-wrap: anywhere; }
-.operation-status:empty { display: none; }
 .background-error { max-height: 25vh; overflow: auto; }
 body { padding-bottom: 24px; }
 
 body:has(dialog[open]) .operation-toast { visibility: hidden; }
+/* The originating tab exposes the error after the message dialog closes. */
+body:has(#message-dialog[open]) .operation-error { visibility: hidden; }

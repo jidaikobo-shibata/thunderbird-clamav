@@ -87,8 +87,8 @@ export function installationUI({ request, action, feedback, latest, busy }) {
       // Request immediately from the user's click; never during page load.
       const granted = await permission(messenger, ["downloads"]);
       if (!granted) {
-        report.textContent = t("mail215", "ファイル保存が許可されなかったため、保存していません。保存ボタンから再度許可できます。");
-        await feedback.error(new Error(report.textContent), context);
+        report.textContent = "";
+        await feedback.error(new Error(t("mail215", "ファイル保存が許可されなかったため、保存していません。保存ボタンから再度許可できます。")), context);
         return;
       }
       report.textContent = t("mail216", "保存先を選択してください。ファイルの保存だけで設置や削除は行いません。");
@@ -100,11 +100,11 @@ export function installationUI({ request, action, feedback, latest, busy }) {
       const item = await completedDownload(id);
       savedName = item.filename.split("/").at(-1);
       updateCommands();
-      report.textContent = t("mail219", "保存しました：$1。この保存先のフォルダーをTerminalで開いて、表示されたコマンドを実行してください。", [item.filename]);
-      feedback.status(report.textContent, context);
+      report.textContent = t("installerSavedLocation", "保存先：$1", [item.filename]);
+      feedback.status(t("installerSaved", "導入用ファイルを保存しました。保存先のフォルダーで、表示されたコマンドを実行してください。"), context);
     } catch (error) {
-      report.textContent = t("mail220", "保存できませんでした。保存画面を中止した場合は変更ありません。再試行できます。 ") + error.message;
-      await feedback.error(new Error(report.textContent), context);
+      report.textContent = "";
+      await feedback.error(new Error(t("mail220", "保存できませんでした。保存画面を中止した場合は変更ありません。再試行できます。 ") + error.message), context);
     } finally {
       if (url) URL.revokeObjectURL(url);
       saving = false; render();
@@ -116,11 +116,9 @@ export function installationUI({ request, action, feedback, latest, busy }) {
   for (const [id, operation] of [["copy-install", "install"], ["copy-uninstall", "uninstall"]]) {
     $(id).addEventListener("click", event => {
       const context = feedback.capture(event.currentTarget);
-      const report = $(operation === "uninstall" ? "uninstall-report" : "installation-report");
       void navigator.clipboard.writeText(command(operation)).then(() => {
-        report.textContent = t("mail221", "コマンドをコピーしました。保存先のフォルダーのTerminalで実行してください。");
-        feedback.status(report.textContent, context);
-      }).catch(() => { report.textContent = t("mail222", "コピーできませんでした。表示されたコマンドを選択してコピーしてください。"); void feedback.error(new Error(report.textContent), context); });
+        feedback.status(t("mail221", "コマンドをコピーしました。保存先のフォルダーのTerminalで実行してください。"), context);
+      }).catch(() => { void feedback.error(new Error(t("mail222", "コピーできませんでした。表示されたコマンドを選択してコピーしてください。")), context); });
     });
   }
   function render() {
@@ -212,7 +210,7 @@ export function installationUI({ request, action, feedback, latest, busy }) {
           const response = await request("helperApply", { token: plan.token });
           applied = true;
           const retained = response.installation.retained || [];
-          $(operation === "uninstall" ? "uninstall-report" : "installation-report").textContent = response.installation.detail + (retained.length ? t("mail248", " 残したファイル：") + retained.join(t("listSeparator", " ／ ")) : "");
+          $(operation === "uninstall" ? "uninstall-report" : "installation-report").textContent = retained.length ? t("mail248", " 残したファイル：") + retained.join(t("listSeparator", " ／ ")) : "";
           if (operation === "uninstall") await removeExtension();
           return response.installation.detail;
         } finally { if (!applied) await request("helperCancel", { token: plan.token }); }

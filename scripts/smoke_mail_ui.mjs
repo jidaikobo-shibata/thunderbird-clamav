@@ -292,9 +292,12 @@ try {
       assert.equal(await evaluate("location.pathname"), "/dashboard.html");
       await evaluate("document.getElementById('idle-automatic').click()");
       await until("testState.settings.idleAutomatic===true && !document.getElementById('idle-automatic').disabled");
+      assert.equal(await evaluate("document.getElementById('settings-status').textContent==='' && !document.querySelector('.operation-status') && !document.getElementById('operation-toast').hidden"), true);
+      assert.equal(await evaluate("document.getElementById('action-status').textContent"), language === "ja" ? "設定を保存しました。" : catalogs.en.mail170.message);
       await evaluate("failSettings=true;document.getElementById('idle-automatic').click()");
       await dismissMessage();
       await until("!document.getElementById('idle-automatic').disabled");
+      assert.equal(await evaluate("document.getElementById('operation-toast').hidden && document.getElementById('settings-status').textContent===''"), true);
       assert.equal(await evaluate("document.getElementById('idle-automatic').checked"), true);
       await evaluate("failSettings=false;document.getElementById('idle-automatic').click()");
       await until("testState.settings.idleAutomatic===false && !document.getElementById('idle-automatic').disabled");
@@ -358,6 +361,7 @@ try {
       await evaluate("holdDeletePreparation=false;testState.batch=null;failPrepareDelete=true;window.scrollTo(0,document.body.scrollHeight);document.getElementById('delete-selected').focus();document.getElementById('delete-selected').click()");
       await until("document.getElementById('message-dialog').open");
       assert.equal(await evaluate("document.getElementById('message-dialog').getAttribute('role')==='alertdialog' && document.activeElement.id==='message-close'"),true);
+      assert.equal(await evaluate("getComputedStyle(document.querySelector('#panel-results .operation-error')).visibility"), "hidden");
       assert.equal(await evaluate("document.getElementById('message-detail').textContent.includes('synthetic content mismatch') && !document.querySelector('#message-dialog img') && !window.bad"),true);
       assert.equal(await evaluate("document.getElementById('message-guidance').textContent.includes("+JSON.stringify(language==='ja'?'削除していません':'No messages have been deleted')+")"),true);
       await mkdir(path.join(root,'dist'),{recursive:true});
@@ -399,7 +403,18 @@ try {
       assert.equal(await evaluate("!document.getElementById('message-dialog').open"),true);
       await evaluate("failRefresh=false;document.getElementById('background-retry').click()");
       await until("document.getElementById('background-error').hidden && !document.getElementById('background-retry').disabled");
-      assert.equal(await evaluate("!document.getElementById('operation-toast').hidden && document.querySelector('#panel-settings .operation-status').textContent.length>0"),true);
+      assert.equal(await evaluate("!document.getElementById('operation-toast').hidden && !document.querySelector('.operation-status')"),true);
+      await evaluate(`(() => {
+        const button=document.createElement('button');button.id='fixture-bottom-control';
+        button.textContent='Focus target';
+        button.style.cssText='position:fixed;bottom:32px;left:50%;transform:translateX(-50%)';
+        document.body.append(button);button.focus();
+      })()`);
+      assert.equal(await evaluate(`(() => {
+        const b=document.getElementById('fixture-bottom-control'),r=b.getBoundingClientRect();
+        return !document.getElementById('operation-toast').hidden && b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));
+      })()`),true);
+      await evaluate("document.getElementById('fixture-bottom-control').remove()");
       await evaluate("document.getElementById('message-dismiss').click()");
       assert.equal(await evaluate("document.getElementById('operation-toast').hidden"),true);
       await evaluate("holdDeletePreparation=false;releaseDeletePreparation=true;testState.batch=null;document.getElementById('deselect').click();document.getElementById('tab-scan').click()");
@@ -615,14 +630,14 @@ try {
   assert.equal(await evaluate("document.getElementById('clear')"), null);
   assert.equal(await evaluate("document.getElementById('forget-selected').closest('[role=tabpanel]').id"), "panel-results");
   await evaluate("document.querySelector('#accounts input').click()");
-  await until("testState.settings.enabled && testState.settings.accountIds.length === 1 && document.getElementById('settings-status').textContent.includes('保存しました') && !document.getElementById('notifications').disabled");
+  await until("testState.settings.enabled && testState.settings.accountIds.length === 1 && document.getElementById('action-status').textContent.includes('設定を保存しました') && document.getElementById('settings-status').textContent==='' && !document.getElementById('notifications').disabled");
   await evaluate("failSettings = true; document.querySelector('#accounts input').click()");
   await dismissMessage();
-  await until("document.getElementById('settings-status').textContent.includes('保存できません') && !document.getElementById('notifications').disabled");
+  await until("document.querySelector('#panel-settings .operation-error').textContent.includes('保存できません') && document.getElementById('settings-status').textContent==='' && !document.getElementById('notifications').disabled");
   assert.equal(await evaluate("document.querySelector('#accounts input').checked"), true);
   await evaluate("failSettings = true; document.getElementById('notifications').click()");
   await dismissMessage();
-  await until("document.getElementById('settings-status').textContent.includes('保存できません') && !document.getElementById('notifications').disabled");
+  await until("document.querySelector('#panel-settings .operation-error').textContent.includes('保存できません') && document.getElementById('settings-status').textContent==='' && !document.getElementById('notifications').disabled");
   assert.equal(await evaluate("document.getElementById('notifications').checked"), true);
   assert.equal(await evaluate("document.querySelector('#accounts input').checked"), true);
   await evaluate("failSettings = false; document.querySelector('#accounts input').click()");
@@ -637,7 +652,7 @@ try {
   assert.equal(await evaluate("document.getElementById('allow-delete')"), null);
   await evaluate("document.getElementById('tab-results').click(); document.getElementById('select-page').click(); permissionGranted = false; document.getElementById('delete-selected').click()");
   await dismissMessage();
-  await until("document.getElementById('action-status').textContent.includes('許可されなかった') && !document.getElementById('delete-selected').disabled");
+  await until("document.querySelector('#panel-results .operation-error').textContent.includes('許可されなかった') && !document.getElementById('delete-selected').disabled");
   assert.equal(await evaluate("document.getElementById('delete-dialog').open"), false);
   assert.equal(await evaluate("testCalls.some(call => call.type === 'prepareDeleteBatch' || call.type === 'deleteBatch')"), false);
   await evaluate("permissionGranted = true; document.getElementById('delete-selected').click()");
@@ -657,7 +672,7 @@ try {
   await evaluate("document.getElementById('delete-selected').click()");
   await until("document.getElementById('delete-dialog').open && !document.getElementById('delete-ack').disabled");
   await evaluate("document.getElementById('delete-ack').click(); document.getElementById('delete-confirm').click()");
-  await until("document.getElementById('action-status').textContent.includes('完全削除1通')");
+  await until("document.getElementById('message-detail').textContent.includes('完全削除1通')");
   await dismissMessage();
   await until("!document.getElementById('delete-selected').disabled");
   assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 1);
@@ -665,7 +680,7 @@ try {
   const singlePrepares = await evaluate("testCalls.filter(call => call.type === 'prepareDelete').length");
   await evaluate("permissionGranted = false; document.querySelector('#results button:last-child').click()");
   await dismissMessage();
-  await until("document.getElementById('action-status').textContent.includes('許可されなかった') && !document.querySelector('#results button:last-child').disabled");
+  await until("document.querySelector('#panel-results .operation-error').textContent.includes('許可されなかった') && !document.querySelector('#results button:last-child').disabled");
   assert.equal(await evaluate("testCalls.filter(call => call.type === 'prepareDelete').length"), singlePrepares);
   assert.equal(await evaluate("document.getElementById('delete-dialog').open"), false);
   await evaluate("permissionGranted = true; document.querySelector('#results button:last-child').click()");
@@ -791,13 +806,13 @@ try {
   await cdp("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: downloads });
   await evaluate("permissionGranted = false; document.getElementById('installer-download').click()");
   await dismissMessage();
-  await until("document.getElementById('installation-report').textContent.includes('許可されなかった') && !document.getElementById('installer-download').disabled");
+  await until("document.querySelector('#panel-setup .operation-error').textContent.includes('許可されなかった') && !document.getElementById('installer-download').disabled");
   assert.equal(await evaluate("testCalls.some(call => call.type === 'saveDownload')"), false);
   await evaluate("permissionGranted = true; failSave = true; document.getElementById('installer-download').click()");
   await dismissMessage();
-  await until("document.getElementById('installation-report').textContent.includes('保存できません') && !document.getElementById('installer-download').disabled");
+  await until("document.querySelector('#panel-setup .operation-error').textContent.includes('保存できません') && !document.getElementById('installer-download').disabled");
   await evaluate("failSave = false; document.getElementById('installer-download').click()");
-  await until("document.getElementById('installation-report').textContent.includes('保存しました') && !document.getElementById('installer-download').disabled");
+  await until("document.getElementById('installation-report').textContent.includes('保存先：') && !document.getElementById('installer-download').disabled");
   assert.equal(await evaluate("testCalls.filter(call => call.type === 'permission').some(call => call.permissions.includes('downloads'))"), true);
   assert.equal(await evaluate("testCalls.find(call => call.type === 'saveDownload').saveAs"), true);
 
@@ -853,7 +868,7 @@ try {
   const helperDialogImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
   await writeFile(path.join(root, "dist/ui-helper-update-dialog.png"), Buffer.from(helperDialogImage.data, "base64"));
   await evaluate("document.getElementById('helper-confirm').click()");
-  await until("document.getElementById('installation-report').textContent.includes('更新しました') && document.getElementById('helper-update').hidden");
+  await until("document.getElementById('action-status').textContent.includes('更新しました') && document.getElementById('helper-update').hidden");
   assert.equal(await evaluate("testCalls.some(call => call.type === 'uninstallSelf')"), false);
 
   await evaluate("document.getElementById('tab-uninstall').click()");
@@ -861,7 +876,7 @@ try {
   await evaluate("document.getElementById('uninstall-start').click()");
   await until("!document.getElementById('uninstall-steps').hidden && !document.getElementById('helper-uninstall').disabled");
   await evaluate("customSaveName = 'saved installer.pyz'; document.getElementById('uninstall-download').click()");
-  await until("document.getElementById('uninstall-report').textContent.includes('保存しました') && !document.getElementById('uninstall-download').disabled");
+  await until("document.getElementById('uninstall-report').textContent.includes('保存先：') && !document.getElementById('uninstall-download').disabled");
   assert.match(await evaluate("document.getElementById('uninstall-report').textContent"), /synthetic.*saved installer.pyz/);
   assert.equal(await evaluate("document.getElementById('uninstaller-command').textContent"), "python3 -I './saved installer.pyz' uninstall --language ja");
 

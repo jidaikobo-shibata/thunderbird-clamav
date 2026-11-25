@@ -3143,5 +3143,16 @@
   },
   "idleAutomaticWaiting": {
     "message": "Automatic inspection is waiting for 30 seconds without computer input. Pending messages have not been inspected."
+  },
+  "installerSavedLocation": {
+    "message": "Saved location: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "installerSaved": {
+    "message": "Saved the installer file. Run the displayed command in the folder where you saved it."
   }
 }
