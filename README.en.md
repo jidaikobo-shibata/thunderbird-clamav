@@ -1,6 +1,6 @@
 # ClamAV Mail Check
 
-This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a50**, a prerelease of the integrated Ubuntu/macOS/Windows scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a50 has not been published.
+This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a51**, a prerelease of the integrated Ubuntu/macOS/Windows scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a51 has not been published.
 
 ## Requirements
 
@@ -82,7 +82,7 @@ No additional Python or npm packages are needed:
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-For Thunderbird 160 on Windows, build with `python scripts/build_direct_mail_check.py --thunderbird-major 160`. Install `dist/clam-mail-check-direct-0.20.0a50-tb160.xpi` for 160.x or `dist/clam-mail-check-direct-0.20.0a50.xpi` for 153.x through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
+For Thunderbird 160 on Windows, build with `python scripts/build_direct_mail_check.py --thunderbird-major 160`. Install `dist/clam-mail-check-direct-0.20.0a51-tb160.xpi` for 160.x or `dist/clam-mail-check-direct-0.20.0a51.xpi` for 153.x through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
 
 Open Settings and choose Check connection again. Start with a small manual folder scan. Automatic scanning is disabled for a new installation; select accounts only after checking results.
 
@@ -147,6 +147,8 @@ If incoming reception cannot be saved, the failed message and remaining receptio
 ## Moving messages
 
 Ordinary move events update the location of existing history after verifying the message contents. Verdicts and review notes are retained. Subsequent incoming notifications for the updated message do not add another history entry. Moves during scanning do not restore stale location information. Unreadable or ambiguous matches are not automatically linked, and copies remain separate messages. Duplicate histories created by earlier versions are not automatically deleted or merged.
+
+When an incoming receipt has a stale location and exactly one candidate matches its envelope in the same account, automatic inspection scans that candidate. The original row shows the candidate verdict, original folder and mismatch reasons. A clean verdict clears the attention count for that row. A detected candidate can be quarantined or permanently deleted after verification. It is never automatically quarantined based on the original receipt. Missing, ambiguous and uninspected targets remain visible. Eligible unreviewed location mismatches from older builds are revisited after current work, respecting account and idle settings.
 
 When Delete permanently, Rescan, or Open cannot identify a target, choose **Find this message again**. A unique content match updates the recorded folder. You can also scan a candidate in its displayed folder as a separate result, or exclude the missing message from this operation. Permanent deletion requires a final confirmation showing the actual targets and count.
 

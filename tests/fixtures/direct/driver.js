@@ -756,25 +756,15 @@ try {
     await messenger.storage.local.set({fixtureDeleteMismatchId:deletionHeldRecord.messageId});
     document.getElementById('delete-selected').focus();
     document.getElementById('delete-selected').click();
-    for(let attempt=0;attempt<100;attempt++) {
-      if(document.getElementById('message-dialog').open) break;
-      await wait(100);
-    }
-    check(document.getElementById('message-dialog').open&&document.activeElement.id==='message-close',"Native content mismatch opens focused error dialog");
-    check(document.getElementById('message-detail').textContent.length>0&&document.getElementById('message-guidance').textContent.length>0,"Native error includes reason and next step");
-    check(!document.getElementById('delete-dialog').open,"Unsafe deletion confirmation is not shown");
-    document.getElementById('message-close').click();
-    for(let attempt=0;attempt<100;attempt++) {
-      if(!document.getElementById('delete-selected').disabled) break;
-      await wait(100);
-    }
-    check(document.activeElement.id==='delete-selected',"Native error returns focus to original operation");
-    check(!document.querySelector('#panel-results .operation-error').hidden,"Native error remains available in its tab");
-    check((await messenger.messages.get(deletionHeldRecord.messageId)).id===deletionHeldRecord.messageId,"Mismatch target is not deleted");
-    document.querySelector('#panel-results .operation-error button').click();
-    for(let attempt=0;attempt<100;attempt++) {if(document.getElementById('message-dialog').open)break;await wait(100);}
-    check(document.getElementById('message-dialog').open,"Native error can be reopened");
-    document.getElementById('message-close').click();
+    const recoveryDialog = document.getElementById('locate-dialog');
+    for (let attempt=0; attempt<100 && !recoveryDialog.open; attempt++) await wait(100);
+    check(recoveryDialog.open && recoveryDialog.contains(document.activeElement), "Content mismatch focuses target recovery");
+    check(document.getElementById('locate-rows').textContent.length > 0 &&
+      document.getElementById('delete-confirm').disabled, "Recovery shows the reason before any deletion can be confirmed");
+    recoveryDialog.querySelector('[value="cancel"]').click();
+    for (let attempt=0; attempt<100 && document.getElementById('delete-selected').disabled; attempt++) await wait(100);
+    check(!document.getElementById('delete-dialog').open &&
+      (await messenger.messages.get(deletionHeldRecord.messageId)).id === deletionHeldRecord.messageId, "Cancelling recovery leaves the message intact");
     await messenger.storage.local.remove('fixtureDeleteMismatchId');
     report.operationFeedback=true;
     report.coveredMain=await messenger.testFixture.coverMain(true);
@@ -796,7 +786,16 @@ try {
     await messenger.testFixture.restoreFrames();
 
 
-    state=await request('state');
+    const candidateRaw = fixture.mails.plain.replace(/Subject: [^\r\n]+/, "Subject: Synthetic relocated candidate")
+      .replace(/Message-ID: [^\r\n]+/i, "Message-ID: <receipt-candidate@example.invalid>");
+    const candidate = await messenger.messages.import(new File([candidateRaw], "candidate.eml", {type:"message/rfc822"}),
+      fixture.source.id, {read:true,new:false});
+    await messenger.storage.local.set({fixtureCandidateReceipt:{id:candidate.id,folder:fixture.history}});
+    state = await settled(value => value.records.some(item => item.messageId === candidate.id && item.candidateOrigin && item.status === "clean"));
+    const found = state.records.find(item => item.messageId === candidate.id && item.candidateOrigin);
+    check(found.sha256 && found.candidateOrigin.locator.folder.id === fixture.history.id && found.locator.folder.id === fixture.source.id,
+      "A unique candidate is inspected while its receipt retains the unverified original location");
+    report.automaticCandidate = true;
   } else {
     check(state.settings.scanSettings.mailMiB === 50 && state.settings.quarantine[fixture.accountId].auto, "Updated settings retained");
     check(state.records.some(record => record.status === "deleted") && state.records.some(record => record.quarantine?.status === "moved"), "Updated result history retained");

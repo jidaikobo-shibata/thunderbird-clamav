@@ -3382,5 +3382,45 @@
   },
   "findBack": {
     "message": "Return to Needs attention"
+  },
+  "autoCandidateState": {
+    "message": "Candidate: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "candidateFolderDiff": {
+    "message": "folder"
+  },
+  "candidateSizeDiff": {
+    "message": "size"
+  },
+  "candidateIdDiff": {
+    "message": "Thunderbird numeric ID"
+  },
+  "candidateOldDiff": {
+    "message": "location mismatch recorded by an earlier version"
+  },
+  "candidateOriginDetail": {
+    "message": "Identity with the original receipt is unconfirmed. Receipt folder: $ARG1$. Difference at lookup: $ARG2$.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "candidateNoProof": {
+    "message": "The contents of the scanned candidate could not be verified."
+  },
+  "candidateChanged": {
+    "message": "The candidate moved or changed during retrieval."
+  },
+  "candidateAmbiguous": {
+    "message": "Original message is ambiguous"
   }
 }

@@ -3382,5 +3382,45 @@
   },
   "findBack": {
     "message": "「確認が必要」に戻る"
+  },
+  "autoCandidateState": {
+    "message": "候補：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "candidateFolderDiff": {
+    "message": "フォルダー"
+  },
+  "candidateSizeDiff": {
+    "message": "サイズ"
+  },
+  "candidateIdDiff": {
+    "message": "Thunderbirdの数値ID"
+  },
+  "candidateOldDiff": {
+    "message": "旧版での位置不一致"
+  },
+  "candidateOriginDetail": {
+    "message": "受付時の原本との一致は未確認です。受付フォルダー：$ARG1$。照合時の相違：$ARG2$。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "candidateNoProof": {
+    "message": "検査した候補の内容を照合できません。"
+  },
+  "candidateChanged": {
+    "message": "読み取り中に候補が移動または変更されました。"
+  },
+  "candidateAmbiguous": {
+    "message": "元のメールを区別できません"
   }
 }

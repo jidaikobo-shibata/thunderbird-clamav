@@ -243,6 +243,8 @@ function position(message) {
 
 async function verified(record, expectedFingerprint = null, check = () => {}, read = rawBytes, beforeRead) {
   check();
+  if ((record.candidateOrigin || record.candidateAttempt) && !record.sha256)
+    throw Object.assign(new Error(t("candidateNoProof", "検査した候補の内容を照合できません。")), {unscannedReason:"unverifiedLocation"});
   const message = await resolveRecord(record, check, beforeRead, read);
   check();
   if (message.external || !message.folder) throw new Error(t("mail010", "保存されているメールを特定できません。"));
@@ -495,7 +497,7 @@ async function prepareBatch(keys, preparationId = crypto.randomUUID(), recover =
       tickets.push({ key, hash, fingerprint, position: place });
       targets.push({ key, author: message.author || t("mail021", "差出人なし"), subject: message.subject || t("mail022", "件名なし"),
         accountId: message.folder.accountId, folder: message.folder.name || message.folder.path || "", folderInfo: message.folder,
-        status: record.status, signatures: record.signatures || [] });
+        status: record.status, isCandidate:Boolean(record.candidateOrigin), signatures: record.signatures || [] });
       progress.completed++;
       if (progress.completed % 25 === 0) await yieldBatch();
     }
@@ -757,9 +759,10 @@ function notify(record, coalescedMove = false) {
   const ticket = {};
   work.pending.set(stamp, ticket); work.latest = ticket;
   const current = () => work.latest === ticket && moveResultStamp(record) === stamp;
+  const label = LABELS[record.lastAttempt?.status || record.status];
   const options = {
     type: "basic", iconUrl: api.runtime.getURL("icon.svg"),
-    title: t("mail211", "ClamAV メール検査：") + LABELS[record.lastAttempt?.status || record.status],
+    title: t("mail211", "ClamAV メール検査：") + (record.candidateOrigin || record.candidateAttempt ? t("autoCandidateState", "候補：$1", [label]) : label),
     message: t("mail030", "Thunderbirdの検査結果画面で対象メールを確認してください。")
   };
   // Subjects/senders are deliberately omitted. No caller waits for the OS.
@@ -852,7 +855,7 @@ async function locateHistory(key, messageId, expectedPosition, bulk = false) {
     for (const candidate of candidates) {
       if (await sha256(await rawBytes(candidate.id)) === record.sha256) matching.push(candidate);
     }
-    if (matching.length === 1) {
+    if (matching.length === 1 && candidateLocation(record, matching[0])) {
       const work = async () => {
         current();
         const message = await api.messages.get(matching[0].id);
@@ -889,17 +892,33 @@ async function locateHistory(key, messageId, expectedPosition, bulk = false) {
   return {ok:true, session, candidates:candidates.map(message => ({id:message.id, position:position(message), folder:message.folder}))};
 }
 
+function receiptDifferences(record, message) {
+  const differences = [];
+  if (record.locator.folder?.path !== message.folder?.path) differences.push("folder");
+  if (record.locator.size && message.size && record.locator.size !== message.size) differences.push("size");
+  if (record.session === session && record.messageId !== message.id) differences.push("id");
+  return differences;
+}
+
+function candidateLocation(record, message) {
+  return !record.candidateOrigin || (record.session === session ?
+    record.messageId === message.id : record.locator.folder?.path === message.folder?.path);
+}
+
 async function resolveRecord(record, check = () => {}, beforeRead, read = rawBytes) {
   // A persisted Thunderbird numeric ID must never be reused after restart.
   if (record.session === session && Number.isInteger(record.messageId)) {
     try {
       const message = await api.messages.get(record.messageId);
       check();
-      if (sameEnvelope(message, record.locator) && (!record.candidateScan || record.sha256 || record.locator.folder?.path === message.folder?.path)) return message;
+      const receiptChanged = record.source === "automatic" && !record.sha256 && receiptDifferences(record, message).length > 0;
+      const pinned = record.candidateScan && !record.sha256;
+      if (sameEnvelope(message, record.locator) && !receiptChanged &&
+          (!pinned || record.locator.folder?.path === message.folder?.path)) return message;
     } catch { check(); /* Moved/deleted messages are resolved below. */ }
   }
   const unresolved = (reason, detail) => Object.assign(new Error(detail), { unscannedReason: reason });
-  if (record.candidateScan && !record.sha256) throw unresolved("unverifiedLocation", t("incomingTargetMoved", "候補のメールと受付時の位置が異なり、同じメールであることを確認できません。"));
+  if ((record.candidateScan || record.candidateOrigin) && !record.sha256) throw unresolved("unverifiedLocation", t("incomingTargetMoved", "候補のメールと受付時の位置が異なり、同じメールであることを確認できません。"));
   if (record.ambiguousAfterRestart || incomingQueue.entries.get(record.key)?.ambiguousAfterRestart) {
     throw unresolved("ambiguousMessage", t("incomingKnownCopies", "同じアカウントで同じ識別情報を持つメールを複数受け付けたため、再起動後に元のメールを区別できません。"));
   }
@@ -918,11 +937,12 @@ async function resolveRecord(record, check = () => {}, beforeRead, read = rawByt
     if (!matches.length) throw unresolved("messageMissing", t("incomingTargetMissing", "受付したメールを見つけられません。移動または削除された可能性があります。"));
     throw unresolved("ambiguousMessage", t("incomingTargetAmbiguous", "一致するメールが複数あるため、対象を特定できません。"));
   }
-  if ((record.source === "automatic" || Object.hasOwn(record, "receiptGeneration")) && !record.sha256 &&
-      (record.locator.folder?.path !== matches[0].folder?.path ||
-       record.locator.size && matches[0].size && record.locator.size !== matches[0].size ||
-       record.session === session && record.messageId !== matches[0].id)) {
-    throw unresolved("unverifiedLocation", t("incomingTargetMoved", "候補のメールと受付時の位置が異なり、同じメールであることを確認できません。"));
+  const differences = receiptDifferences(record, matches[0]);
+  if (!candidateLocation(record, matches[0]) ||
+      ((record.source === "automatic" || Object.hasOwn(record, "receiptGeneration")) && !record.sha256 &&
+       (differences.length || record.retryLegacyCandidate || record.candidateAttempt))) {
+    throw Object.assign(unresolved("unverifiedLocation", t("incomingTargetMoved", "候補のメールと受付時の位置が異なり、同じメールであることを確認できません。")),
+      {candidate:matches[0], differences});
   }
   record.messageId = matches[0].id;
   record.session = session;
@@ -972,6 +992,44 @@ function recoverMovedInput(record, expectedPosition) {
   return recordChanges;
 }
 
+// A unique envelope match permits inspecting its bytes. It does not transfer
+// the original verdict, review, or quarantine intent to a different message.
+async function readReceiptCandidate(record, error, maxBytes, check, beforeRead) {
+  const candidate = error.candidate;
+  const expectedPosition = position(candidate), expectedSize = candidate.size;
+  const verifyPosition = async () => {
+    let current;
+    try { current = await api.messages.get(candidate.id); }
+    catch {
+      check();
+      throw Object.assign(new Error(t("incomingTargetMissing", "受付したメールを見つけられません。移動または削除された可能性があります。")), {unscannedReason:"messageMissing"});
+    }
+    check();
+    if (current.headersOnly) throw new Error(t("mail043", "ヘッダーのみ取得されたメールです。本文をダウンロードして再検査してください。"));
+    if (position(current) !== expectedPosition || !sameEnvelope(current, record.locator) ||
+        (expectedSize && current.size && expectedSize !== current.size))
+      throw new Error(t("candidateChanged", "読み取り中に候補が移動または変更されました。"));
+  };
+  const origin = {locator:record.locator, differences:error.differences.length ? error.differences :
+    record.candidateAttempt?.differences || ["previous"]};
+  record.candidateAttempt = origin;
+  if (candidate.headersOnly) throw new Error(t("mail043", "ヘッダーのみ取得されたメールです。本文をダウンロードして再検査してください。"));
+  await verifyPosition();
+  const bytes = await rawBytes(candidate.id, maxBytes, check, beforeRead);
+  const digest = await sha256(bytes);
+  check();
+  await verifyPosition();
+  check();
+  // Publish the target and its digest together, only after reading that target.
+  record.candidateOrigin = origin;
+  delete record.candidateAttempt;
+  record.quarantineIntent = null;
+  record.session = session;
+  refreshQuarantineLocation(record, candidate);
+  record.sha256 = digest;
+  return {message:candidate, bytes, digest};
+}
+
 async function readScanInput(record, maxBytes, check, beforeRead) {
   for (let retry = 0; ; retry++) {
     check();
@@ -992,6 +1050,17 @@ async function readScanInput(record, maxBytes, check, beforeRead) {
       return { message, bytes };
     } catch (error) {
       check();
+      if (error.candidate && record.source === "automatic" && !record.sha256 && !record.candidateOrigin &&
+          !record.candidateScan && !record.lastResult && !record.reviewBeforeScan && !record.quarantine &&
+          !error.candidate.external && realFolder(error.candidate.folder) && !isDraftFolder(error.candidate.folder) &&
+          before === moveLocationStamp(record) && revision === (moveRevisions.get(record) || 0)) {
+        const checkCandidate = () => {
+          check();
+          if (before !== moveLocationStamp(record) || revision !== (moveRevisions.get(record) || 0))
+            throw new Error(t("candidateChanged", "読み取り中に候補が移動または変更されました。"));
+        };
+        return await readReceiptCandidate(record, error, maxBytes, checkCandidate, beforeRead);
+      }
       // Explicit moves may redirect retrieval, within the same overall deadline.
       if (error.incomplete || retry >= 2 || revision === (moveRevisions.get(record) || 0)) throw error;
     }
@@ -1004,8 +1073,8 @@ async function prepareScanInput(record, maxBytes) {
   const check = () => { if (!active) throw expired(); };
   const beforeRead = record.source === "automatic" ? beforeAutomaticRead : undefined;
   const work = async () => {
-    const { message, bytes } = await readScanInput(record, maxBytes, check, beforeRead);
-    const digest = await sha256(bytes);
+    const { message, bytes, digest:candidateDigest } = await readScanInput(record, maxBytes, check, beforeRead);
+    const digest = candidateDigest || await sha256(bytes);
     check();
     inputDigest = digest;
     record.sha256 = digest;
@@ -1023,6 +1092,7 @@ async function prepareScanInput(record, maxBytes) {
     }
     check();
     refreshQuarantineLocation(record, current);
+    delete record.candidateAttempt;
     return { bytes, digest };
   };
   try {
@@ -1426,6 +1496,14 @@ function promoteIncoming(beforeSequence = Infinity) {
   return recordChanges;
 }
 
+function legacyCandidatePending(item) {
+  return item.source === "automatic" && item.status === "incomplete" && item.unscannedReason === "unverifiedLocation" &&
+    !item.sha256 && !item.review && !item.reviewBeforeScan && !item.quarantine && !item.lastResult && !item.lastAttempt &&
+    !item.candidateScanKey && !item.retryLegacyCandidate && !item.candidateOrigin && !item.candidateAttempt &&
+    !deleting.has(item.key) && settings.enabled && settings.accountIds.includes(item.locator.accountId) &&
+    (item.receiptGeneration || null) === (settings.receiptGenerations?.[item.locator.accountId] || null);
+}
+
 async function drain() {
   void checkQuarantineReceipts().catch(report);
   if (running || recordStaging || maintenanceActive() || helperRemoved || batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation)) return;
@@ -1477,6 +1555,15 @@ async function drain() {
             sha256: null, engine: null, attempts: 0, nextRetry: null, folderJobId: folderScan.job.id,
             updatedAt: new Date().toISOString() };
           records.push(record);
+        }
+      }
+      // Recover untouched legacy mismatches after new receipts, manual and folder work.
+      if (!record && idle && settings.enabled) {
+        record = records.find(legacyCandidatePending);
+        if (record) {
+          record.retryLegacyCandidate = true;
+          record.quarantineIntent = null;
+          record.attempts = 0;
         }
       }
       if (!record) break;
@@ -1554,7 +1641,10 @@ async function drain() {
         const finalLookupFailure = error.unscannedReason && record.source === "automatic" &&
           (record.attempts >= 2 || record === overflowPending);
         record.status = error.incomplete || finalLookupFailure ? "incomplete" : "error";
-        if (finalLookupFailure) record.unscannedReason = error.unscannedReason;
+        if (finalLookupFailure) {
+          record.unscannedReason = error.unscannedReason;
+          if (error.unscannedReason === "unverifiedLocation") record.retryLegacyCandidate = true;
+        }
         delete record.detailMessages;
         record.detail = error.message || t("mail045", "検査に失敗しました。");
       }
@@ -1585,7 +1675,7 @@ async function drain() {
       }
       if (pendingMoveDuplicates.has(record) || pendingMoveOrigin.has(record)) await settlePendingMove(record);
       const quarantineConfig = settings.quarantine?.[record.locator.accountId];
-      const autoQuarantine = record.status === "detected" && !record.lastAttempt && record.source === "automatic" && quarantineConfig?.auto && record.quarantineIntent &&
+      const autoQuarantine = !record.candidateOrigin && record.status === "detected" && !record.lastAttempt && record.source === "automatic" && quarantineConfig?.auto && record.quarantineIntent &&
           record.quarantineIntent.folderId === quarantineConfig.folderId && record.quarantineIntent.path === quarantineConfig.path &&
           record.quarantineIntent.activation === quarantineConfig.activation;
       record.updatedAt = new Date().toISOString();
@@ -1774,6 +1864,7 @@ api.messages.onNewMailReceived.addListener((folder, list) => {
 // Ordinary copies and histories with independent human actions stay separate.
 function coalesceMovedScan(original, duplicate, hash) {
   if (!records.includes(original) || !records.includes(duplicate) || original === duplicate ||
+      original.candidateOrigin || duplicate.candidateOrigin || original.candidateAttempt || duplicate.candidateAttempt ||
       deleting.has(original.key) || deleting.has(duplicate.key) ||
       ["queued", "scanning", "deleted"].includes(original.status) ||
       ["queued", "scanning", "deleted"].includes(duplicate.status) ||
@@ -1812,7 +1903,7 @@ function coalesceMovedScan(original, duplicate, hash) {
 }
 
 function pristineAutomaticPending(record) {
-  return record.source === "automatic" && ["queued", "scanning"].includes(record.status) &&
+  return !record.candidateOrigin && !record.candidateAttempt && record.source === "automatic" && ["queued", "scanning"].includes(record.status) &&
     !record.review && !record.reviewBeforeScan && !record.quarantine && !record.lastResult && !record.lastAttempt &&
     !record.bulkRetryId && !record.folderJobId;
 }
@@ -1835,7 +1926,7 @@ function linkPendingMove(original, duplicate) {
 }
 
 function canSettlePendingMove(record) {
-  return record.source === "automatic" && !!record.sha256 && !record.lastAttempt &&
+  return !record.candidateOrigin && record.source === "automatic" && !!record.sha256 && !record.lastAttempt &&
     ["clean", "detected", "incomplete", "advisory"].includes(record.status) &&
     !record.review && !record.reviewBeforeScan && !record.quarantine && !record.bulkRetryId &&
     !record.folderJobId && !record.lastResult;
@@ -2267,7 +2358,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
     switch (request.type) {
       case "state":
         return { ok: true, directMigrationBackup, settings, records, incomingCount: incomingQueue.entries.size, oldestIncoming: incomingQueue.entries.values().next().value?.createdAt || null, overflowPending, overflowReport, issue, receiptRecovery, lastHealth, lastScan, resultsRequest, resultsFilter, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
-          idleWaiting: !automaticIdle.canStart(settings) && (incomingQueue.entries.size > 0 || [...records, ...(overflowPending ? [overflowPending] : [])].some(record => record.source === "automatic" && record.status === "queued" && settings.accountIds.includes(record.locator.accountId))),
+          idleWaiting: !automaticIdle.canStart(settings) && (incomingQueue.entries.size > 0 || records.some(legacyCandidatePending) || [...records, ...(overflowPending ? [overflowPending] : [])].some(record => record.source === "automatic" && record.status === "queued" && settings.accountIds.includes(record.locator.accountId))),
           resultActionsBusy: Boolean(running || folderScan.active || deleting.size),
           folderJob: folderScan.snapshot(), accounts: (await api.accounts.list())
           .filter(account => ["imap", "pop3", "none"].includes(account.type))
@@ -2623,7 +2714,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
           expires: Date.now() + 60000 });
         return { ok: true, token, author: message.author || t("mail021", "差出人なし"),
           subject: message.subject || t("mail022", "件名なし"), folder: message.folder.name || message.folder.path || "", folderInfo: message.folder,
-          accountId: message.folder.accountId, status: record.status, signatures: record.signatures || [] };
+          accountId: message.folder.accountId, status: record.status, isCandidate:Boolean(record.candidateOrigin), signatures: record.signatures || [] };
       }
       case "cancelDelete":
         deletionTickets.delete(request.token);

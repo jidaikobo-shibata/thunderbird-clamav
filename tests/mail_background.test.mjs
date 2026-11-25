@@ -4761,7 +4761,7 @@ test("restart around result storage recovers the receipt and preserves a detecti
   }
 });
 
-for (const reason of ["messageMissing", "ambiguousMessage", "unverifiedLocation"]) {
+for (const reason of ["messageMissing", "ambiguousMessage", "candidateDisappeared"]) {
   test("unresolved incoming receipt ends uninspected: " + reason, async () => {
     const receiving = mail(17400), idle = idleFixture();
     const copies = [1, 2].map(i => ({
@@ -4780,7 +4780,7 @@ for (const reason of ["messageMissing", "ambiguousMessage", "unverifiedLocation"
     try {
       await h.timers[0]();
       const result = await settle(h, state => state.records[0]?.status === "incomplete");
-      assert.equal(result.records[0].unscannedReason, reason);
+      assert.equal(result.records[0].unscannedReason, reason === "candidateDisappeared" ? "messageMissing" : reason);
       assert.equal(result.records[0].nextRetry, null);
       assert.deepEqual(h.rawReads, []);
     } finally { Date.now = now; }
@@ -4947,5 +4947,81 @@ test("bulk candidate scan rechecks uniqueness and reuses a previously scanned ca
   assert.equal((await lookup()).candidateKey,accepted.candidateKey);
   assert.equal(h.stored().records.length,2);
   assert.equal(h.stored().records.find(item=>item.key===record.key).status,"incomplete");
+  assert.deepEqual(h.deleted,[]);
+});
+
+for (const verdict of ["clean","detected","incomplete"]) test("idle scans a unique moved candidate in its original row: "+verdict, async () => {
+  const origin = {...mail(19500),size:120}, moved = {...origin,id:19501,size:150,folder:{id:"filed",path:"/Filed",accountId:"one"}};
+  const idle = idleFixture();
+  const destination = {id:"q",path:"/Q",accountId:"one"};
+  const h = await harness({mails:[moved],configureIdle:idle.api,deleteAllowed:true,scanResult:{status:verdict},folderRefs:[moved.folder,destination],
+    saved:{settings:{enabled:true,idleAutomatic:true,accountIds:["one"],notifications:false,
+      quarantine:{one:{folderId:"q",path:"/Q",auto:true,activation:"on"}}}}});
+  await h.events.newMail.listeners[0](origin.folder,{messages:[origin]});
+  const receipt = Object.entries(h.rawStored()).find(([key]) => key.startsWith("incomingReceipt:"))[1];
+  assert.deepEqual(h.rawReads,[]);
+  idle.change("idle");
+  const state = await settle(h,s=>!s.incomingCount && s.records[0]?.status===verdict);
+  const [row] = state.records;
+  assert.equal(state.records.length,1);
+  assert.equal(row.key,receipt.key);
+  assert.equal(row.locator.folder.path,"/Filed");
+  assert.equal(row.candidateOrigin.locator.folder.path,"/Inbox");
+  assert.deepEqual(row.candidateOrigin.differences,["folder","size","id"]);
+  assert.ok(row.sha256);
+  assert.equal(row.quarantineIntent,null);
+  assert.equal(row.quarantine,undefined);
+  if (verdict==="detected") {
+    const confirmation = await h.send("prepareDelete",{key:row.key});
+    assert.equal(confirmation.isCandidate,true);
+    moved.raw = "changed contents";
+    assert.equal((await h.send("deletePermanently",{key:row.key,token:confirmation.token})).ok,false);
+    assert.deepEqual(h.deleted,[]);
+    delete moved.raw;
+    h.api.permissions.contains = async () => true;
+    h.api.folders.getFolderCapabilities = async () => ({canAddMessages:true,canDeleteMessages:true});
+    h.api.messages.move = async ids => { assert.deepEqual(ids,[moved.id]); moved.folder=destination; };
+    const isolated = await h.send("quarantineMany",{keys:[row.key],hashes:{[row.key]:row.sha256},
+      destinations:state.settings.quarantine});
+    assert.equal(isolated.moved,1);
+    const again = await h.send("prepareDelete",{key:row.key});
+    assert.equal((await h.send("deletePermanently",{key:row.key,token:again.token})).ok,true);
+    assert.deepEqual(h.deleted[0].ids,[moved.id]);
+  }
+});
+
+test("old unresolved receipts recover when idle without changing human-reviewed history",async()=>{
+  const mailNow = mail(19600), idle = idleFixture();
+  const prior = {key:"old",source:"automatic",status:"incomplete",unscannedReason:"unverifiedLocation",
+    locator:locator(mailNow),sha256:null,attempts:2};
+  const h=await harness({mails:[mailNow],configureIdle:idle.api,saved:{records:[prior,{...prior,key:"reviewed",review:{note:"human"}}],
+    settings:{enabled:true,idleAutomatic:true,accountIds:["one"],notifications:false}}});
+  assert.deepEqual(h.rawReads,[]);
+  idle.change("idle");
+  const state=await settle(h,s=>s.records[0].status==="clean");
+  assert.deepEqual(state.records[0].candidateOrigin.differences,["previous"]);
+  assert.equal(state.records[1].status,"incomplete");
+  assert.equal(state.records[1].review.note,"human");
+});
+
+test("a candidate that moves during body retrieval cannot acquire a verdict or a deletion ticket",async()=>{
+  const origin = mail(19700), moved = {...origin,id:19701,folder:{accountId:"one",path:"/Filed"}};
+  const h = await harness({mails:[moved],deleteAllowed:true,saved:{settings:{enabled:true,accountIds:["one"],notifications:false}},
+    configureMessages:api=>{
+      const read = api.getRaw;
+      api.getRaw=async (...args)=>{
+        const data=await read(...args);
+        moved.folder={accountId:"one",path:"/Elsewhere"};
+        return data;
+      };
+    }});
+  await h.events.newMail.listeners[0](origin.folder,{messages:[origin]});
+  const state=await settle(h,s=>s.records[0]?.status==="error");
+  const [row]=state.records;
+  assert.ok(row.candidateAttempt);
+  assert.equal(row.candidateOrigin,undefined);
+  assert.equal(row.sha256,null);
+  assert.equal(row.locator.folder.path,"/Inbox");
+  assert.equal((await h.send("prepareDelete",{key:row.key})).ok,false);
   assert.deepEqual(h.deleted,[]);
 });

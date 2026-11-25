@@ -107,6 +107,7 @@ try {
         makeRecord("r2", "clean"), makeRecord("r3", "incomplete", "other"),
         makeRecord("r4", "queued"), makeRecord("r5", "deleted"),
         ...Array.from({ length: 55 }, (_, i) => makeRecord("r" + (i + 6), "clean"))] };
+    testState.records[2].candidateOrigin = {locator:{accountId:"test",folder:{accountId:"test",path:"/Receipt"}},differences:["folder","id"]};
     if (sessionStorage.getItem('fixture-open-attention')) {
       testState.resultsRequest = 'initial-toolbar-attention'; testState.resultsFilter = 'attention';
     }
@@ -285,6 +286,8 @@ try {
         await call("Page.reload");
       }
       await until("document.querySelectorAll('#results tr').length === 50 && document.getElementById('panel-settings').contains(document.getElementById('connection-title'))");
+      assert.equal(await evaluate("document.querySelectorAll('#results tr')[2].querySelector('.state').textContent"),language === "ja" ? "候補：未検出" : "Candidate: "+catalogs.en.mail086.message);
+      assert.ok(await evaluate("document.querySelectorAll('#results tr')[2].querySelector('details .originProof').textContent.includes('/Receipt')"));
       await evaluate("sessionStorage.setItem('clam-open-settings','1')");
       await call("Page.navigate", {url:`http://127.0.0.1:${server.address().port}/options.html`});
       // The options page redirects: do not hold an evaluated promise in a

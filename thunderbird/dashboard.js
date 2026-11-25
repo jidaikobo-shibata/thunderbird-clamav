@@ -354,7 +354,7 @@ function confirmDeletion(targets, history = false, preparedInDialog = false) {
     subject.textContent = target.subject;
     const detail = item.appendChild(document.createElement("div"));
     const account = latest.accounts.find(account => account.id === target.accountId)?.name || target.accountId;
-    detail.textContent = [target.author, account, target.folderInfo ? folderLabel(target.folderInfo, folderNames, target.accountId) : target.folder, LABELS[target.status], target.signatures.join(" / ")].filter(Boolean).join(t("listSeparator", " ／ "));
+    detail.textContent = [target.author, account, target.folderInfo ? folderLabel(target.folderInfo, folderNames, target.accountId) : target.folder, target.isCandidate ? t("autoCandidateState", "候補：$1", [LABELS[target.status]]) : LABELS[target.status], target.signatures.join(" / ")].filter(Boolean).join(t("listSeparator", " ／ "));
     $("delete-targets").append(item);
   }
   $("delete-ack").checked = false;
@@ -552,7 +552,7 @@ function makeRow(record) {
   }
   const details = cells[3].appendChild(document.createElement("details"));
   details.appendChild(document.createElement("summary")).textContent = t("mail130", "検出名・検査情報");
-  for (const key of ["signatures", "engine", "scanPolicy"]) {
+  for (const key of ["originProof", "signatures", "engine", "scanPolicy"]) {
     parts[key] = details.appendChild(document.createElement("span"));
     parts[key].className = key;
   }
@@ -610,7 +610,7 @@ function renderOverflow() {
   for (const record of report?.recent || []) {
     const item = document.createElement("li");
     const description = document.createElement("p");
-    description.textContent = [LABELS[record.status], record.locator.author, record.locator.subject, folderLabel(record.locator.folder, folderNames, record.locator.accountId), localizeDetail(record)].filter(Boolean).join(" / ");
+    description.textContent = [resultStateLabel(record), record.locator.author, record.locator.subject, folderLabel(record.locator.folder, folderNames, record.locator.accountId), localizeDetail(record)].filter(Boolean).join(" / ");
     item.append(description);
     const open = document.createElement("button");
     open.textContent = t("mail131", "開く");
@@ -624,6 +624,25 @@ function renderOverflow() {
     });
     item.append(open); $("overflow-recent").append(item);
   }
+}
+
+const candidateDifferences = {
+  folder: t("candidateFolderDiff", "フォルダー"),
+  size: t("candidateSizeDiff", "サイズ"),
+  id: t("candidateIdDiff", "Thunderbirdの数値ID"),
+  previous: t("candidateOldDiff", "旧版での位置不一致")
+};
+
+function resultStateLabel(record) {
+  let label = LABELS[record.status] || t("mail137", "不明");
+  if (isReviewed(record)) label = record.status === "advisory" ? t("scanAdvisoryReviewed", "注意情報（確認済み）") :
+    t("reviewedState", "一部または全部が未検査（確認済み）");
+  else if (record.status === "incomplete") {
+    if (record.unscannedReason === "automaticExcluded") label = t("automaticExcludedFilter", "未検査：自動検査の対象から除外");
+    if (record.unscannedReason === "messageMissing") return t("findMissing", "候補なし");
+    if (record.unscannedReason === "ambiguousMessage") return t("candidateAmbiguous", "元のメールを区別できません");
+  }
+  return record.candidateOrigin || record.candidateAttempt ? t("autoCandidateState", "候補：$1", [label]) : label;
 }
 
 function renderRecords() {
@@ -652,7 +671,8 @@ function renderRecords() {
     rows.set(record.key, entry);
     entry.row.dataset.status = record.status;
     entry.row.dataset.attention = String(needsAttention(record));
-    setText(entry.parts.state, isReviewed(record) ? record.status === "advisory" ? t("scanAdvisoryReviewed", "注意情報（確認済み）") : t("reviewedState", "一部または全部が未検査（確認済み）") : record.status === "incomplete" && record.unscannedReason === "automaticExcluded" ? t("automaticExcludedFilter", "未検査：自動検査の対象から除外") : LABELS[record.status] || t("mail137", "不明"));
+    const origin = record.candidateOrigin || record.candidateAttempt;
+    setText(entry.parts.state, resultStateLabel(record));
     entry.parts.time.dateTime = record.updatedAt;
     setText(entry.parts.time, new Date(record.updatedAt).toLocaleString(uiLanguage()));
     setText(entry.parts.sender, record.locator.author || t("mail021", "差出人なし"));
@@ -662,6 +682,10 @@ function renderRecords() {
     const candidate = byKey.get(record.candidateScanKey);
     const candidateDetail = candidate ? t("findVerdict", "別途検査した候補：$1", [LABELS[candidate.status]]) :
       record.candidateScanKey ? t("findPrevious", "候補の検査を受け付けた履歴があります。") : "";
+    const originDetail = origin ? t("candidateOriginDetail", "受付時の原本との一致は未確認です。受付フォルダー：$1。照合時の相違：$2。",
+      [folderLabel(origin.locator.folder, folderNames), origin.differences.map(reason => candidateDifferences[reason]).join(" / ")]) : "";
+    setText(entry.parts.originProof, originDetail);
+    entry.parts.originProof.hidden = !originDetail;
     setText(entry.parts.detail, [candidateDetail, scanHistoryDescription(record) || localizeDetail(record), advisoryDescription(record), quarantineSummary(record, folderNames), isReviewed(record) && record.review.note ? t("reviewMemo", "判断メモ：$1", [record.review.note]) : ""].filter(Boolean).join(" "));
     setText(entry.parts.signatures, (record.signatures || []).join(" / "));
     setText(entry.parts.engine, record.engine || "");

@@ -193,6 +193,11 @@ threading.Thread(target=crash_fixture, daemon=True).start()
             testPagedReceipt = paged;
             void api.messages.get(paged).then(message => testNewListener(message.folder,{messages:[],id:'fixture-receipt-page'})).catch(console.error);
           }
+          const stale = changes.fixtureCandidateReceipt?.newValue;
+          if (area === 'local' && stale) {
+            void api.messages.get(stale.id).then(header => testNewListener(stale.folder,
+              {messages:[{...header,id:2147483000,folder:stale.folder}]})).catch(console.error);
+          }
           const replay = changes.fixtureQuarantineReplayId?.newValue ?? changes.fixtureReviewReplayId?.newValue;
           if (area === 'local' && Number.isInteger(replay)) {
             // Replay a resync notification using the real current header. The
