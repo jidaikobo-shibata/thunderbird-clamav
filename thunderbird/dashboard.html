@@ -90,7 +90,10 @@
       <button type="button" id="reset-filters"><span data-i18n="mail273">絞り込みを解除</span></button>
     </div>
     <label id="folder-only-label" class="hint" hidden><input type="checkbox" id="folder-only"> <span data-i18n="mail274">今回のフォルダー検査の結果だけを表示</span></label>
+    <p id="candidate-results-view" hidden><strong data-i18n="findResultsView">別途検査した候補の結果</strong>
+      <button id="find-back" type="button" data-i18n="findBack">「確認が必要」に戻る</button></p>
     <p id="summary" role="status" aria-live="polite"></p>
+    <button type="button" id="find-attention" hidden></button>
     <div class="selection-bar" aria-label="選択した結果への操作" data-i18n-aria-label="mail275">
       <strong id="selected-count" role="status" aria-live="polite" aria-atomic="true"><span data-i18n="mail276">選択0件</span></strong>
       <button type="button" id="retry-selected" disabled><span data-i18n="mail277">選択したメールを再検査</span></button>
@@ -301,6 +304,14 @@
     <p id="message-detail"></p><p id="message-guidance"></p>
     <div class="actions"><button id="message-close" value="close" autofocus data-i18n="messageClose">閉じる</button></div>
   </form>
+</dialog>
+<dialog id="find-attention-dialog" aria-labelledby="find-attention-title">
+  <h2 id="find-attention-title" data-i18n="findHeading">要確認メールをまとめて探し直す</h2>
+  <p id="find-progress" role="status"></p>
+  <progress id="find-bar" aria-labelledby="find-progress"></progress>
+  <div id="find-groups"></div>
+  <button type="button" id="find-unique" hidden></button>
+  <form method="dialog"><button id="find-close" autofocus data-i18n="locateFinish">閉じる</button></form>
 </dialog>
 <dialog id="locate-dialog" aria-labelledby="locate-title" aria-describedby="locate-summary">
   <h2 id="locate-title" data-i18n="locateHeading">操作対象のメールを確認</h2>

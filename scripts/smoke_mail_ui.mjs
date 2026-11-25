@@ -14,7 +14,7 @@ const catalogs = Object.fromEntries(await Promise.all(["ja", "en"].map(async lan
 const profile = await mkdtemp(path.join(tmpdir(), "clam-mail-ui-"));
 const server = createServer(async (request, response) => {
   const name = new URL(request.url, "http://localhost").pathname.slice(1);
-  if (!["automatic-idle.mjs", "options.html", "options.mjs", "feedback.mjs", "state-storage.mjs", "scan-history.mjs", "direct-transport.mjs", "direct-view.mjs", "dashboard.html", "dashboard.css", "dashboard.js", "review.mjs", "scan-policy.mjs", "quarantine.mjs", "quarantine-ui.mjs", "core.mjs", "results.mjs", "folder-scan.mjs", "folder-labels.mjs", "installation.mjs", "i18n.mjs", "installer.pyz", "icon.svg"].includes(name)) {
+  if (!["find-attention.mjs", "automatic-idle.mjs", "options.html", "options.mjs", "feedback.mjs", "state-storage.mjs", "scan-history.mjs", "direct-transport.mjs", "direct-view.mjs", "dashboard.html", "dashboard.css", "dashboard.js", "review.mjs", "scan-policy.mjs", "quarantine.mjs", "quarantine-ui.mjs", "core.mjs", "results.mjs", "folder-scan.mjs", "folder-labels.mjs", "installation.mjs", "i18n.mjs", "installer.pyz", "icon.svg"].includes(name)) {
     response.writeHead(404).end(); return;
   }
   const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript", ".svg": "image/svg+xml", ".pyz": "application/octet-stream" };
@@ -221,6 +221,13 @@ try {
       if (request.type === "prepareDelete") return { ok: true, token: "test-ticket", ...target(request.key) };
       if (request.type === "deletePermanently") testState.records.find(record => record.key === request.key).status = "deleted";
       if (request.type === "cancelDeletePreparation" && testState.batch?.preparationId === request.preparationId && !ignorePreparationCancel) testState.batch.stopRequested = true;
+      if (request.type === "scanHistoryCandidate" && request.bulk) {
+        (window.bulkLinks ||= {})[request.key] = "r2";
+        return {ok:true,candidateKey:"r2"};
+      }
+      if (request.type === "locateHistory" && request.bulk && window.bulkLinks?.[request.key])
+        return {ok:true,candidateKey:"r2",folder:{path:"/Archive"}};
+      if (request.type === "locateHistory" && request.bulk && request.key === "r0") return {ok:true, candidates:[]};
       if (request.type === "locateHistory") return {ok:true, candidates:[{id:21, position:"candidate",folder:{accountId:"test",path:"/Archive",name:"Archive"}}]};
       if (request.type === "prepareDeleteBatch") {
         if (window.lookupFailure && request.keys.includes(window.lookupFailure)) return {ok:true, failures:[{key:window.lookupFailure,detail:"Moved"}]};
@@ -314,6 +321,26 @@ try {
       await evaluate("document.getElementById('tab-results').click();document.getElementById('receipt-recovery-clear').click()");
       await until("document.getElementById('receipt-recovery').hidden");
       assert.equal(await evaluate("testCalls.filter(call=>['deletePermanently','deleteBatch','clearAll'].includes(call.type)).length"), 0);
+      await change("filter","attention");
+      await evaluate("window.bulkStart=testCalls.length;document.getElementById('find-attention').click()");
+      await until("document.getElementById('find-attention-dialog').open && !document.getElementById('find-unique').hidden");
+      const searches = await evaluate("testCalls.slice(bulkStart).filter(c=>c.type==='locateHistory'&&c.bulk).length");
+      assert.ok(searches > 1);
+      assert.equal(await evaluate("testCalls.slice(bulkStart).some(c=>c.type==='scanHistoryCandidate')"),false);
+      await evaluate("document.getElementById('find-unique').click()");
+      await until("document.querySelectorAll('#find-groups details').length===2 && document.getElementById('find-bar').hidden");
+      assert.equal(await evaluate("testCalls.slice(bulkStart).filter(c=>c.type==='scanHistoryCandidate'&&c.bulk).length"),searches-1);
+      await evaluate("const group=document.querySelector('#find-groups details'); group.open=true;group.querySelector('button').click()");
+      await until("!document.getElementById('find-attention-dialog').open && !document.getElementById('delete-selected').disabled");
+      assert.equal(await evaluate("testCalls.slice(bulkStart).some(c=>['deleteBatch','deletePermanently','reviewMany'].includes(c.type))"),false);
+      await evaluate("document.getElementById('find-attention').click()");
+      await until("document.querySelectorAll('#find-groups details').length===2 && document.getElementById('find-bar').hidden");
+      await evaluate("const linked=document.querySelector('#find-groups details:last-child');linked.open=true;linked.querySelector('button').click()");
+      await until("!document.getElementById('candidate-results-view').hidden && document.querySelectorAll('#results tr').length===1");
+      assert.equal(await evaluate("document.querySelector('#results tr').dataset.status"),"clean");
+      await evaluate("document.getElementById('find-back').click()");
+      assert.equal(await evaluate("document.getElementById('filter').value"),"attention");
+      await change("filter","all");
       await evaluate(`document.getElementById('tab-results').click();
         testState.folderJob={id:'ui-audit',status:'running',folder:{id:'inbox',accountId:'test',path:'/Inbox'},total:100,completed:0,discovered:100,scanning:1,counts:{clean:0,detected:0,incomplete:0,error:0}};`);
       await until("!document.getElementById('folder-progress').hidden");

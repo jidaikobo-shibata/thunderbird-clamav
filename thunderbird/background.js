@@ -826,21 +826,26 @@ async function envelopeCandidates(record, check = () => {}) {
   return candidates;
 }
 
-async function locateHistory(key, messageId, expectedPosition) {
+async function locateHistory(key, messageId, expectedPosition, bulk = false) {
   const record = deletable(key);
-  const stamp = moveIdentity(record), status = record.status;
+  const stamp = moveIdentity(record), status = record.status, previousKey = record.candidateScanKey;
   const candidates = await envelopeCandidates(record);
   const current = () => {
     if (deletable(key) !== record || deleting.has(key) || record.status !== status || moveIdentity(record) !== stamp)
       throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
   };
   current();
+  if (bulk && !needsAttention(record)) throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
   if (messageId !== undefined) {
+    if (bulk && candidates.length !== 1) throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
     const candidate = candidates.find(item => item.id === messageId && position(item) === expectedPosition);
     if (!candidate) throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
-    await stageMessage(candidate, "manual", {record, current, position:expectedPosition});
+    const result = await stageMessage(candidate, "manual", {record, current:() => {
+      current();
+      if (record.candidateScanKey !== previousKey) throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
+    }, position:expectedPosition});
     void drain().catch(report);
-    return {ok:true};
+    return {ok:true, candidateKey:result.key};
   }
   if (record.sha256 && !record.ambiguousAfterRestart) {
     const matching = [];
@@ -854,6 +859,8 @@ async function locateHistory(key, messageId, expectedPosition) {
         current();
         if (position(message) !== position(matching[0]) || !sameEnvelope(message, record.locator))
           throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
+        if (record.session === session && position(message) === position({id:record.messageId, folder:record.locator.folder}))
+          return {ok:true, verified:true, folder:message.folder};
         await reserveRecords([record], async () => {
           const copy = structuredClone(record);
           refreshQuarantineLocation(copy, message); copy.session = session;
@@ -864,6 +871,19 @@ async function locateHistory(key, messageId, expectedPosition) {
       };
       recordChanges = recordChanges.catch(() => {}).then(work);
       return recordChanges;
+    }
+  }
+  if (bulk && candidates.length === 1 && record.candidateScanKey) {
+    const previous = records.find(item => item.key === record.candidateScanKey);
+    const candidate = candidates[0];
+    const samePlace = previous?.candidateScan && previous.locator.folder?.path === candidate.folder?.path &&
+      sameEnvelope(candidate, previous.locator);
+    if (samePlace && previous.status !== "deleted") {
+      const pending = ["queued", "scanning"].includes(previous.status);
+      const sameCandidate = pending ? previous.session === session && previous.messageId === candidate.id :
+        previous.sha256 && await sha256(await rawBytes(candidate.id)) === previous.sha256;
+      current();
+      if (sameCandidate && records.includes(previous)) return {ok:true, candidateKey:previous.key, folder:candidate.folder};
     }
   }
   return {ok:true, session, candidates:candidates.map(message => ({id:message.id, position:position(message), folder:message.folder}))};
@@ -1202,7 +1222,7 @@ function stageMessage(message, source, recovery = null) {
     for (const receipt of pendingReceipts) {
       if (receipt.current?.id === message.id) receipt.current = null;
     }
-    return { wait };
+    return { wait, key:candidate.key };
   };
   recordChanges = recordChanges.catch(() => {}).then(work);
   return recordChanges;
@@ -2394,10 +2414,12 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         await folderScan.stop();
         return { ok: true };
       case "locateHistory":
-        return await locateHistory(request.key);
+        return await locateHistory(request.key, undefined, undefined, request.bulk === true);
       case "scanHistoryCandidate":
+        if (request.bulk && (deletable(request.key).candidateScanKey || null) !== request.previousKey)
+          throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
         if (request.session !== session || !Number.isInteger(request.messageId) || typeof request.position !== "string") throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
-        return await locateHistory(request.key, request.messageId, request.position);
+        return await locateHistory(request.key, request.messageId, request.position, request.bulk === true);
       case "checkRetryTargets": {
         requestedKeys(request.keys);
         const failures = [];

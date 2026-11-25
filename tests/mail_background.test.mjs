@@ -4926,3 +4926,26 @@ test("finding a unique digest updates the location; identical copies remain choi
   assert.equal((await second.send("locateHistory",{key:"result"})).candidates.length,2);
   assert.deepEqual(second.deleted,[]);
 });
+
+test("bulk candidate scan rechecks uniqueness and reuses a previously scanned candidate on the next search", async () => {
+  const origin = mail(19400), moved = {...origin, id:19401, folder:{accountId:"one",path:"/Filed"}};
+  const mails = [moved];
+  const record = {key:"receipt",status:"incomplete",source:"automatic",session:"old",messageId:origin.id,
+    locator:locator(origin),unscannedReason:"unverifiedLocation",sha256:null};
+  const h = await harness({mails,saved:{records:[record]}});
+  const lookup = () => h.send("locateHistory",{key:record.key,bulk:true});
+  const result = await lookup();
+  const options = {key:record.key,bulk:true,previousKey:null,messageId:moved.id,session:result.session,position:result.candidates[0].position};
+  mails.push({...moved,id:19402});
+  assert.equal((await h.send("scanHistoryCandidate",options)).ok,false);
+  assert.equal((await lookup()).candidates.length,2);
+  mails.pop();
+  const accepted = await h.send("scanHistoryCandidate",options);
+  assert.ok(accepted.candidateKey);
+  assert.equal((await h.send("scanHistoryCandidate",options)).ok,false);
+  await settle(h,state => state.records.some(item => item.key === accepted.candidateKey && item.status === "clean"));
+  assert.equal((await lookup()).candidateKey,accepted.candidateKey);
+  assert.equal(h.stored().records.length,2);
+  assert.equal(h.stored().records.find(item=>item.key===record.key).status,"incomplete");
+  assert.deepEqual(h.deleted,[]);
+});

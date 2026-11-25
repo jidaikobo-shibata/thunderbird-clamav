@@ -1,3 +1,4 @@
+import { findAttention } from "./find-attention.mjs";
 import { operationFeedback } from "./feedback.mjs";
 import { scanHistoryDescription } from "./scan-history.mjs";
 import { configureDirectView } from "./direct-view.mjs";
@@ -20,7 +21,7 @@ const DIRECT = directRuntime();
 const $ = id => document.getElementById(id);
 const feedback = operationFeedback({ document, t });
 let latest, initialized = false, refreshing = false, busy = false, startupFailed = false, page = 0;
-let visible = [], filteredRecords = [];
+let visible = [], filteredRecords = [], candidateResultKeys = null;
 const rows = new Map(), selected = new Set();
 let deletePreparation = null;
 let folderFilterId = null, seenFolderRequest = null;
@@ -94,6 +95,10 @@ function updateControls() {
   $("select-page").disabled = locked || !candidates.length;
   $("select-page").checked = candidates.length > 0 && selectedOnPage === candidates.length;
   $("select-page").indeterminate = selectedOnPage > 0 && selectedOnPage < candidates.length;
+  const find = $("find-attention");
+  find.hidden = Boolean(candidateResultKeys) || $("filter").value !== "attention";
+  find.disabled = locked || !filteredRecords.length;
+  if (!find.hidden) setText(find, t("findCount", "要確認メールをまとめて探し直す（$1件）", [filteredRecords.length]));
   const allCandidates = filteredRecords.filter(selectable);
   $("select-filtered").hidden = !candidates.length || selectedOnPage !== candidates.length || allCandidates.every(record => selected.has(record.key));
   $("select-filtered").disabled = locked;
@@ -302,6 +307,7 @@ $("folder-delete").addEventListener("click", () => {
 });
 $("folder-results").addEventListener("click", () => {
   activateTab("results", true);
+  candidateResultKeys = null;
   folderFilterId = latest.folderJob.id; $("folder-only").checked = true;
   $("filter").value = "all"; $("account-filter").value = "all"; $("search").value = ""; resetSelection();
 });
@@ -626,7 +632,9 @@ function renderRecords() {
   if (!latest) return;
   renderFolder();
   renderOverflow();
-  const filtered = filterRecords(latest.records, { status: $("filter").value, account: $("account-filter").value, search: $("search").value, folderJobId: folderFilterId, folders: folderNames });
+  $("candidate-results-view").hidden = !candidateResultKeys;
+  const scope = candidateResultKeys ? latest.records.filter(record => candidateResultKeys.has(record.key)) : latest.records;
+  const filtered = filterRecords(scope, { status: $("filter").value, account: $("account-filter").value, search: $("search").value, folderJobId: folderFilterId, folders: folderNames });
   filteredRecords = filtered;
   const result = resultPage(filtered, page);
   page = result.page;
@@ -638,6 +646,7 @@ function renderRecords() {
   for (const [key, entry] of rows) {
     if (!keep.has(key)) { entry.row.remove(); rows.delete(key); }
   }
+  const byKey = new Map(latest.records.map(record => [record.key, record]));
   for (const [index, record] of visible.entries()) {
     const entry = rows.get(record.key) || makeRow(record);
     rows.set(record.key, entry);
@@ -650,7 +659,10 @@ function renderRecords() {
     setText(entry.parts.subject, record.locator.subject || t("mail022", "件名なし"));
     const account = latest.accounts.find(account => account.id === record.locator.accountId)?.name || record.locator.accountId || "";
     setText(entry.parts.location, [account, folderLabel(record.locator.folder, folderNames, record.locator.accountId)].filter(Boolean).join(t("listSeparator", " ／ ")));
-    setText(entry.parts.detail, [scanHistoryDescription(record) || localizeDetail(record), advisoryDescription(record), record.candidateScanKey && t("locateQueued", "候補の検査を受け付けました。結果は別の行に表示します。"), quarantineSummary(record, folderNames), isReviewed(record) && record.review.note ? t("reviewMemo", "判断メモ：$1", [record.review.note]) : ""].filter(Boolean).join(" "));
+    const candidate = byKey.get(record.candidateScanKey);
+    const candidateDetail = candidate ? t("findVerdict", "別途検査した候補：$1", [LABELS[candidate.status]]) :
+      record.candidateScanKey ? t("findPrevious", "候補の検査を受け付けた履歴があります。") : "";
+    setText(entry.parts.detail, [candidateDetail, scanHistoryDescription(record) || localizeDetail(record), advisoryDescription(record), quarantineSummary(record, folderNames), isReviewed(record) && record.review.note ? t("reviewMemo", "判断メモ：$1", [record.review.note]) : ""].filter(Boolean).join(" "));
     setText(entry.parts.signatures, (record.signatures || []).join(" / "));
     setText(entry.parts.engine, record.engine || "");
     setText(entry.parts.scanPolicy, record.scanSettings ? policyDescription(record.scanSettings) : "");
@@ -753,6 +765,7 @@ async function refresh() {
     }
     if (latest.resultsRequest && latest.resultsRequest !== seenResultsRequest && !blocked()) {
       seenResultsRequest = latest.resultsRequest;
+      candidateResultKeys = null;
       if (latest.resultsFilter === "attention") {
         $("filter").value = "attention";
         $("account-filter").value = "all";
@@ -772,6 +785,7 @@ function resetSelection() { selected.clear(); page = 0; renderRecords(); }
 for (const id of ["filter", "account-filter"]) $(id).addEventListener("change", resetSelection);
 $("search").addEventListener("input", resetSelection);
 $("reset-filters").addEventListener("click", () => {
+  candidateResultKeys = null;
   $("filter").value = "all"; $("account-filter").value = "all"; $("search").value = "";
   folderFilterId = null; $("folder-only").checked = false; resetSelection();
 });
@@ -793,6 +807,32 @@ $("batch-stop").addEventListener("click", () => {
   void request("cancelBatch", { id: latest?.batch?.id }).then(refresh).catch(error => feedback.error(error, feedback.capture()));
 });
 $("deselect").addEventListener("click", () => { selected.clear(); updateControls(); });
+$("find-back").addEventListener("click", () => {
+  candidateResultKeys = null;
+  $("filter").value = "attention";
+  resetSelection();
+});
+$("find-attention").addEventListener("click", () => {
+  const targets = filteredRecords.filter(needsAttention);
+  void action(async () => {
+    const result = await findAttention(targets, request, folder => folderLabel(folder, folderNames));
+    if (result.candidates) {
+      candidateResultKeys = new Set(result.candidates);
+      $("filter").value = "all"; $("account-filter").value = "all"; $("search").value = "";
+      folderFilterId = null; $("folder-only").checked = false;
+      resetSelection();
+      return t("findResultsView", "別途検査した候補の結果");
+    }
+    const keys = result.originals || [];
+    if (keys.length) {
+      selected.clear();
+      for (const key of keys) selected.add(key);
+      page = 0;
+      renderRecords();
+    }
+    return keys.length ? t("findSelected", "一覧で$1件を選択しました。", [keys.length]) : t("locateFinished", "対象の確認を終了しました。");
+  });
+});
 $("retry-selected").addEventListener("click", () => {
   const keys = selection().filter(canRetry).map(record => record.key);
   void action(async () => {

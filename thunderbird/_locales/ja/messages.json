@@ -3276,5 +3276,111 @@
   },
   "locateQueued": {
     "message": "候補の検査を受け付けました。結果は別の行に表示します。"
+  },
+  "findVerified": {
+    "message": "元のメールを特定"
+  },
+  "findSingle": {
+    "message": "候補が1通"
+  },
+  "findMultiple": {
+    "message": "候補が複数"
+  },
+  "findMissing": {
+    "message": "候補なし"
+  },
+  "findLinked": {
+    "message": "候補の検査履歴あり"
+  },
+  "findFailed": {
+    "message": "処理できなかった履歴"
+  },
+  "findStop": {
+    "message": "中止して閉じる"
+  },
+  "findProgress": {
+    "message": "処理中：$ARG1$ / $ARG2$件",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "findSummary": {
+    "message": "検索対象：$ARG1$件。各グループから元の履歴をまとめて選択できます。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "findGroup": {
+    "message": "$ARG1$（$ARG2$件）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "findSelect": {
+    "message": "このグループの元の履歴を選択（$ARG1$件）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "findScan": {
+    "message": "1通に絞れた候補をまとめて別途検査（$ARG1$件）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "findCount": {
+    "message": "要確認メールをまとめて探し直す（$ARG1$件）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "findVerdict": {
+    "message": "別途検査した候補：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "findPrevious": {
+    "message": "候補の検査を受け付けた履歴があります。"
+  },
+  "findSelected": {
+    "message": "一覧で$ARG1$件を選択しました。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "findHeading": {
+    "message": "要確認メールをまとめて探し直す"
+  },
+  "findShowResults": {
+    "message": "候補の検査結果だけを表示"
+  },
+  "findResultsView": {
+    "message": "別途検査した候補の結果"
+  },
+  "findBack": {
+    "message": "「確認が必要」に戻る"
   }
 }

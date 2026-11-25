@@ -3276,5 +3276,111 @@
   },
   "locateQueued": {
     "message": "A candidate scan was requested. Its result appears in a separate row."
+  },
+  "findVerified": {
+    "message": "Original message identified"
+  },
+  "findSingle": {
+    "message": "One candidate"
+  },
+  "findMultiple": {
+    "message": "Multiple candidates"
+  },
+  "findMissing": {
+    "message": "No candidate"
+  },
+  "findLinked": {
+    "message": "Candidate scan on record"
+  },
+  "findFailed": {
+    "message": "Could not process"
+  },
+  "findStop": {
+    "message": "Stop and close"
+  },
+  "findProgress": {
+    "message": "Processing $ARG1$ of $ARG2$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "findSummary": {
+    "message": "Searched $ARG1$ records. Expand a group to select its original records together.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "findGroup": {
+    "message": "$ARG1$ ($ARG2$)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "findSelect": {
+    "message": "Select original records in this group ($ARG1$)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "findScan": {
+    "message": "Scan all single candidates separately ($ARG1$)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "findCount": {
+    "message": "Find messages needing attention ($ARG1$)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "findSelected": {
+    "message": "Selected $ARG1$ records in Results.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "findVerdict": {
+    "message": "Separately scanned candidate: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "findPrevious": {
+    "message": "A candidate scan was requested previously."
+  },
+  "findHeading": {
+    "message": "Find messages needing attention"
+  },
+  "findShowResults": {
+    "message": "Show only candidate scan results"
+  },
+  "findResultsView": {
+    "message": "Separate candidate scan results"
+  },
+  "findBack": {
+    "message": "Return to Needs attention"
   }
 }
