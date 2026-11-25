@@ -107,3 +107,11 @@ test("automatic account selection migrates legacy OFF safely and normalizes empt
     { enabled: true, accountIds: ["a"], notifications: true });
   assert.equal(normalizeAutomaticSettings({ enabled: true, accountIds: [] }).enabled, false);
 });
+
+test("idle automatic scheduling is optional and only accepts a boolean", () => {
+  const settings = {enabled:true,accountIds:["one"],notifications:false};
+  assert.equal(validateSettings(settings,["one"]).idleAutomatic, undefined);
+  assert.equal(validateSettings({...settings,idleAutomatic:true},["one"]).idleAutomatic, true);
+  assert.equal(Boolean(validateSettings({...settings,idleAutomatic:false},["one"]).idleAutomatic), false);
+  for (const value of ["false",30,{},null]) assert.throws(()=>validateSettings({...settings,idleAutomatic:value},["one"]));
+});

@@ -619,6 +619,7 @@ async function refresh() {
     $("background-error").hidden = true;
     renderRecords();
     $("receipt-recovery").hidden = !latest.receiptRecovery;
+    $("idle-waiting").hidden = !latest.idleWaiting;
     renderHelperNotice();
     if (sessionStorage.getItem("clam-open-settings") === "1") {
       sessionStorage.removeItem("clam-open-settings");
@@ -725,6 +726,7 @@ $("forget-selected").addEventListener("click", () => {
 function syncSettings(settings, forceScan = false) {
   settings = normalizeAutomaticSettings(settings);
   $("notifications").checked = settings.notifications;
+  $("idle-automatic").checked = settings.idleAutomatic === true;
   if (forceScan || !scanSettingsDirty) syncScanPolicy(settings.scanSettings, forceScan);
   syncQuarantineSettings(settings, latest.accounts, folderChoices);
   const current = new Map([...$("accounts").querySelectorAll("input")].map(input => [input.value, input]));
@@ -895,7 +897,8 @@ $("settings-form").addEventListener("change", event => {
   try { scanSettings = readScanPolicy(); }
   catch (error) { syncSettings(latest.settings); showScanErrors(error); return; }
   clearScanErrors();
-  const settings = { enabled: accountIds.length > 0, notifications: $("notifications").checked, accountIds, quarantine, scanSettings };
+  const settings = { enabled: accountIds.length > 0, notifications: $("notifications").checked,
+    idleAutomatic: $("idle-automatic").checked, accountIds, quarantine, scanSettings };
   const permission = quarantineNeedsPermission(latest.settings.quarantine, quarantine) ? requireMovePermission() : Promise.resolve();
   settingsSaving = true;
   void action(async () => {

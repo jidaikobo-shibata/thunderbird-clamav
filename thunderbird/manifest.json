@@ -11,7 +11,7 @@
   },
   "permissions": [
     "accountsRead", "messagesRead", "nativeMessaging", "storage",
-    "notifications", "menus"
+    "notifications", "menus", "idle"
   ],
   "optional_permissions": ["messagesDelete", "messagesMove", "downloads"],
   "background": {

@@ -1,6 +1,6 @@
 # ClamAV Mail Check
 
-This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a44**, a prerelease of the integrated Ubuntu/macOS scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; this version has not been published.
+This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a45**, a prerelease of the integrated Ubuntu/macOS scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; this version has not been published.
 
 ## Requirements
 
@@ -53,7 +53,7 @@ No additional Python or npm packages are needed:
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-Install `dist/clam-mail-check-direct-0.20.0a44.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
+Install `dist/clam-mail-check-direct-0.20.0a45.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
 
 Open Settings and choose Check connection again. Start with a small manual folder scan. Automatic scanning is disabled for a new installation; select accounts only after checking results.
 
@@ -122,3 +122,5 @@ Ordinary move events update the location of existing history after verifying the
 Incoming intake retains at most 128 active/pending notifications, 256 messages per page, and approximately four million serialized characters in total. If the limit is reached, the Results tab retains a reinspection notice. Manually inspect inboxes and filter destination folders in accounts that had automatic inspection enabled, then dismiss the notice. Excess notifications do not become successful scan results. Retained notifications recover in batches of four. Intake that could not be saved cannot be recovered after Thunderbird exits.
 
 The Add-ons Manager settings entry opens the same Settings tab. Source conventions are defined by `.editorconfig` and the development section of `README.md`. Run `python3 -B scripts/check_source.py` for dependency-free syntax checks; no ESLint or Prettier dependency has been introduced.
+
+An optional Settings checkbox delays automatic inspection until 30 seconds without computer input. It is off by default and uses the standard `idle` permission; it does not collect typed keys or text. Incoming messages are saved as pending. Resuming input allows the current inspection to finish and pauses subsequent automatic inspections. Manual inspections remain available. Continuous activity can leave messages uninspected; the Results tab shows this waiting state. Turn the option off to resume immediately. Idle detection failures keep automatic work pending and report an error. This does not suspend Thunderbird's own receiving/filtering/indexing, and improvement to Mozc typing latency needs comparison on the actual desktop.

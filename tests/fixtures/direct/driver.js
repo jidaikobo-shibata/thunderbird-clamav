@@ -73,6 +73,9 @@ async function invalidStorageScenario() {
 
 const report = { ok: false, version: messenger.runtime.getManifest().version };
 try {
+  messenger.idle.setDetectionInterval(30);
+  report.systemIdleState = await messenger.idle.queryState(30);
+  check(["active", "idle"].includes(report.systemIdleState), "System idle API is available");
   const options = await (await fetch(messenger.runtime.getURL("fixture/options.json"))).json();
   if (options.scenario === "invalid-storage") { await invalidStorageScenario(); }
   else if (options.scenario === "recovery") { await recoveryScenario(); } else {

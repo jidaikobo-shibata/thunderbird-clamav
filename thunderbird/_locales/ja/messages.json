@@ -3134,5 +3134,14 @@
   },
   "receiptRecoveryChanged": {
     "message": "新しい未受付があります。案内を確認してください。"
+  },
+  "idleAutomaticLabel": {
+    "message": "PCを30秒間操作していないときに自動検査を開始する"
+  },
+  "idleAutomaticHint": {
+    "message": "操作中は検査待ちとして保存します。開始済みの検査は完了させ、次のメールから待機します。手動検査は待機しません。"
+  },
+  "idleAutomaticWaiting": {
+    "message": "自動検査は無操作待ちです。PCを30秒間操作しないと開始します。待機中のメールは未検査です。"
   }
 }

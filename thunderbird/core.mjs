@@ -17,6 +17,7 @@ export function normalizeAutomaticSettings(value = {}) {
   const ids = Array.isArray(settings.accountIds) ? [...new Set(settings.accountIds.filter(id => typeof id === "string"))] : [];
   const accountIds = settings.enabled === true ? ids : [];
   return { enabled: accountIds.length > 0, notifications: settings.notifications, accountIds,
+    ...(value.idleAutomatic === true ? { idleAutomatic: true } : {}),
     ...(value.quarantine ? { quarantine: structuredClone(value.quarantine) } : {}),
     ...(value.scanSettings ? { scanSettings: scanPolicy(value.scanSettings) } : {}) };
 }
@@ -53,7 +54,8 @@ export function sameEnvelope(message, saved) {
 
 export function validateSettings(value, knownIds) {
   if (!value || typeof value.enabled !== "boolean" ||
-      typeof value.notifications !== "boolean" || !Array.isArray(value.accountIds) ||
+      typeof value.notifications !== "boolean" ||
+      (value.idleAutomatic !== undefined && typeof value.idleAutomatic !== "boolean") || !Array.isArray(value.accountIds) ||
       value.accountIds.some(id => typeof id !== "string" || !knownIds.includes(id))) {
     throw new Error(t("mail091", "設定値が不正です。画面を開き直してください。"));
   }

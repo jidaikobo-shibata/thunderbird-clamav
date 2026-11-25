@@ -14,7 +14,7 @@ const catalogs = Object.fromEntries(await Promise.all(["ja", "en"].map(async lan
 const profile = await mkdtemp(path.join(tmpdir(), "clam-mail-ui-"));
 const server = createServer(async (request, response) => {
   const name = new URL(request.url, "http://localhost").pathname.slice(1);
-  if (!["options.html", "options.mjs", "feedback.mjs", "state-storage.mjs", "scan-history.mjs", "direct-transport.mjs", "direct-view.mjs", "dashboard.html", "dashboard.css", "dashboard.js", "review.mjs", "scan-policy.mjs", "quarantine.mjs", "quarantine-ui.mjs", "core.mjs", "results.mjs", "folder-scan.mjs", "folder-labels.mjs", "installation.mjs", "i18n.mjs", "installer.pyz", "icon.svg"].includes(name)) {
+  if (!["automatic-idle.mjs", "options.html", "options.mjs", "feedback.mjs", "state-storage.mjs", "scan-history.mjs", "direct-transport.mjs", "direct-view.mjs", "dashboard.html", "dashboard.css", "dashboard.js", "review.mjs", "scan-policy.mjs", "quarantine.mjs", "quarantine-ui.mjs", "core.mjs", "results.mjs", "folder-scan.mjs", "folder-labels.mjs", "installation.mjs", "i18n.mjs", "installer.pyz", "icon.svg"].includes(name)) {
     response.writeHead(404).end(); return;
   }
   const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript", ".svg": "image/svg+xml", ".pyz": "application/octet-stream" };
@@ -290,6 +290,17 @@ try {
       }
       assert.equal(await evaluate("!document.getElementById('panel-settings').hidden"), true);
       assert.equal(await evaluate("location.pathname"), "/dashboard.html");
+      await evaluate("document.getElementById('idle-automatic').click()");
+      await until("testState.settings.idleAutomatic===true && !document.getElementById('idle-automatic').disabled");
+      await evaluate("failSettings=true;document.getElementById('idle-automatic').click()");
+      await dismissMessage();
+      await until("!document.getElementById('idle-automatic').disabled");
+      assert.equal(await evaluate("document.getElementById('idle-automatic').checked"), true);
+      await evaluate("failSettings=false;document.getElementById('idle-automatic').click()");
+      await until("testState.settings.idleAutomatic===false && !document.getElementById('idle-automatic').disabled");
+      await evaluate("testState.idleWaiting=true");
+      await until("!document.getElementById('idle-waiting').hidden");
+      await evaluate("testState.idleWaiting=false");
       await evaluate("testState.receiptRecovery={token:'synthetic'}");
       await until("!document.getElementById('receipt-recovery').hidden");
       await evaluate("document.getElementById('tab-results').click();document.getElementById('receipt-open-scan').click()");

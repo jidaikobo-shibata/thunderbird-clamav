@@ -11,7 +11,7 @@ function event() {
 
 let caseId = 0;
 async function harness({ failReads = [], failWrites = [], direct = false, backupFailure = false, saved = {}, mails = [], nativeFailure = false, oversized = false, deleteAllowed = false, deleteFailure = false, deleteFailureIds = [], scanResult = {}, scanGate = null,
-  manageInfo = null, healthResult = null, configureMessages = null, configureToolbar = null, folderRefs = [{ id: "inbox", accountId: "one", path: "/Inbox", name: "受信トレイ" }] } = {}) {
+  manageInfo = null, healthResult = null, configureMessages = null, configureToolbar = null, configureIdle = null, folderRefs = [{ id: "inbox", accountId: "one", path: "/Inbox", name: "受信トレイ" }] } = {}) {
   let stored = structuredClone(saved);
   const storageCounts = { reads: 0, writes: 0 };
   const notifications = [], opened = [], rawReads = [], timers = [], deleted = [], nativePorts = [];
@@ -78,6 +78,7 @@ async function harness({ failReads = [], failWrites = [], direct = false, backup
     tabs: { query: async () => [], create: async () => {} }, windows: { update: async () => {} },
     messageDisplay: { open: async value => opened.push(value) }
   };
+  if (configureIdle) api.idle = configureIdle();
   const directRequests = [], migrationBackups = [];
   if (direct) {
     const createPort = api.runtime.connectNative;
@@ -4604,4 +4605,73 @@ test("options entry does not broaden trusted runtime message origins", async () 
     assert.equal(await h.send("state", {}, { id: "unit", url: h.api.runtime.getURL(page) }), undefined);
   }
   assert.equal((await h.send("state")).ok, true);
+});
+
+function idleFixture(initial = "active") {
+  let listener, state = initial;
+  return { api: () => ({ onStateChanged: { addListener(callback) { listener = callback; } },
+    setDetectionInterval(seconds) { assert.equal(seconds, 30); }, queryState: async () => state }),
+    change(next) { state = next; listener(next); } };
+}
+test("idle automatic intake is durable, manual inspection runs, and activity pauses the next mail", async () => {
+  const idle = idleFixture(), mails = [mail(13001), mail(13002), mail(13003)];
+  let release, enter;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { enter = resolve; });
+  const h = await harness({ mails, configureIdle: idle.api,
+    saved: { settings: { enabled: true, accountIds: ["one"], notifications: false, idleAutomatic: true } },
+    scanGate: async id => { if (id === 13001) { enter(); await gate; } } });
+  h.events.newMail.listeners[0](mails[0].folder, { messages: mails.slice(0, 2) });
+  await settle(h, state => state.records.length === 2 && state.idleWaiting);
+  assert.equal(h.rawReads.length, 0);
+  assert(h.stored().records.every(record => record.status === "queued"));
+  h.api.mailTabs.getSelectedMessages = async () => ({ messages: [mails[2]] });
+  assert.equal((await h.send("scanSelection")).ok, true);
+  await settle(h, state => state.records.some(record => record.messageId === 13003 && record.status === "clean"));
+  idle.change("idle"); await started;
+  idle.change("active"); release();
+  await settle(h, state => state.records.find(record => record.messageId === 13001)?.status === "clean" && state.idleWaiting);
+  assert.deepEqual(h.rawReads, [13003, 13001]);
+  idle.change("idle");
+  await settle(h, state => state.records.every(record => record.status === "clean"));
+  assert.deepEqual(h.rawReads, [13003, 13001, 13002]);
+});
+test("turning idle scheduling off resumes pending automatic mail", async () => {
+  const idle = idleFixture(), message = mail(14001);
+  const h = await harness({ mails: [message], configureIdle: idle.api,
+    saved: { settings: { enabled: true, accountIds: ["one"], notifications: false, idleAutomatic: true } } });
+  h.events.newMail.listeners[0](message.folder, { messages: [message] });
+  await settle(h, state => state.idleWaiting);
+  const state = await h.send("state");
+  assert.equal((await h.send("settings", {settings:{...state.settings,idleAutomatic:false}})).ok, true);
+  await settle(h, state => state.records[0]?.status === "clean");
+});
+test("idle wait survives restart and backend failure never marks mail clean", async () => {
+  const idle = idleFixture(), message = mail(15001);
+  const h = await harness({ mails: [message], configureIdle: idle.api,
+    saved: { settings: { enabled: true, accountIds: ["one"], notifications: false, idleAutomatic: true } } });
+  h.events.newMail.listeners[0](message.folder, { messages: [message] });
+  await settle(h, state => state.idleWaiting);
+  const saved = h.stored();
+  const next = await harness({ mails: [message], saved, configureIdle: () => ({onStateChanged:{addListener(){}},setDetectionInterval(){},queryState:async()=>{throw Error("idle backend failed");}}) });
+  const state = await settle(next, state => state.issue.includes("idle backend failed"));
+  assert.equal(state.records[0].status, "queued"); assert.equal(next.rawReads.length, 0);
+});
+
+test("automatic quarantine identity reads also wait for idle", async () => {
+  const idle = idleFixture(), isolation = {id:"isolation",accountId:"one",path:"/Isolation"};
+  const old = {...mail(16001),folder:isolation}, incoming = {...old,id:16002};
+  const digest = await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello"));
+  const record = {key:"idle-quarantine",status:"detected",sha256:digest,locator:locator(old),
+    quarantine:{status:"moved",destination:isolation}};
+  const h = await harness({mails:[incoming],folderRefs:[isolation],configureIdle:idle.api,
+    saved:{records:[record],settings:{enabled:true,accountIds:["one"],notifications:false,idleAutomatic:true}}});
+  h.events.newMail.listeners[0](isolation,{messages:[incoming]});
+  await settle(h,state=>state.idleWaiting);
+  assert.equal(h.rawReads.length,0);
+  assert(h.stored().records.find(item=>item.messageId===incoming.id).quarantineCheckPending);
+  idle.change("idle");
+  await settle(h,state=>!state.records.some(item=>item.messageId===incoming.id));
+  assert(h.rawReads.includes(incoming.id));
+  assert((await h.send("state")).records.some(item=>item.key===record.key));
 });

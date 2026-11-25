@@ -3134,5 +3134,14 @@
   },
   "receiptRecoveryChanged": {
     "message": "More messages require reinspection. Review the notice again."
+  },
+  "idleAutomaticLabel": {
+    "message": "Start automatic inspection after 30 seconds without computer input"
+  },
+  "idleAutomaticHint": {
+    "message": "While you are active, incoming messages are saved as pending. An inspection already started will finish; subsequent automatic inspections wait. Manual inspections do not wait."
+  },
+  "idleAutomaticWaiting": {
+    "message": "Automatic inspection is waiting for 30 seconds without computer input. Pending messages have not been inspected."
   }
 }

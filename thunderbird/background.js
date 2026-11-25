@@ -1,3 +1,4 @@
+import { AutomaticIdle } from "./automatic-idle.mjs";
 import { ReceiptBudget } from "./receipt-budget.mjs";
 import { toolbarUpdates } from "./toolbar-updates.mjs";
 import { StateStorage, readStoredState } from "./state-storage.mjs";
@@ -59,6 +60,7 @@ let recordChanges = Promise.resolve(), recordStaging = null;
 let manualMutations = Promise.resolve();
 let automaticReceipts = 0;
 const pendingReceipts = new Set();
+const automaticIdle = new AutomaticIdle(api.idle, () => { void ready.then(drain).catch(report); });
 const receiptBudget = new ReceiptBudget();
 let receiptRecovery = null, recoveringReceipts = false;
 let savingReceiptRecovery = false, receiptRecoveryDirty = false;
@@ -559,6 +561,7 @@ function changeSettings(input) {
       if (!settings.enabled && !running) scanConnection.discard();
     });
     await writes;
+    void automaticIdle.refresh(settings.idleAutomatic).catch(report);
     void updateBadge().catch(report);
     void drain().catch(report);
     return { ok: true };
@@ -911,11 +914,11 @@ function pendingQuarantineCheck(record) {
 // The queued locator is durable before body I/O. Only this independent worker
 // waits for quarantine identity proofs; admission, manual work and drain do not.
 async function checkQuarantineReceipts() {
-  if (checkingQuarantineReceipts || maintenanceActive() || helperRemoved) return;
+  if (checkingQuarantineReceipts || maintenanceActive() || helperRemoved || !automaticIdle.canStart(settings)) return;
   checkingQuarantineReceipts = true;
   const attempted = new Set();
   try {
-    while (!maintenanceActive() && !helperRemoved) {
+    while (!maintenanceActive() && !helperRemoved && automaticIdle.canStart(settings)) {
       const record = [...records, ...(overflowPending ? [overflowPending] : [])].find(item =>
         pendingQuarantineCheck(item) && !attempted.has(item));
       if (!record) break;
@@ -1193,9 +1196,9 @@ async function drain() {
       }
       // Folder work is fed one at a time, after fresh mail and manual work.
       let record = records.find(item => !deleting.has(item.key) && item.status === "queued" && item.source === "automatic" && !item.quarantineCheckPending &&
-        settings.enabled && settings.accountIds.includes(item.locator.accountId)) ||
+        automaticIdle.canStart(settings) && settings.enabled && settings.accountIds.includes(item.locator.accountId)) ||
         (overflowPending?.status === "queued" && overflowPending.source === "automatic" && !overflowPending.quarantineCheckPending &&
-          settings.enabled && settings.accountIds.includes(overflowPending.locator.accountId) ? overflowPending : null) ||
+          automaticIdle.canStart(settings) && settings.enabled && settings.accountIds.includes(overflowPending.locator.accountId) ? overflowPending : null) ||
         records.find(item => !deleting.has(item.key) && item.status === "queued" && item.source === "manual") ||
         (overflowPending?.status === "queued" && overflowPending.source === "manual" ? overflowPending : null);
       if (!record && folderScan.available()) {
@@ -1457,6 +1460,7 @@ async function initialize() {
   api.menus.create({ id: "scan", title: t("mail051", "ClamAVで選択メールを検査"), contexts: ["message_list"] });
   api.menus.create({ id: "scan-folder", title: t("mail052", "ClamAVでフォルダーを検査"), contexts: ["folder_pane"] });
   await save();
+  void automaticIdle.refresh(settings.idleAutomatic).catch(report);
   await helperInfo();
   await updateBadge();
 }
@@ -1939,6 +1943,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
     switch (request.type) {
       case "state":
         return { ok: true, directMigrationBackup, settings, records, overflowPending, overflowReport, issue, receiptRecovery, lastHealth, lastScan, resultsRequest, resultsFilter, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
+          idleWaiting: !automaticIdle.canStart(settings) && [...records, ...(overflowPending ? [overflowPending] : [])].some(record => record.source === "automatic" && record.status === "queued" && settings.accountIds.includes(record.locator.accountId)),
           resultActionsBusy: Boolean(running || folderScan.active || deleting.size),
           folderJob: folderScan.snapshot(), accounts: (await api.accounts.list())
           .filter(account => ["imap", "pop3", "none"].includes(account.type))
@@ -2306,6 +2311,7 @@ setInterval(() => {
     if (pendingMaintenance && !pendingMaintenance.applying && Date.now() > pendingMaintenance.expires) releaseMaintenance();
     if (maintenanceActive() || helperRemoved) return;
     pruneMoveIntakes();
+    void automaticIdle.refresh(settings.idleAutomatic).catch(report);
     void saveReceiptRecovery();
     void recoverReceipts().catch(report);
     for (const record of records) {

@@ -62,6 +62,7 @@
   </section>
   <section id="panel-results" role="tabpanel" aria-labelledby="tab-results" tabindex="0" hidden>
     <h2><span data-i18n="mail141">検査結果</span></h2>
+    <p id="idle-waiting" role="status" data-i18n="idleAutomaticWaiting" hidden>自動検査は無操作待ちです。PCを30秒間操作しないと開始します。待機中のメールは未検査です。</p>
     <section id="receipt-recovery" class="connection-status" hidden>
       <h3 data-i18n="receiptRecoveryTitle">未検査のメールを確認してください</h3>
       <p data-i18n="receiptRecoveryHint">新着メールの受付が上限に達し、未検査のメールが残っている可能性があります。自動検査を有効にしていたアカウントの受信先・振り分け先フォルダーを「検査」タブから検査してください。この案内は、再検査を終えてから閉じてください。</p>
@@ -121,7 +122,10 @@
   <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" tabindex="0" hidden>
     <h2><span data-i18n="mail255">設定</span></h2>
     <form id="settings-form">
-      <fieldset><legend data-i18n="autoAccountsHeading">新着メールを自動検査するアカウント</legend><div id="accounts"></div></fieldset>
+      <fieldset><legend data-i18n="autoAccountsHeading">新着メールを自動検査するアカウント</legend><div id="accounts"></div>
+        <label><input id="idle-automatic" type="checkbox"> <span data-i18n="idleAutomaticLabel">PCを30秒間操作していないときに自動検査を開始する</span></label>
+        <p class="hint" data-i18n="idleAutomaticHint">操作中は検査待ちとして保存します。開始済みの検査は完了させ、次のメールから待機します。手動検査は待機しません。</p>
+      </fieldset>
       <fieldset><legend data-i18n="notificationHeading">通知</legend><label><input id="notifications" type="checkbox"> <span data-i18n="mail296">デスクトップ通知を有効にする</span></label></fieldset>
       <fieldset><legend data-i18n="qHeading">検出したメールの隔離</legend>
         <p data-i18n="qSettingsHint">同じアカウント内の専用フォルダーを選んでください。フォルダーはThunderbirdで作成できます。自動隔離は、設定後に届く新着メールで脅威を検出した場合だけに適用します。</p>
