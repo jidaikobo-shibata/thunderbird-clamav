@@ -1,3 +1,4 @@
+import { IncomingQueue } from "./incoming-queue.mjs";
 import { AutomaticIdle } from "./automatic-idle.mjs";
 import { ReceiptBudget } from "./receipt-budget.mjs";
 import { toolbarUpdates } from "./toolbar-updates.mjs";
@@ -19,6 +20,7 @@ import { canDelete, canForget, canRetry } from "./results.mjs";
 import { FolderScan, FOLDER_STATES, realFolder, checkpointHint, refreshScanFolders } from "./folder-scan.mjs";
 
 const api = messenger;
+const incomingQueue = new IncomingQueue(api.storage.local);
 const toolbar = toolbarUpdates(api.browserAction);
 const stateStorage = new StateStorage(api.storage.local);
 const DIRECT = directRuntime(api.runtime);
@@ -65,6 +67,8 @@ const receiptBudget = new ReceiptBudget();
 let receiptRecovery = null, recoveringReceipts = false;
 let savingReceiptRecovery = false, receiptRecoveryDirty = false;
 let receiptIssue = null;
+let reconcileIncoming = true;
+let incomingStorageIssue = null;
 let checkingQuarantineReceipts = false;
 let automaticQuarantines = Promise.resolve();
 const automaticQuarantineTasks = new Set();
@@ -229,20 +233,21 @@ function position(message) {
   return JSON.stringify([message.id, message.folder?.accountId, message.folder?.path, message.folder?.id]);
 }
 
-async function verified(record, expectedFingerprint = null, check = () => {}) {
+async function verified(record, expectedFingerprint = null, check = () => {}, read = rawBytes, beforeRead) {
   check();
-  const message = await resolveRecord(record, check);
+  const message = await resolveRecord(record, check, beforeRead, read);
   check();
   if (message.external || !message.folder) throw new Error(t("mail010", "保存されているメールを特定できません。"));
   let fingerprint;
   if (record.sha256) {
-    const digest = await sha256(await rawBytes(message.id, MAX_TRANSFER_BYTES, check));
+    const digest = await sha256(await read(message.id, MAX_TRANSFER_BYTES, check, beforeRead));
     check();
     if (digest !== record.sha256) throw new Error(t("mail011", "対象メールが検査時と一致しません。再検査してください。"));
     fingerprint = "sha256:" + digest;
   } else {
     // Failed/oversized scans may have no scan digest. Establish a confirmation
     // snapshot without loading the entire message or invoking the scanner.
+    beforeRead?.();
     const raw = await api.messages.getRaw(message.id, { data_format: "File", decrypt: false });
     check();
     if (!raw || !Number.isSafeInteger(raw.size) || raw.size < 0 || typeof raw.slice !== "function") {
@@ -286,7 +291,7 @@ async function carryReviewFingerprint(record, expectedFingerprint) {
     const deadline = new Promise((resolve, reject) => {
       timer = inputTimers.set(() => { active = false; reject(expired()); }, REVIEW_FINGERPRINT_TIMEOUT_MS);
     });
-    const result = await Promise.race([verified(copy, expectedFingerprint, check), deadline]);
+    const result = await Promise.race([verified(copy, expectedFingerprint, check, rawBytes, record.source === "automatic" ? beforeAutomaticRead : undefined), deadline]);
     check();
     if (moveIdentity(record) !== identity || record.status !== status ||
         (!records.includes(record) && record !== overflowPending) || deleting.has(record.key)) return null;
@@ -297,9 +302,11 @@ async function carryReviewFingerprint(record, expectedFingerprint) {
   finally { active = false; inputTimers.clear(timer); }
 }
 
-function excludePausedAutomatic() {
-  for (const record of [...records, ...(overflowPending ? [overflowPending] : [])]) {
-    if (!pausedAutomatic(record, settings)) continue;
+function excludePausedAutomatic(candidates = [...records, ...(overflowPending ? [overflowPending] : [])]) {
+  for (const record of candidates) {
+    const expired = record.receiptGeneration !== undefined &&
+      record.receiptGeneration !== (settings.receiptGenerations?.[record.locator.accountId] || null);
+    if (!pausedAutomatic(record, settings) && !(expired && record.source === "automatic" && record.status === "queued")) continue;
     const previousDetail = record.detail;
     record.status = "incomplete";
     record.unscannedReason = "automaticExcluded";
@@ -377,7 +384,17 @@ function startAutomaticQuarantine(record, config) {
           await save();
           deadlineCheck();
         };
-        await moveToQuarantine(api, copy, target, { verified, rawBytes, save: commit, session, automatic: true, check });
+        const readWhenIdle = async (id, limit, guard) => {
+          while (!automaticIdle.canStart(settings)) {
+            guard();
+            await new Promise(resolve => setTimeout(resolve, 250));
+          }
+          return rawBytes(id, limit, guard);
+        };
+        await moveToQuarantine(api, copy, target, {
+          verified: (item, fingerprint, guard) => verified(item, fingerprint, guard, readWhenIdle),
+          rawBytes: readWhenIdle, save: commit, session, automatic: true, check
+        });
       }, QUARANTINE_TIMEOUT_MS);
     } catch (error) {
       if (automaticQuarantineTasks.has(record)) {
@@ -549,7 +566,11 @@ function changeSettings(input) {
       const old = previous.quarantine?.[accountId];
       if (config.auto) config.activation = old?.auto && old.folderId === config.folderId && old.path === config.path && old.activation ? old.activation : crypto.randomUUID();
     }
-    const next = { ...candidate, ...(quarantine ? { quarantine } : {}) };
+    const generations = { ...previous.receiptGenerations };
+    const removed = previous.accountIds.filter(id => !candidate.accountIds.includes(id));
+    for (const id of removed) generations[id] = crypto.randomUUID();
+    const next = { ...candidate, ...(quarantine ? { quarantine } : {}),
+      ...(Object.keys(generations).length ? { receiptGenerations: generations } : {}) };
     writes = writes.catch(() => {}).then(async () => {
       if (maintenanceActive() || helperRemoved) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
       if (batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation)) throw new Error(t("qBusy", "このメールは処理中です。"));
@@ -557,6 +578,7 @@ function changeSettings(input) {
       // effects. On startup, queued exclusions are derived from these settings.
       await api.storage.local.set({ settings: next });
       settings = next;
+      if (removed.length) reconcileIncoming = true;
       excludePausedAutomatic();
       if (!settings.enabled && !running) scanConnection.discard();
     });
@@ -741,8 +763,15 @@ async function openDashboard() {
   }
 }
 
-async function rawBytes(messageId, maxBytes = MAX_TRANSFER_BYTES, check = () => {}) {
+class WaitingForIdle extends Error {}
+
+function beforeAutomaticRead() {
+  if (!automaticIdle.canStart(settings)) throw new WaitingForIdle();
+}
+
+async function rawBytes(messageId, maxBytes = MAX_TRANSFER_BYTES, check = () => {}, beforeRead) {
   check();
+  beforeRead?.();
   // Never request decryption: this version must not prompt for keys or store
   // decrypted mail. Encrypted MIME is explicitly marked incomplete by the host.
   const raw = await api.messages.getRaw(messageId, { data_format: "File", decrypt: false });
@@ -760,7 +789,7 @@ async function rawBytes(messageId, maxBytes = MAX_TRANSFER_BYTES, check = () => 
   return new Uint8Array(buffer);
 }
 
-async function resolveRecord(record, check = () => {}) {
+async function resolveRecord(record, check = () => {}, beforeRead, read = rawBytes) {
   // A persisted Thunderbird numeric ID must never be reused after restart.
   if (record.session === session && Number.isInteger(record.messageId)) {
     try {
@@ -769,8 +798,12 @@ async function resolveRecord(record, check = () => {}) {
       if (sameEnvelope(message, record.locator)) return message;
     } catch { check(); /* Moved/deleted messages are resolved below. */ }
   }
+  const unresolved = (reason, detail) => Object.assign(new Error(detail), { unscannedReason: reason });
+  if (record.ambiguousAfterRestart || incomingQueue.entries.get(record.key)?.ambiguousAfterRestart) {
+    throw unresolved("ambiguousMessage", t("incomingKnownCopies", "同じアカウントで同じ識別情報を持つメールを複数受け付けたため、再起動後に元のメールを区別できません。"));
+  }
   if (!record.locator.headerMessageId) {
-    throw new Error(t("mail034", "対象を再特定できません。Thunderbirdで選択して再検査してください。"));
+    throw unresolved("missingIdentifier", t("mail034", "対象を再特定できません。Thunderbirdで選択して再検査してください。"));
   }
   const candidates = [];
   check();
@@ -778,17 +811,24 @@ async function resolveRecord(record, check = () => {}) {
   check();
   for await (const message of messagePages(api.messages, first, check)) {
     if (sameEnvelope(message, record.locator)) candidates.push(message);
-    if (candidates.length > 20) throw new Error(t("mail035", "同じ識別情報のメールが多いため、対象を特定できません。"));
+    if (candidates.length > 20) throw unresolved("ambiguousMessage", t("mail035", "同じ識別情報のメールが多いため、対象を特定できません。"));
   }
   const matches = [];
   for (const candidate of candidates) {
-    if (!record.sha256 || await sha256(await rawBytes(candidate.id, MAX_TRANSFER_BYTES, check)) === record.sha256) {
+    if (!record.sha256 || await sha256(await read(candidate.id, MAX_TRANSFER_BYTES, check, beforeRead)) === record.sha256) {
       matches.push(candidate);
     }
   }
   check();
   if (matches.length !== 1) {
-    throw new Error(t("mail036", "対象メールが存在しないか、複数候補があり特定できません。選択して再検査してください。"));
+    if (!matches.length) throw unresolved("messageMissing", t("incomingTargetMissing", "受付したメールを見つけられません。移動または削除された可能性があります。"));
+    throw unresolved("ambiguousMessage", t("incomingTargetAmbiguous", "一致するメールが複数あるため、対象を特定できません。"));
+  }
+  if ((record.source === "automatic" || Object.hasOwn(record, "receiptGeneration")) && !record.sha256 &&
+      (record.locator.folder?.path !== matches[0].folder?.path ||
+       record.locator.size && matches[0].size && record.locator.size !== matches[0].size ||
+       record.session === session && record.messageId !== matches[0].id)) {
+    throw unresolved("unverifiedLocation", t("incomingTargetMoved", "候補のメールと受付時の位置が異なり、同じメールであることを確認できません。"));
   }
   record.messageId = matches[0].id;
   record.session = session;
@@ -838,7 +878,7 @@ function recoverMovedInput(record, expectedPosition) {
   return recordChanges;
 }
 
-async function readScanInput(record, maxBytes, check) {
+async function readScanInput(record, maxBytes, check, beforeRead) {
   for (let retry = 0; ; retry++) {
     check();
     const revision = moveRevisions.get(record) || 0;
@@ -847,13 +887,13 @@ async function readScanInput(record, maxBytes, check) {
     try {
       // resolveRecord may reconstruct IDs after restart. Its late completion
       // must never modify the live history belonging to another attempt.
-      const message = await resolveRecord(lookup, check);
+      const message = await resolveRecord(lookup, check, beforeRead);
       check();
       if (before === moveLocationStamp(record) && revision === (moveRevisions.get(record) || 0)) {
         record.messageId = lookup.messageId; record.session = lookup.session; record.locator = lookup.locator;
       }
       if (message.headersOnly) throw new Error(t("mail043", "ヘッダーのみ取得されたメールです。本文をダウンロードして再検査してください。"));
-      const bytes = await rawBytes(message.id, maxBytes, check);
+      const bytes = await rawBytes(message.id, maxBytes, check, beforeRead);
       check();
       return { message, bytes };
     } catch (error) {
@@ -868,8 +908,9 @@ async function prepareScanInput(record, maxBytes) {
   let active = true, timer, inputDigest = null;
   const expired = () => new Error(t("scanInputTimeout", "メールの特定・本文の取得または照合が60秒以内に完了しませんでした。時間をおいて再検査してください。"));
   const check = () => { if (!active) throw expired(); };
+  const beforeRead = record.source === "automatic" ? beforeAutomaticRead : undefined;
   const work = async () => {
-    const { message, bytes } = await readScanInput(record, maxBytes, check);
+    const { message, bytes } = await readScanInput(record, maxBytes, check, beforeRead);
     const digest = await sha256(bytes);
     check();
     inputDigest = digest;
@@ -880,7 +921,7 @@ async function prepareScanInput(record, maxBytes) {
       if (attempt >= 3) throw new Error(t("mail036", "対象メールが存在しないか、複数候補があり特定できません。選択して再検査してください。"));
       current = await api.messages.get(record.messageId);
       check();
-      if (!sameEnvelope(current, record.locator) || await sha256(await rawBytes(current.id, maxBytes, check)) !== digest) {
+      if (!sameEnvelope(current, record.locator) || await sha256(await rawBytes(current.id, maxBytes, check, beforeRead)) !== digest) {
         check();
         throw new Error(t("mail036", "対象メールが存在しないか、複数候補があり特定できません。選択して再検査してください。"));
       }
@@ -896,8 +937,10 @@ async function prepareScanInput(record, maxBytes) {
     });
     return await Promise.race([work(), deadline]);
   } catch (error) {
+    if (error instanceof WaitingForIdle) throw error;
     const failure = new Error(error?.message || String(error), { cause: error });
     if (error?.incomplete) failure.incomplete = true;
+    if (error?.unscannedReason) failure.unscannedReason = error.unscannedReason;
     if (inputDigest) failure.scanInputDigest = inputDigest;
     throw failure;
   } finally { active = false; inputTimers.clear(timer); }
@@ -928,26 +971,30 @@ async function checkQuarantineReceipts() {
       try {
         const proof = await quarantineDeadline(async check => {
           const copy = structuredClone(record);
-          const message = await resolveRecord(copy, check);
+          const message = await resolveRecord(copy, check, beforeAutomaticRead);
           check();
           let digest = null;
           const known = await inQuarantine(message, settings, quarantineHistory(), { session, digestOf: async message => {
-            const hash = await sha256(await rawBytes(message.id, MAX_TRANSFER_BYTES, check));
+            const hash = await sha256(await rawBytes(message.id, MAX_TRANSFER_BYTES, check, beforeAutomaticRead));
             check(); digest = hash; return hash;
           } });
           check();
-          const current = await resolveRecord(structuredClone(record), check);
+          const current = await resolveRecord(structuredClone(record), check, beforeAutomaticRead);
           check();
           return { message: current, digest, known: known && position(current) === position(message) };
         }, QUARANTINE_RECEIPT_TIMEOUT_MS);
         ({ message, digest, known } = proof);
-      } catch { /* Timeout/uncertain identity falls back to ordinary inspection. */ }
+      } catch (error) {
+        if (error instanceof WaitingForIdle) break;
+        // Timeout or uncertain identity falls back to ordinary inspection.
+      }
       const commit = async () => {
         if ((!records.includes(record) && overflowPending !== record) || !pendingQuarantineCheck(record) ||
             moveIdentity(record) !== identity || maintenanceActive() || helperRemoved) return;
         // The supporting history may have been removed/moved while I/O waited.
         // Re-evaluate using only the already-read digest: no body I/O in this gate.
-        const suppress = known && message && quarantineCandidates(message, quarantineHistory()).some(item =>
+        const currentReceipt = incomingQueue.entries.get(record.key);
+        const suppress = (currentReceipt?.session !== session || currentReceipt.messageId === record.messageId) && known && message && quarantineCandidates(message, quarantineHistory()).some(item =>
           item.session === session && item.messageId === message.id || digest && item.sha256 === digest);
         await reserveRecords([record], async () => {
           if (suppress) {
@@ -960,11 +1007,19 @@ async function checkQuarantineReceipts() {
             } else {
               records = records.filter(item => item !== record);
               if (overflowPending === record) overflowPending = null;
+              if (incomingQueue.entries.has(record.key)) await incomingQueue.finish(record.key);
             }
           } else {
             const candidate = { ...record, detail: t("mail038", "検査を待っています。") };
             delete candidate.quarantineCheckPending;
-            if (message && sameEnvelope(message, record.locator)) {
+            const receipt = incomingQueue.entries.get(record.key);
+            if (receipt?.session === session && receipt.messageId !== record.messageId) {
+              // A unique, explicit move may have updated the receipt while the
+              // old quarantine proof was waiting. Scan the new location.
+              candidate.locator = receipt.locator;
+              candidate.messageId = receipt.messageId;
+              candidate.session = session;
+            } else if (message && sameEnvelope(message, record.locator)) {
               candidate.locator = locator(message); candidate.messageId = message.id; candidate.session = session;
             }
             await persistState(records.map(item => item === record ? candidate : item), overflowPending === record ? candidate : overflowPending);
@@ -1009,27 +1064,40 @@ function stageMessage(message, source) {
       if (maintenanceActive() || helperRemoved) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
       if (batchProgress?.active) throw new Error(t("bulkBusy", "一括操作の処理中です。"));
     }
+    const receipt = incomingQueue.find(session, message.id);
+    if (source === "automatic" && receipt) return {};
     const existing = [...records, ...(overflowPending ? [overflowPending] : []), ...automaticQuarantineTasks].find(record => record.session === session && record.messageId === message.id);
     if (existing && source === "automatic") return {};
     if (existing && (existing === overflowPending || deleting.has(existing.key) || ["deleted", "queued", "scanning"].includes(existing.status))) return {};
+    if (source === "automatic") {
+      const accountId = accountOf(message);
+      const config = settings.quarantine?.[accountId];
+      const receiptGeneration = settings.receiptGenerations?.[accountId] || null;
+      await incomingQueue.accept({
+        key: crypto.randomUUID(), createdAt: new Date().toISOString(),
+        messageId: message.id, session, locator: locator(message),
+        receiptGeneration,
+        ...(quarantineCheckPending ? { quarantineCheckPending: true } : {}),
+        ...(config?.auto ? { quarantineIntent: {
+          folderId: config.folderId, path: config.path, activation: config.activation
+        } } : {})
+      });
+      if (receiptGeneration !== (settings.receiptGenerations?.[accountId] || null)) reconcileIncoming = true;
+      for (const receipt of pendingReceipts) {
+        if (receipt.current?.id === message.id) receipt.current = null;
+      }
+      return {};
+    }
     const evicted = !existing && records.length >= MAX_RECORDS ? records.find(record =>
       ["clean", "deleted"].includes(record.status) && !deleting.has(record.key)) : null;
     const overflow = !existing && records.length >= MAX_RECORDS && !evicted;
-    if (overflow && (overflowPending || source === "manual" && automaticReceipts)) return { retry: true, wait: new Promise(resolve => overflowWaiters.add(resolve)) };
-    const candidate = existing ? { ...existing } : { key: crypto.randomUUID(), createdAt: new Date().toISOString() };
+    if (overflow && (overflowPending || automaticReceipts || incomingQueue.entries.size && automaticIdle.canStart(settings))) return { retry: true, wait: new Promise(resolve => overflowWaiters.add(resolve)) };
+    const candidate = existing ? { ...existing } : { key: receipt?.key || crypto.randomUUID(), createdAt: receipt?.createdAt || new Date().toISOString() };
     rememberResult(candidate);
     Object.assign(candidate, { messageId: message.id, session, locator: locator(message), source,
-      quarantineIntent: source === "automatic" && settings.quarantine?.[accountOf(message)]?.auto ? {
-        folderId: settings.quarantine[accountOf(message)].folderId, path: settings.quarantine[accountOf(message)].path,
-        activation: settings.quarantine[accountOf(message)].activation
-      } : null,
-      unscannedReason: null, status: "queued", detail: t("mail038", "検査を待っています。"), signatures: [],
+      quarantineIntent: null, unscannedReason: null, status: "queued", detail: t("mail038", "検査を待っています。"), signatures: [],
       sha256: null, engine: null, attempts: 0, nextRetry: null, folderJobId: null, updatedAt: new Date().toISOString() });
     delete candidate.quarantineCheckPending;
-    if (quarantineCheckPending) {
-      candidate.quarantineCheckPending = true;
-      candidate.detail = t("qReceiptChecking", "隔離済みのメールか確認するため、検査を保留しています。");
-    }
     let wait;
     await reserveRecords([existing, evicted].filter(Boolean), async () => {
       const history = existing ? records.map(record => record === existing ? candidate : record) :
@@ -1042,11 +1110,6 @@ function stageMessage(message, source) {
       } else {
         if (evicted) records = records.filter(record => record !== evicted);
         records.push(candidate);
-      }
-      // An account can be disabled while the candidate's write is pending.
-      if (source === "automatic") {
-        excludePausedAutomatic();
-        if (candidate.status !== "queued") await persistState();
       }
     });
     await updateBadge().catch(report);
@@ -1072,8 +1135,13 @@ async function saveReceiptRecovery() {
   } catch (error) { report(error); }
   finally { savingReceiptRecovery = false; }
 }
-function deferReceipt(page) {
-  receiptRecovery = { token: crypto.randomUUID() };
+function deferReceipt(page, folder) {
+  const folders = [...(receiptRecovery?.folders || [])];
+  if (folder?.accountId && folder.path && settings.accountIds.includes(folder.accountId) &&
+      folders.length < 32 && !folders.some(item => item.accountId === folder.accountId && item.path === folder.path)) {
+    folders.push({ accountId: folder.accountId, path: folder.path, name: folder.name, id: folder.id });
+  }
+  receiptRecovery = { token: crypto.randomUUID(), folders };
   if (page?.id && api.messages.abortList) void api.messages.abortList(page.id).catch(report);
   // One bounded marker replaces excess headers, never a successful verdict.
   report(receiptRecoveryMessage());
@@ -1095,7 +1163,7 @@ function receiptPages(first, receipt) {
       // Keep the cursor on rejection so the next attempt can retry it.
       page = { id, messages: [] };
       const next = await api.messages.continueList(id);
-      if (!receiptBudget.page(receipt, next)) { deferReceipt(next); page = null; break; }
+      if (!receiptBudget.page(receipt, next)) { deferReceipt(next, receipt.folder); page = null; break; }
       page = next; offset = 0;
     }
     return { done: true };
@@ -1131,12 +1199,8 @@ function enqueueReceipt(receipt) {
         if (!message.external && message.folder) {
           automaticReceipts++;
           try {
-            let outcome;
-            do {
-              outcome = await stageMessage(message, "automatic");
-              void drain().catch(report);
-              if (outcome.wait) await outcome.wait;
-            } while (outcome.retry);
+            await stageMessage(message, "automatic");
+            void drain().catch(report);
           } finally { automaticReceipts--; wakeOverflow(); }
         }
         receipt.current = null;
@@ -1146,12 +1210,17 @@ function enqueueReceipt(receipt) {
       if (!pendingReceipts.size && receiptIssue) {
         if (issue === receiptIssue) issue = "";
         receiptIssue = null;
+        await save().catch(report);
       }
-      await save().catch(report);
     } catch (error) {
       pendingReceipts.delete(receipt);
       pendingReceipts.add(receipt);
       receiptIssue = t("incomingReceiptPending", "新着メールの受付を保留しています。一覧取得または保存の復旧後に再開します。未保存の受付を保持するため、復旧するまでThunderbirdを終了しないでください。 $1", [String(error.message || error)]);
+      if (receipt.folder?.accountId && receipt.folder.path) {
+        receiptIssue += " " + t("incomingRecoveryFolders", "受付できなかった通知のフォルダー：$1", [
+          [receipt.folder.accountId, receipt.folder.path].join(" / ")
+        ]);
+      }
       report(receiptIssue);
     } finally { receipt.retryQueued = false; wakeOverflow(); }
   };
@@ -1160,10 +1229,10 @@ function enqueueReceipt(receipt) {
   return receipt.work;
 }
 
-function enqueue(first, source) {
+function enqueue(first, source, folder) {
   if (source === "automatic") {
-    const receipt = { current: null };
-    if (!receiptBudget.page(receipt, first)) { deferReceipt(first); return Promise.resolve(); }
+    const receipt = { current: null, folder };
+    if (!receiptBudget.page(receipt, first)) { deferReceipt(first, folder); return Promise.resolve(); }
     receipt.iterator = receiptPages(first, receipt);
     return enqueueReceipt(receipt);
   }
@@ -1182,6 +1251,75 @@ function enqueue(first, source) {
   return manualMutations;
 }
 
+// Caller serializes slot changes with recordChanges.
+async function stageIncomingCandidate(next) {
+  const candidate = { ...structuredClone(next), receiptGeneration: next.receiptGeneration || null, source: "automatic", status: "queued", attempts: 0,
+    updatedAt: next.createdAt, signatures: [], sha256: null, nextRetry: null,
+    detail: next.quarantineCheckPending ? t("qReceiptChecking", "隔離済みのメールか確認するため、検査を保留しています。") :
+      t("mail038", "検査を待っています。") };
+  delete candidate.sequence;
+  excludePausedAutomatic([candidate]);
+  if (candidate.status === "queued" && !automaticIdle.canStart(settings)) return false;
+  const evicted = records.length >= MAX_RECORDS && records.find(record =>
+    ["clean", "deleted"].includes(record.status) && !deleting.has(record.key));
+  const overflow = records.length >= MAX_RECORDS && !evicted;
+  if (overflow && overflowPending) return false;
+  await reserveRecords(evicted ? [evicted] : [], async () => {
+    if (overflow) {
+      await persistState(records, candidate);
+      overflowPending = candidate;
+    } else {
+      const history = [...records.filter(record => record !== evicted), candidate];
+      await persistState(history);
+      records = records.filter(record => record !== evicted);
+      records.push(candidate);
+    }
+    excludePausedAutomatic([candidate]);
+    if (candidate.status !== "queued") await persistState();
+  });
+  return true;
+}
+
+// Commit the same receipt key to the scanner's durable work slot before
+// retiring the intake entry. Restart can reconcile either side of this handoff.
+function promoteIncoming(beforeSequence = Infinity) {
+  const work = async () => {
+    const slots = new Map(records.map(record => [record.key, record]));
+    if (overflowPending) slots.set(overflowPending.key, overflowPending);
+    let next;
+    for (const entry of incomingQueue.entries.values()) {
+      if (entry.sequence >= beforeSequence) break;
+      const slot = slots.get(entry.key);
+      if (!slot) {
+        if (!automaticIdle.canStart(settings) && settings.accountIds.includes(entry.locator.accountId) &&
+            (entry.receiptGeneration || null) === (settings.receiptGenerations?.[entry.locator.accountId] || null)) continue;
+        next = entry; break;
+      }
+      if (!["queued", "scanning"].includes(slot.status)) {
+        // A durable result and its receipt may coexist after an interruption.
+        await persistState();
+        await incomingQueue.finish(entry.key);
+        wakeOverflow();
+        return true;
+      }
+    }
+    if (!next) { reconcileIncoming = false; return false; }
+    try {
+      const staged = await stageIncomingCandidate(next);
+      if (staged && incomingStorageIssue?.key === next.key) {
+        if (issue === incomingStorageIssue.detail) { issue = ""; await persistState(); }
+        incomingStorageIssue = null;
+      }
+      return staged;
+    } catch (error) {
+      incomingStorageIssue = {key:next.key, detail:error.message || String(error)};
+      throw error;
+    }
+  };
+  recordChanges = recordChanges.catch(() => {}).then(work);
+  return recordChanges;
+}
+
 async function drain() {
   void checkQuarantineReceipts().catch(report);
   if (running || recordStaging || maintenanceActive() || helperRemoved || batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation)) return;
@@ -1191,15 +1329,32 @@ async function drain() {
     while (true) {
       if (recordStaging) break;
       if (overflowPending && !["queued", "scanning"].includes(overflowPending.status)) {
+        if (incomingQueue.entries.has(overflowPending.key)) {
+          await persistState();
+          await incomingQueue.finish(overflowPending.key);
+        }
         notify(overflowPending);
         await finishOverflow(overflowPending);
       }
       // Folder work is fed one at a time, after fresh mail and manual work.
-      let record = records.find(item => !deleting.has(item.key) && item.status === "queued" && item.source === "automatic" && !item.quarantineCheckPending &&
-        automaticIdle.canStart(settings) && settings.enabled && settings.accountIds.includes(item.locator.accountId)) ||
-        (overflowPending?.status === "queued" && overflowPending.source === "automatic" && !overflowPending.quarantineCheckPending &&
-          automaticIdle.canStart(settings) && settings.enabled && settings.accountIds.includes(overflowPending.locator.accountId) ? overflowPending : null) ||
-        records.find(item => !deleting.has(item.key) && item.status === "queued" && item.source === "manual") ||
+      let record = null, earliest = Infinity;
+      const idle = automaticIdle.canStart(settings);
+      if (idle && settings.enabled) {
+        for (const item of overflowPending ? [...records, overflowPending] : records) {
+          if (item.status !== "queued" || item.source !== "automatic" || item.quarantineCheckPending ||
+              deleting.has(item.key) || !settings.accountIds.includes(item.locator.accountId)) continue;
+          const order = incomingQueue.entries.get(item.key)?.sequence ?? 0;
+          if (order < earliest) { record = item; earliest = order; }
+        }
+      }
+      const oldestReceipt = incomingQueue.entries.values().next().value;
+      if (oldestReceipt && oldestReceipt.sequence < earliest &&
+          (idle || reconcileIncoming || !settings.accountIds.includes(oldestReceipt.locator.accountId)) &&
+          await promoteIncoming(earliest)) {
+        void checkQuarantineReceipts().catch(report);
+        continue;
+      }
+      record ||= records.find(item => !deleting.has(item.key) && item.status === "queued" && item.source === "manual") ||
         (overflowPending?.status === "queued" && overflowPending.source === "manual" ? overflowPending : null);
       if (!record && folderScan.available()) {
         if (records.length >= MAX_RECORDS) {
@@ -1219,6 +1374,8 @@ async function drain() {
         }
       }
       if (!record) break;
+      const incomingKey = incomingQueue.entries.has(record.key) ? record.key : null;
+      if (incomingQueue.entries.get(incomingKey)?.ambiguousAfterRestart) record.ambiguousAfterRestart = true;
       const fromFolder = record.source === "folder";
       const policy = scanPolicy(settings.scanSettings);
       delete record.quarantineCheckPending;
@@ -1272,13 +1429,23 @@ async function drain() {
           connection = client = null;
         }
       } catch (error) {
+        if (error instanceof WaitingForIdle) {
+          record.status = "queued";
+          record.attempts--;
+          record.detail = t("mail038", "検査を待っています。");
+          await save();
+          continue;
+        }
         currentDigest = error.scanInputDigest || currentDigest;
         if (scannerTouched || client?.closed) {
           if (connection) scanConnection.discard(connection);
           connection = client = null;
         }
         record.sha256 = currentDigest;
-        record.status = error.incomplete ? "incomplete" : "error";
+        const finalLookupFailure = error.unscannedReason && record.source === "automatic" &&
+          (record.attempts >= 2 || record === overflowPending);
+        record.status = error.incomplete || finalLookupFailure ? "incomplete" : "error";
+        if (finalLookupFailure) record.unscannedReason = error.unscannedReason;
         delete record.detailMessages;
         record.detail = error.message || t("mail045", "検査に失敗しました。");
       }
@@ -1332,6 +1499,7 @@ async function drain() {
       // Reserve the detected result before yielding to storage/notification UI.
       if (autoQuarantine) startAutomaticQuarantine(record, quarantineConfig);
       await save();
+      if (incomingKey) await incomingQueue.finish(incomingKey);
       if (!fromFolder) notify(record, coalescedMove);
       if (record === overflowPending) await finishOverflow(record);
       await updateBadge();
@@ -1400,13 +1568,19 @@ async function initialize() {
       await api.clamDirect.backup(JSON.stringify(stored))) : { notNeeded: true };
     await api.storage.local.set({ incrementalMigrationBackup });
   }
+  incomingQueue.restore(stored);
   settings = normalizeAutomaticSettings(data.settings);
+  if (data.settings?.receiptGenerations) settings.receiptGenerations = data.settings.receiptGenerations;
   records = Array.isArray(data.records) ? data.records : [];
   overflowPending = data.overflowPending || null;
   overflowReport = data.overflowReport || null;
   if (overflowReport) overflowReport.recent = (overflowReport.recent || []).slice(0, 20);
   issue = typeof data.issue === "string" ? data.issue : "";
-  receiptRecovery = typeof data.receiptRecovery?.token === "string" ? { token: data.receiptRecovery.token.slice(0, 80) } : null;
+  receiptRecovery = typeof data.receiptRecovery?.token === "string" ? {
+    token: data.receiptRecovery.token.slice(0, 80),
+    folders: Array.isArray(data.receiptRecovery.folders) ? data.receiptRecovery.folders.slice(0, 32).filter(folder =>
+      typeof folder?.accountId === "string" && typeof folder.path === "string") : []
+  } : null;
   lastHealth = data.lastHealth || null;
   helperRemoved = !DIRECT && data.helperRemoved === true;
   installation = data.installation || null;
@@ -1425,6 +1599,8 @@ async function initialize() {
       }
     }
   }
+  await incomingQueue.adoptQueued([...records, overflowPending]);
+  if (incomingQueue.entries.size) await incomingQueue.markAmbiguousReceipts([...records, overflowPending, ...(overflowReport?.recent || [])]);
   let retryInterrupted = false;
   for (const record of [...records, ...(overflowPending ? [overflowPending] : []), ...(overflowReport?.recent || [])]) {
     if (record.quarantine?.status === "moving") {
@@ -1477,12 +1653,12 @@ api.messages.onNewMailReceived.addListener((folder, list) => {
     if (list.id && api.messages.abortList) void api.messages.abortList(list.id).catch(() => {});
     return;
   }
-  void ready.then(() => {
+  return ready.then(() => {
     if (!settings.enabled || folder.accountId && !settings.accountIds.includes(folder.accountId)) {
       if (list.id && api.messages.abortList) void api.messages.abortList(list.id).catch(report);
       return;
     }
-    return enqueue(list, "automatic");
+    return enqueue(list, "automatic", folder);
   }).catch(report);
 }, true);
 // Only an explicit, content-verified move can establish this relationship.
@@ -1579,7 +1755,7 @@ async function settlePendingMove(original) {
       const current = await api.messages.get(original.messageId);
       if (stopped) return null;
       const matches = position(current) === expectedPosition && sameEnvelope(current, original.locator) &&
-        await sha256(await rawBytes(current.id, scanPolicy(original.scanSettings).mailMiB * 1024 * 1024)) === digest;
+        await sha256(await rawBytes(current.id, scanPolicy(original.scanSettings).mailMiB * 1024 * 1024, undefined, beforeAutomaticRead)) === digest;
       // Explicit moves can arrive during the read. Verify the latest location
       // within the same deadline, rather than using stale bytes or identities.
       if (stopped) return null;
@@ -1607,7 +1783,11 @@ async function settlePendingMove(original) {
       const removed = new Set(redundant);
       await persistState(records.filter(record => !removed.has(record)));
       records = records.filter(record => !removed.has(record));
-      for (const duplicate of redundant) { linked.delete(duplicate); pendingMoveOrigin.delete(duplicate); }
+      for (const duplicate of redundant) {
+        linked.delete(duplicate);
+        pendingMoveOrigin.delete(duplicate);
+        if (incomingQueue.entries.has(duplicate.key)) await incomingQueue.finish(duplicate.key);
+      }
       if (!linked.size) pendingMoveDuplicates.delete(original);
     });
   };
@@ -1646,7 +1826,7 @@ function moveEnvelope(message) {
 }
 
 // Bound body I/O without making digest-free input recovery wait for a slot.
-async function moveDigest(messageId) {
+async function moveDigest(messageId, beforeRead) {
   if (activeMoveProofs >= 4) await new Promise(resolve => moveProofWaiters.push(resolve));
   else activeMoveProofs++;
   let active = true, timer;
@@ -1654,7 +1834,7 @@ async function moveDigest(messageId) {
   const check = () => { if (!active) throw expired(); };
   try {
     const work = async () => {
-      const digest = await sha256(await rawBytes(messageId, MAX_TRANSFER_BYTES, check));
+      const digest = await sha256(await rawBytes(messageId, MAX_TRANSFER_BYTES, check, beforeRead));
       check(); return digest;
     };
     return await Promise.race([work(), new Promise((resolve, reject) => {
@@ -1727,7 +1907,7 @@ async function applyMove(oldMessages, newMessages, digests, allowed = null) {
     const matches = !hash && candidates.length === 1 ? [...candidates] : [];
     if (hash) for (const candidate of candidates) {
       try {
-        if (!digests.has(candidate.id)) digests.set(candidate.id, moveDigest(candidate.id));
+        if (!digests.has(candidate.id)) digests.set(candidate.id, moveDigest(candidate.id, record.source === "automatic" ? beforeAutomaticRead : undefined));
         if (await digests.get(candidate.id) === hash) matches.push(candidate);
       }
       catch { /* An unreadable move cannot transfer a prior verdict. */ }
@@ -1826,6 +2006,41 @@ async function scheduleMove(oldMessages, newMessages, allowed = null) {
     const key = moveEnvelope(message);
     if (!destinations.has(key)) destinations.set(key, []);
     destinations.get(key).push(message);
+  }
+  if (!allowed && incomingQueue.entries.size) {
+    const sourceCounts = new Map();
+    for (const old of oldMessages) {
+      const key = moveEnvelope(old);
+      sourceCounts.set(key, (sourceCounts.get(key) || 0) + 1);
+    }
+    const relocate = async () => {
+      for (const old of oldMessages) {
+        const entry = incomingQueue.find(session, old.id);
+        if (!entry || position(old) !== position({ id: entry.messageId, folder: entry.locator.folder }) ||
+            !sameEnvelope(old, entry.locator)) continue;
+        const key = moveEnvelope(old);
+        const targets = destinations.get(key);
+        if (sourceCounts.get(key) !== 1 || targets?.length !== 1) continue;
+        const target = targets[0];
+        const targetReceipt = incomingQueue.find(session, target.id);
+        if (targetReceipt && running && targetReceipt !== entry &&
+            records.some(record => record.key === entry.key) &&
+            !records.some(record => record.key === targetReceipt.key) &&
+            overflowPending?.key !== targetReceipt.key) {
+          // Bring only the notified destination into the existing move proof.
+          // The independent receipt survives until equivalent bytes are proven.
+          await stageIncomingCandidate(targetReceipt);
+        }
+        if (target.external || !realFolder(target.folder) || !sameEnvelope(target, entry.locator) ||
+            (target.size && entry.locator.size && target.size !== entry.locator.size) ||
+            incomingQueue.find(session, target.id)) continue;
+        const location = locator(target);
+        await incomingQueue.relocate(entry, target.id, location);
+
+      }
+    };
+    recordChanges = recordChanges.catch(() => {}).then(relocate);
+    await recordChanges;
   }
   const currentById = new Map();
   for (const record of [...records, ...(overflowPending ? [overflowPending] : [])]) {
@@ -1942,8 +2157,8 @@ api.runtime.onMessage.addListener(async (request, sender) => {
     if (batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation) && !["state", "cancelBatch", "helperInfo", "health"].includes(request.type)) throw new Error(t("qBusy", "このメールは処理中です。"));
     switch (request.type) {
       case "state":
-        return { ok: true, directMigrationBackup, settings, records, overflowPending, overflowReport, issue, receiptRecovery, lastHealth, lastScan, resultsRequest, resultsFilter, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
-          idleWaiting: !automaticIdle.canStart(settings) && [...records, ...(overflowPending ? [overflowPending] : [])].some(record => record.source === "automatic" && record.status === "queued" && settings.accountIds.includes(record.locator.accountId)),
+        return { ok: true, directMigrationBackup, settings, records, incomingCount: incomingQueue.entries.size, oldestIncoming: incomingQueue.entries.values().next().value?.createdAt || null, overflowPending, overflowReport, issue, receiptRecovery, lastHealth, lastScan, resultsRequest, resultsFilter, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
+          idleWaiting: !automaticIdle.canStart(settings) && (incomingQueue.entries.size > 0 || [...records, ...(overflowPending ? [overflowPending] : [])].some(record => record.source === "automatic" && record.status === "queued" && settings.accountIds.includes(record.locator.accountId))),
           resultActionsBusy: Boolean(running || folderScan.active || deleting.size),
           folderJob: folderScan.snapshot(), accounts: (await api.accounts.list())
           .filter(account => ["imap", "pop3", "none"].includes(account.type))

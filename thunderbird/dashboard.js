@@ -619,6 +619,19 @@ async function refresh() {
     $("background-error").hidden = true;
     renderRecords();
     $("receipt-recovery").hidden = !latest.receiptRecovery;
+    const affectedFolders = latest.receiptRecovery?.folders || [];
+    $("receipt-folders").hidden = !affectedFolders.length;
+    if (affectedFolders.length) {
+      const names = affectedFolders.map(folder => [accounts.get(folder.accountId) || folder.accountId,
+        folderLabel(folder, folderNames)].join(" / "));
+      setText($("receipt-folders"), t("incomingRecoveryFolders", "受付できなかった通知のフォルダー：$1", [names.join(t("listSeparator", " ／ "))]));
+    }
+    $("incoming-summary").hidden = !latest.incomingCount;
+    if (latest.incomingCount) {
+      setText($("incoming-summary"), t("incomingSummary", "新着の検査待ち：$1通 ／ 最も古い受付：$2", [
+        String(latest.incomingCount), new Date(latest.oldestIncoming).toLocaleString(uiLanguage())
+      ]));
+    }
     $("idle-waiting").hidden = !latest.idleWaiting;
     renderHelperNotice();
     if (sessionStorage.getItem("clam-open-settings") === "1") {

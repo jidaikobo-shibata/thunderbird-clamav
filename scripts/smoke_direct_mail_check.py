@@ -53,7 +53,7 @@ def fixture_xpi(target, original, version, scenario="full"):
     manifest["experiment_apis"]["testFixture"] = {"schema": "fixture/schema.json", "parent": {"scopes": ["addon_parent"], "paths": [["testFixture"]], "script": "fixture/api.js"}}
     params = {"prepare": [], "inject": [{"name": "message", "type": "integer"}], "update": [],
               "backup": [{"name": "path", "type": "string"}], "runtime": [], "report": [{"name": "data", "type": "string"}],
-              "finish": [{"name": "action", "type": "string"}], "idle": [], "coverMain": []}
+              "finish": [{"name": "action", "type": "string"}], "idle": [], "coverMain": [{"name":"pauseFallback","type":"boolean","optional":True}], "restoreFrames": [], "composeFrames": []}
     payload["fixture/schema.json"] = json.dumps([{"namespace": "testFixture", "functions": [{"name": name, "type": "function", "async": True, "parameters": values} for name, values in params.items()]}]).encode()
     payload["fixture/mail.json"] = json.dumps(mails()).encode()
     payload["fixture/options.json"] = json.dumps({"scenario": scenario}).encode()
@@ -75,6 +75,9 @@ def fixture_xpi(target, original, version, scenario="full"):
         payload["background.js"] = payload["background.js"].replace(b"const api = messenger;", b"""
         const api = messenger;
         const testStorageSet = api.storage.local.set.bind(api.storage.local);
+        const realIdleQuery = api.idle.queryState.bind(api.idle);
+        api.idle.queryState = async seconds =>
+          (await api.storage.local.get('fixtureActiveInput')).fixtureActiveInput ? 'active' : realIdleQuery(seconds);
         const testRaw = api.messages.getRaw.bind(api.messages);
         const testNotification = api.notifications.create.bind(api.notifications);
         api.notifications.create = async (id, options) => {
@@ -127,13 +130,9 @@ def fixture_xpi(target, original, version, scenario="full"):
               if (!target) throw new Error('Missing synthetic moved header');
               // Replay the real destination header before forwarding its move.
               // Local folders do not always emit a second new-mail event.
-              testNewListener(target.folder,{messages:[target]});
-              const distinctIds = before.messages[0].id !== target.id;
-              for (let attempt = 0; attempt < 200; attempt++) {
-                if (!distinctIds || records.filter(record => record.locator.subject === target.subject).length === 2) break;
-                await new Promise(resolve => setTimeout(resolve,10));
-              }
-              await testStorageSet({fixturePendingMoveStaged:distinctIds && records.filter(record => record.locator.subject === target.subject).length === 2});
+              await testNewListener(target.folder,{messages:[target]});
+              await testStorageSet({fixturePendingMoveStaged:before.messages[0].id !== target.id &&
+                Boolean(incomingQueue.find(session, target.id))});
               await listener(before,after);
               await testStorageSet({fixtureMoveForwarded:true});
               return;
@@ -274,8 +273,8 @@ def fixture_xpi(target, original, version, scenario="full"):
         };
         let failedReceipt = false;
         api.storage.local.set = async value => {
-          if (!failedReceipt && Object.entries(value).some(([key, page]) => key.startsWith('historyPage:') && Array.isArray(page) &&
-              page.some(record => record.source === 'automatic' && record.status === 'queued' && record.locator?.subject === 'Synthetic receipt recovery'))) {
+          if (!failedReceipt && Object.entries(value).some(([key, entry]) =>
+              key.startsWith('incomingReceipt:') && entry?.locator?.subject === 'Synthetic receipt recovery')) {
             failedReceipt = true; throw new Error('synthetic incoming receipt failure');
           }
           return testStorageSet(value);
@@ -303,6 +302,71 @@ def fixture_xpi(target, original, version, scenario="full"):
         payload["background.js"] = payload["background.js"].replace(
             b"}, QUARANTINE_RECEIPT_TIMEOUT_MS);",
             b"}, (await api.storage.local.get('fixtureReceiptDeadline')).fixtureReceiptDeadline ? 2000 : QUARANTINE_RECEIPT_TIMEOUT_MS);")
+    if scenario in ("intake", "latency"):
+        # The compositor has no input device. Supply active state only to the
+        # background scheduling policy, and count its actual body requests.
+        payload["background.js"] = payload["background.js"].replace(b"const api = messenger;", b"""
+        const api = messenger;
+        api.idle.queryState = async () => 'active';
+        api.idle.onStateChanged.addListener = () => {};
+        const listen = api.messages.onNewMailReceived.addListener.bind(api.messages.onNewMailReceived);
+        api.messages.onNewMailReceived.addListener = (listener, ...args) => {
+          listen(listener,...args);
+          api.storage.onChanged.addListener(async (changes, area) => {
+            const ids = changes.fixtureReplayMissing?.newValue;
+            if (area !== 'local' || !Array.isArray(ids)) return;
+            for (const id of ids) {
+              const header = await api.messages.get(id);
+              await listener(header.folder,{messages:[header]});
+            }
+          });
+        };
+        const intakeRaw = api.messages.getRaw.bind(api.messages);
+        api.messages.getRaw = async (...args) => {
+          if (settings.idleAutomatic) throw new Error('Automatic body read while active');
+          return intakeRaw(...args);
+        };
+        """)
+        payload["fixture/seed.js"] = payload["fixture/seed.js"].replace(b"await messenger.testFixture.update();", b"""
+        const {settings} = await messenger.storage.local.get('settings');
+        await messenger.storage.local.set({
+          settings:{...settings,idleAutomatic:true},
+          records:Array.from({length:1000},(_,i)=>({...record,key:'protected-'+i}))
+        });
+        await messenger.testFixture.update();
+        """)
+    if scenario == "intake" and version == "0.20.0a2":
+        payload["background.js"] = payload["background.js"].replace(b"const incomingQueue =", b"""
+        const fixtureSet = api.storage.local.set.bind(api.storage.local);
+        const fixtureRemove = api.storage.local.remove.bind(api.storage.local);
+        const beforeCrashRaw = api.messages.getRaw.bind(api.messages);
+        const crashSubject = 'Synthetic queued 4';
+        async function stopAt(stage) {
+          const {fixtureCrashStages = []} = await api.storage.local.get('fixtureCrashStages');
+          if (fixtureCrashStages.includes(stage)) return;
+          await fixtureSet({fixtureCrashStages:[...fixtureCrashStages,stage]});
+          const runtime = await api.testFixture.runtime();
+          await api.testFixture.report(JSON.stringify({running:true,restart:stage,parent:runtime.parent}));
+          await new Promise(() => {});
+        }
+        api.messages.getRaw = async (id, options) => {
+          if ((await api.messages.get(id)).subject === crashSubject) {
+            const {fixtureBodyReads = 0} = await api.storage.local.get('fixtureBodyReads');
+            await fixtureSet({fixtureBodyReads:fixtureBodyReads+1});
+          }
+          return beforeCrashRaw(id,options);
+        };
+        api.storage.local.set = async patch => {
+          if (patch.overflowPending?.locator?.subject === crashSubject && patch.overflowPending.status === 'clean')
+            await stopAt('before-result-save');
+          return fixtureSet(patch);
+        };
+        api.storage.local.remove = async key => {
+          if (overflowPending?.locator?.subject === crashSubject && overflowPending.status === 'clean' &&
+              key === 'incomingReceipt:' + overflowPending.key) await stopAt('after-result-save');
+          return fixtureRemove(key);
+        };
+        const incomingQueue =""")
     if scenario == "recovery":
         # Faults exist only in instrumented, disposable-profile XPIs.
         payload["fixture/seed.js"] = payload["fixture/seed.js"].replace(
@@ -392,10 +456,15 @@ def descendants(pid):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--scenario", choices=["full", "missing", "quit", "uninstall", "recovery", "invalid-storage"], default="full")
+    parser.add_argument("--scenario", choices=["full", "intake", "latency", "missing", "quit", "uninstall", "recovery", "invalid-storage"], default="full")
+    parser.add_argument("--comparison-xpi", type=Path, help="Use a previous build for the latency scenario")
     options = parser.parse_args()
-    xpi = build()
+    if options.comparison_xpi and options.scenario != "latency":
+        parser.error("--comparison-xpi requires --scenario latency")
+    xpi = options.comparison_xpi or build()
     output = ROOT / ("dist/direct-mail-integration" + ("-" + options.scenario if options.scenario != "full" else ""))
+    if options.comparison_xpi:
+        output = output.with_name(output.name + "-baseline")
     output.mkdir(parents=True, exist_ok=True)
     (output / "result.json").write_text('{"status":"running"}\n')
     with tempfile.TemporaryDirectory(prefix="clam-direct-mail-") as temporary:
@@ -437,12 +506,33 @@ def main():
                     command = ["/usr/bin/dbus-run-session", "--config-file=" + str(bus), "--", "/usr/bin/thunderbird-esr"]
                 else:
                     raise RuntimeError("Unsupported integration platform")
-                browser = subprocess.Popen(command + ["--no-remote", "--new-instance", "--offline", "--profile", str(profile)], env=env, stdout=log, stderr=log, start_new_session=True)
-                processes.append(browser)
+                def launch():
+                    process = subprocess.Popen(command + ["--no-remote", "--new-instance", "--offline", "--profile", str(profile)], env=env, stdout=log, stderr=log, start_new_session=True)
+                    processes.append(process)
+                    return process
+                browser = launch()
+                restarts = []
                 deadline = time.monotonic() + 1200
                 while time.monotonic() < deadline:
+                    if options.scenario == "intake":
+                        for marker in profile.glob("direct-progress-*.json"):
+                            progress = json.loads(marker.read_text())
+                            stage = progress.get("restart")
+                            if not stage or stage in restarts:
+                                continue
+                            parent = progress["parent"]
+                            if parent != browser.pid and parent not in descendants(browser.pid):
+                                raise RuntimeError("Fixture reported a process outside the disposable browser")
+                            if stage == "before-scan":
+                                # Let Thunderbird flush its local mailbox deletion.
+                                (profile / "direct-action-ready").touch()
+                            else:
+                                os.kill(parent, signal.SIGKILL)
+                            browser.wait(timeout=30)
+                            restarts.append(stage)
+                            browser = launch()
                     results = []
-                    versions = ["0.20.0a1"] if options.scenario in ("missing", "recovery", "invalid-storage") else ["0.20.0a1", "0.20.0a2"]
+                    versions = ["0.20.0a1"] if options.scenario in ("latency", "missing", "recovery", "invalid-storage") else ["0.20.0a1", "0.20.0a2"]
                     for version in versions:
                         path = profile / f"direct-result-{version}.json"
                         if path.exists():
@@ -453,13 +543,15 @@ def main():
                         if len(results) == 2:
                             old_sessions = results[0]["runtime"]["sessions"]
                             assert all(not Path(session["directory"]).exists() and not alive(session["pid"]) for session in old_sessions), "Update left a scanner"
+                        if options.scenario == "intake":
+                            assert restarts == ["before-scan","before-result-save","after-result-save"], restarts
                         active = results[-1]["runtime"]
                         for result in results:
                             closed = [*result.get("completedSessions", []), *result.get("rescanCleanup", []), *result.get("cancelledSessions", [])]
                             assert all(not Path(value["directory"]).exists() and not alive(value["pid"]) for value in closed), "Completed/cancelled scan left resources"
                         children = [pid for session in active["sessions"] for pid in descendants(session["pid"])]
-                        assert len(children) >= (2 if options.scenario in ("missing", "recovery", "invalid-storage") else 3), "Expected supervised scanner descendants"
-                        if options.scenario in ("full", "missing", "recovery", "invalid-storage"):
+                        assert len(children) >= (2 if options.scenario in ("latency", "missing", "recovery", "invalid-storage") else 3), "Expected supervised scanner descendants"
+                        if options.scenario in ("full", "latency", "intake", "missing", "recovery", "invalid-storage"):
                             os.kill(active["parent"], signal.SIGKILL)
                         else:
                             (profile / "direct-action-ready").touch()
@@ -468,7 +560,8 @@ def main():
                             time.sleep(0.05)
                         else: raise RuntimeError("Parent crash left a scanner or private mail files")
                         report = {"ok": True, "scenario": options.scenario, "results": results,
-                                  "updateCleanup": len(results) == 2, "lifecycleCleanup": True}
+                                  "updateCleanup": len(results) == 2, "lifecycleCleanup": True,
+                                  **({"processRestarts": restarts} if restarts else {})}
                         (output / "result.json").write_text(json.dumps(report, indent=2) + "\n")
                         print(json.dumps(report, indent=2))
                         return

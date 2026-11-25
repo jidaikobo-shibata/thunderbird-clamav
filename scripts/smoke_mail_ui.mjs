@@ -301,11 +301,12 @@ try {
       assert.equal(await evaluate("document.getElementById('idle-automatic').checked"), true);
       await evaluate("failSettings=false;document.getElementById('idle-automatic').click()");
       await until("testState.settings.idleAutomatic===false && !document.getElementById('idle-automatic').disabled");
-      await evaluate("testState.idleWaiting=true");
+      await evaluate("testState.idleWaiting=true;testState.incomingCount=7;testState.oldestIncoming='2026-11-25T01:00:00Z'");
       await until("!document.getElementById('idle-waiting').hidden");
-      await evaluate("testState.idleWaiting=false");
-      await evaluate("testState.receiptRecovery={token:'synthetic'}");
-      await until("!document.getElementById('receipt-recovery').hidden");
+      await until("!document.getElementById('incoming-summary').hidden && document.getElementById('incoming-summary').textContent.includes('7')");
+      await evaluate("testState.idleWaiting=false;testState.incomingCount=0");
+      await evaluate("testState.receiptRecovery={token:'synthetic',folders:[{accountId:'test',path:'/Recovery'}]}");
+      await until("!document.getElementById('receipt-recovery').hidden && document.getElementById('receipt-folders').textContent.includes('Recovery')");
       await evaluate("document.getElementById('tab-results').click();document.getElementById('receipt-open-scan').click()");
       assert.equal(await evaluate("!document.getElementById('panel-scan').hidden"), true);
       await evaluate("document.getElementById('tab-results').click();document.getElementById('receipt-recovery-clear').click()");

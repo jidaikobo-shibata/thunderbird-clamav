@@ -3154,5 +3154,39 @@
   },
   "installerSaved": {
     "message": "導入用ファイルを保存しました。保存先のフォルダーで、表示されたコマンドを実行してください。"
+  },
+  "incomingSummary": {
+    "message": "新着の検査待ち：$ARG1$通 ／ 最も古い受付：$ARG2$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "incomingTargetMissing": {
+    "message": "受付したメールを見つけられません。移動または削除された可能性があります。"
+  },
+  "incomingTargetAmbiguous": {
+    "message": "一致するメールが複数あるため、対象を特定できません。"
+  },
+  "incomingTargetMoved": {
+    "message": "候補のメールと受付時の位置が異なり、同じメールであることを確認できません。"
+  },
+  "incomingCoverage": {
+    "message": "受信通知が届かず、受付記録もないメールは自動で特定できません。確認するには「検査」で受信先・振り分け先を選び、フォルダーに残っているメールを検査してください。"
+  },
+  "incomingRecoveryFolders": {
+    "message": "受付できなかった通知のフォルダー：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "incomingKnownCopies": {
+    "message": "同じアカウントで同じ識別情報を持つメールを複数受け付けたため、再起動後に元のメールを区別できません。"
   }
 }

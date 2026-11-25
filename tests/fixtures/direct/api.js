@@ -19,6 +19,7 @@ var testFixture = (() => {
       const server = () => MailServices.accounts.localFoldersServer;
       const folder = name => server().rootFolder.getChildNamed(name);
 
+      let pausedMain;
       return { testFixture: {
         prepare: async () => {
           await guard();
@@ -37,7 +38,7 @@ var testFixture = (() => {
         inject: async id => {
           await guard();
           const message = context.extension.messageManager.get(id);
-          if (!message || ![folder("DirectSource").URI, folder("DirectDrafts").URI].includes(message.folder.URI)) throw new Error("Synthetic folder only");
+          if (!message || ![folder("DirectSource").URI, folder("DirectHistory").URI, folder("DirectDrafts").URI].includes(message.folder.URI)) throw new Error("Synthetic folder only");
           // messageManager may return a CachedMsgHeader rather than nsIMsgDBHdr.
           const header = message.folder.GetMessageHeader(message.messageKey);
           header.flags |= Ci.nsMsgMessageFlags.New;
@@ -55,7 +56,7 @@ var testFixture = (() => {
           if (PathUtils.parent(path) !== profile || !PathUtils.filename(path).startsWith("clam-mail-check-backup-")) throw new Error("Invalid test backup path");
           return IOUtils.readJSON(path);
         },
-        coverMain: async () => {
+        coverMain: async (pauseFallback = false) => {
           await guard();
           const main = Services.wm.getMostRecentWindow("mail:3pane");
           const account = [...MailServices.accounts.accounts].find(value => value.incomingServer.key === server().key);
@@ -72,11 +73,57 @@ var testFixture = (() => {
             await new Promise(resolve => setTimeout(resolve, 100));
           }
           if (!compose?.GetCurrentEditor?.()) throw new Error("Synthetic compose window not ready");
-          await new Promise(resolve => setTimeout(resolve, 500));
-          let painted = false;
-          main.requestAnimationFrame(() => { painted = true; });
-          await new Promise(resolve => setTimeout(resolve, 250));
-          return { composeURL: compose.document.documentURI, mainFramePending: !painted };
+          // The full dashboard test may have additional mail windows. Hide
+          // their native widgets, keeping the synthetic compose window visible.
+          for (const window of Services.wm.getEnumerator("mail:3pane")) {
+            const app = window.docShell.treeOwner.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIAppWindow);
+            app.QueryInterface(Ci.nsIBaseWindow).visibility = false;
+          }
+          compose.focus();
+          let painted = true;
+          for (let attempt = 0; attempt < 8 && painted; attempt++) {
+            painted = false;
+            const id = main.requestAnimationFrame(() => { painted = true; });
+            await new Promise(resolve => setTimeout(resolve, 250));
+            main.cancelAnimationFrame(id);
+          }
+          if (painted && pauseFallback) {
+            // Some compositors paint hidden widgets. For the toolbar regression
+            // exercise the stalled refresh driver explicitly in this fixture.
+            pausedMain = main.windowUtils;
+            pausedMain.advanceTimeAndRefresh(0);
+            painted = false;
+            main.requestAnimationFrame(() => { painted = true; });
+            await new Promise(resolve => setTimeout(resolve, 250));
+          }
+          return { composeURL: compose.document.documentURI, mainFramePending: !painted, controlledRefresh: Boolean(pausedMain) };
+        },
+        restoreFrames: async () => {
+          await guard();
+          pausedMain?.restoreNormalRefresh();
+          pausedMain = null;
+        },
+        composeFrames: async () => {
+          await guard();
+          const compose = Services.wm.getMostRecentWindow("msgcompose");
+          if (!compose?.GetCurrentEditor?.()) throw new Error("Synthetic compose is unavailable");
+          const intervals = [];
+          return new Promise(resolve => {
+            let previous = compose.performance.now(), active = true;
+            const frame = now => {
+              if (!active) return;
+              intervals.push(now - previous);
+              previous = now;
+              compose.requestAnimationFrame(frame);
+            };
+            compose.requestAnimationFrame(frame);
+            compose.setTimeout(() => {
+              active = false;
+              intervals.sort((a,b) => a-b);
+              resolve({ frames:intervals.length, p95Ms:intervals[Math.floor(intervals.length * 0.95)],
+                longestMs:intervals.at(-1) });
+            }, 1500);
+          });
         },
         runtime: async () => {
           await guard();

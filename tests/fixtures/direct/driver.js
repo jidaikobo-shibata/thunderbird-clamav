@@ -71,13 +71,118 @@ async function invalidStorageScenario() {
   await messenger.testFixture.report(JSON.stringify(report));
 }
 
+async function latencyScenario() {
+  const fixture = await messenger.testFixture.prepare(), ids = [];
+  report.compose = await messenger.testFixture.coverMain();
+  for (let i = 0; i < 32; i++) {
+    const raw = fixture.mails.plain.replace(/Subject: [^\r\n]+/, "Subject: Synthetic latency " + i)
+      .replace(/Message-ID: [^\r\n]+/i, "Message-ID: <latency-" + i + "@example.invalid>");
+    const msg = await messenger.messages.import(new File([raw], "latency.eml", {type:"message/rfc822"}),
+      fixture.source.id,{read:true,new:false});
+    ids.push(msg.id);
+  }
+  report.quiet = await messenger.testFixture.composeFrames();
+  const frames = messenger.testFixture.composeFrames();
+  await messenger.storage.local.set({fixtureReplayMissing:ids});
+  report.receiving = await frames;
+  const state = await request("state");
+  report.durableReceipts = state.incomingCount ?? state.records.filter(r => r.status==="queued").length + Number(Boolean(state.overflowPending));
+  check(report.quiet.frames > 0 && report.receiving.frames > 0, "Compose window is drawing real frames");
+  const client = new NativeClient(messenger.runtime);
+  const sample = new TextEncoder().encode("Subject: synthetic cleanup\r\n\r\nfixture");
+  await client.scan(sample,await sha256(sample),state.settings.scanSettings);
+  report.runtime = await messenger.testFixture.runtime();
+  report.ok = true;
+  await messenger.testFixture.report(JSON.stringify(report));
+}
+
+async function intakeScenario() {
+  const fixture = await messenger.testFixture.prepare();
+  let state = await request("state");
+  check(state.records.length === 1000, "Protected history restored");
+  const flags = await messenger.storage.local.get(["fixtureBurstPrepared","fixtureRunningIntake"]);
+  if (report.version === "0.20.0a1" && flags.fixtureBurstPrepared) {
+    check(state.incomingCount === 12 && state.idleWaiting, "Receipts survived a real process restart");
+    await messenger.testFixture.update();
+    return;
+  }
+  if (report.version === "0.20.0a1") {
+    report.compose = await messenger.testFixture.coverMain();
+    const imported = [];
+    for (let i = 0; i < 12; i++) {
+      // Two physical copies intentionally share their envelope and Message-ID.
+      const label = i === 1 ? 0 : i;
+      const raw = fixture.mails.plain.replace(/Subject: [^\r\n]+/, "Subject: Synthetic queued " + label)
+        .replace(/Message-ID: [^\r\n]+/i, "Message-ID: <queued-" + label + "@example.invalid>");
+      const message = await messenger.messages.import(new File([raw], "incoming.eml", {type:"message/rfc822"}),
+        i === 1 ? fixture.history.id : fixture.source.id, {read:true,new:false});
+      imported.push(message);
+      await messenger.testFixture.inject(message.id);
+    }
+    // Local-folder injection may omit a notification. Only the fixture has
+    // independent knowledge of every delivered physical message in this burst.
+    await wait(1000);
+    const observed = Object.entries(await messenger.storage.local.get(null)).filter(([key]) => key.startsWith("incomingReceipt:"));
+    const ids = new Set(observed.map(([, entry]) => entry.messageId));
+    const missing = imported.filter(message => !ids.has(message.id)).map(message => message.id);
+    report.nativeDelivered = ids.size;
+    report.replayedFromFixtureInventory = missing.length;
+    if (missing.length) await messenger.storage.local.set({fixtureReplayMissing:missing});
+    state = await settled(value => value.incomingCount === imported.length && value.idleWaiting, 20);
+    await messenger.messages.move([imported[2].id],fixture.history.id);
+    await messenger.messages.delete([imported[3].id],{deletePermanently:true,isUserAction:true});
+    const deleted = await messenger.messages.query({headerMessageId:imported[3].headerMessageId});
+    check(!deleted.messages.length, "Deleted synthetic message is absent before restart");
+    let receipts;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      receipts = Object.entries(await messenger.storage.local.get(null)).filter(([key]) => key.startsWith("incomingReceipt:"));
+      if (receipts.some(([, entry]) => entry.locator.subject === imported[2].subject && entry.locator.folder.id === fixture.history.id)) break;
+      await wait(50);
+    }
+    check(receipts.some(([, entry]) => entry.locator.subject === imported[2].subject && entry.locator.folder.id === fixture.history.id), "Explicit move persisted before restart");
+    check(receipts.length === 12 && !state.overflowReport && !state.overflowPending, "Burst is durable before any scan");
+    report.queuedBeforeRestart = receipts.length;
+    report.oldest = state.oldestIncoming;
+  } else {
+    if (!flags.fixtureRunningIntake) {
+      check(state.incomingCount === 12 && state.idleWaiting, "Every receipt survives background restart");
+      await messenger.storage.local.set({fixtureRunningIntake:true});
+      await request("settings",{settings:{...state.settings,idleAutomatic:false}});
+    }
+    state = await settled(value => !value.incomingCount && value.overflowReport?.total === 12);
+    // After restart, indistinguishable copies and the deleted delivery each
+    // require attention. The explicit filter move remains inspectable.
+    const counts = state.overflowReport.counts;
+    report.counts = counts;
+    report.uninspected = state.overflowReport.recent.map(item => ({subject:item.locator.subject,status:item.status,detail:item.detail}));
+    check(counts.clean === 9 && counts.incomplete === 3, "Only unambiguous surviving messages are inspected");
+    check(state.records.every(item => item.review?.note === "Synthetic human decision"), "Protected history retained");
+    const {fixtureBodyReads} = await messenger.storage.local.get("fixtureBodyReads");
+    check(fixtureBodyReads === 2, "Only the unfinished verdict is rescanned after process restarts");
+    report.crashTargetBodyReads = fixtureBodyReads;
+    const client = new NativeClient(messenger.runtime);
+    const bytes = new TextEncoder().encode("Subject: synthetic cleanup\r\n\r\nfixture");
+    await client.scan(bytes, await sha256(bytes),state.settings.scanSettings);
+  }
+  report.runtime = await messenger.testFixture.runtime();
+  report.ok = true;
+  await messenger.testFixture.report(JSON.stringify(report));
+  if (report.version === "0.20.0a1") {
+    await messenger.storage.local.set({fixtureBurstPrepared:true});
+    await messenger.testFixture.report(JSON.stringify({running:true,restart:"before-scan",parent:report.runtime.parent}));
+    await messenger.testFixture.finish("quit");
+  }
+}
+
 const report = { ok: false, version: messenger.runtime.getManifest().version };
 try {
   messenger.idle.setDetectionInterval(30);
   report.systemIdleState = await messenger.idle.queryState(30);
   check(["active", "idle"].includes(report.systemIdleState), "System idle API is available");
   const options = await (await fetch(messenger.runtime.getURL("fixture/options.json"))).json();
-  if (options.scenario === "invalid-storage") { await invalidStorageScenario(); }
+  if (options.scenario === "latency") { await latencyScenario(); }
+  else if (options.scenario === "intake") { await intakeScenario(); }
+  else if (options.scenario === "invalid-storage") { await invalidStorageScenario(); }
   else if (options.scenario === "recovery") { await recoveryScenario(); } else {
   let state = await request("state");
   const fixture = await messenger.testFixture.prepare();
@@ -457,12 +562,22 @@ try {
       await wait(25);
     }
     check((await messenger.storage.local.get('fixtureOverflowReady')).fixtureOverflowReady,"Protected synthetic history filled");
+    await messenger.storage.local.set({fixtureActiveInput:true});
+    const beforeBurst = await request("state");
+    await request("settings",{settings:{...beforeBurst.settings,idleAutomatic:true}});
     for(let index=0;index<22;index++) {
       const overflowRaw=fixture.mails.attachment.replace(/Subject: [^\r\n]+/,"Subject: Synthetic overflow threat "+index).replace(/Message-ID: [^\r\n]+/i,"Message-ID: <overflow-threat-"+index+"@example.invalid>");
       const imported=await messenger.messages.import(new File([overflowRaw],"overflow.eml",{type:"message/rfc822"}),fixture.source.id,{read:true,new:false});
       await messenger.testFixture.inject(imported.id);
     }
-    state=await settled(state=>state.overflowReport?.total===22);
+    state=await settled(state=>state.idleWaiting && state.incomingCount === 22);
+    const persisted = Object.entries(await messenger.storage.local.get(null)).filter(([key]) => key.startsWith("incomingReceipt:"));
+    check(persisted.length===22 && !state.overflowReport && !state.overflowPending, "Full history and active input retain all 22 receipts before scanning");
+    check(Date.parse(state.oldestIncoming) > 0 && state.records.length === 1000, "Queue summary is independent of protected history");
+    report.activeIntakeWithFullHistory = true;
+    await messenger.storage.local.set({fixtureActiveInput:false});
+    await request("settings",{settings:{...state.settings,idleAutomatic:false}});
+    state=await settled(state=>state.overflowReport?.total===22 && !state.incomingCount);
     check((await messenger.storage.local.get('fixtureOverflowQuarantineStarted')).fixtureOverflowQuarantineStarted,"First real quarantine remains held");
     check(state.records.length===1000&&state.overflowReport.recent.length===20,"Visible history stays bounded while every task is retained");
     await messenger.storage.local.set({fixtureOverflowQuarantineRelease:true});
@@ -618,7 +733,7 @@ try {
     document.getElementById('message-close').click();
     await messenger.storage.local.remove('fixtureDeleteMismatchId');
     report.operationFeedback=true;
-    report.coveredMain=await messenger.testFixture.coverMain();
+    report.coveredMain=await messenger.testFixture.coverMain(true);
     check(report.coveredMain.mainFramePending,"Main window frames are actually paused behind compose");
     const hiddenIds=[];
     for(let index=0;index<2;index++) {
@@ -634,6 +749,7 @@ try {
     }
     check(hiddenIds.every(id=>state.records.some(record=>record.messageId===id&&record.status==='clean')),"Automatic admission and scanning continue with main frames paused");
     report.hiddenToolbarIsolation=true;
+    await messenger.testFixture.restoreFrames();
 
 
     state=await request('state');

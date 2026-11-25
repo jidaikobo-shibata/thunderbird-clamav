@@ -19,7 +19,7 @@ async function harness({ failReads = [], failWrites = [], direct = false, backup
   const byId = new Map(mails.map(mail => [mail.id, mail]));
   const api = {
     permissions: { contains: async () => deleteAllowed },
-    storage: { local: { get: async () => { if (failReads.includes(++storageCounts.reads)) throw new Error("synthetic storage read failure"); return structuredClone(stored); }, set: async value => {
+    storage: { local: { remove: async key => { delete stored[key]; }, get: async () => { if (failReads.includes(++storageCounts.reads)) throw new Error("synthetic storage read failure"); return structuredClone(stored); }, set: async value => {
       if (failWrites.includes(++storageCounts.writes)) throw new Error("synthetic storage failure");
       stored = { ...stored, ...structuredClone(value) };
     } } },
@@ -1959,9 +1959,8 @@ test("ordinary moves refresh one history and preserve its review before repeated
   assert.equal(state.records[0].review.note,"keep human judgment");
   const {isReviewed}=await import("../thunderbird/review.mjs");
   assert.equal(isReviewed(state.records[0]),true);
-  const before=h.storageCounts.writes;
-  h.events.newMail.listeners[0](moved.folder,{messages:[moved]});
-  state=await settle(h,()=>h.storageCounts.writes>before);
+  await h.events.newMail.listeners[0](moved.folder,{messages:[moved]});
+  state=await h.send("state");
   assert.equal(state.records.length,1);
   assert.equal(state.records[0].key,"ordinary");
   assert.equal(h.directRequests.some(request=>request.op==="end"),false);
@@ -1970,12 +1969,8 @@ test("ordinary moves refresh one history and preserve its review before repeated
 test("changed or ambiguous move targets cannot inherit a previous verdict", async () => {
   for(const options of [{changed:true},{ambiguous:true}]){
     const {h,original,destinations}=await moveFixture(options);
-    const before=h.storageCounts.writes;
     await h.events.moved.listeners[0]({messages:[original]},{messages:destinations});
-    // An empty incoming list queues a save after move reconciliation, without
-    // inspecting or changing a mail record.
-    h.events.newMail.listeners[0](original.folder,{messages:[]});
-    const state=await settle(h,()=>h.storageCounts.writes>before);
+    const state=await h.send("state");
     assert.equal(state.records.find(record=>record.key==="ordinary").locator.folder.path,"/Inbox");
   }
 });
@@ -2141,10 +2136,8 @@ test("reverse move notifications never merge changed contents",async()=>{
   const {h,original,moved}=await moveFixture({changed:true});
   h.events.newMail.listeners[0](moved.folder,{messages:[moved]});
   await settle(h,s=>s.records[1]?.status==="clean");
-  const writes=h.storageCounts.writes;
-  h.events.moved.listeners[0]({messages:[original]},{messages:[moved]});
-  h.events.newMail.listeners[0](moved.folder,{messages:[]});
-  const state=await settle(h,()=>h.storageCounts.writes>writes);
+  await h.events.moved.listeners[0]({messages:[original]},{messages:[moved]});
+  const state=await h.send("state");
   assert.equal(state.records.length,2);
   assert.equal(state.records[0].locator.folder.path,original.folder.path);
 });
@@ -2415,7 +2408,7 @@ test("new mail outside the history slots is scanned before the next queued manua
   const h=await harness({direct:true,mails:[first,second,fresh],saved:{records,settings:{enabled:true,accountIds:["one"],notifications:false}},scanGate:id=>{if(id===1){entered();return gate;}}});
   await started;
   h.events.newMail.listeners[0](fresh.folder,{messages:[fresh]});
-  await settle(h,s=>s.overflowPending?.status==="queued");
+  await settle(h,s=>s.incomingCount === 1);
   release();
   await settle(h,s=>s.records.some(record=>record.messageId===2&&record.status==="clean"));
   assert.deepEqual(h.rawReads,[1,1001,2]);
@@ -2745,7 +2738,7 @@ for (const mode of ["normal", "failed-receipt", "disabled"]) test(`incoming over
   const original = h.api.storage.local.set;
   let failed = false;
   if (mode === "failed-receipt") h.api.storage.local.set = async value => {
-    if (!failed && value.overflowPending?.messageId === 3 && value.overflowPending.status === "queued") {
+    if (!failed && Object.entries(value).some(([key, entry]) => key.startsWith("incomingReceipt:") && entry.messageId === 3)) {
       failed = true; throw new Error("synthetic incoming reservation failure");
     }
     return original(value);
@@ -2759,7 +2752,7 @@ for (const mode of ["normal", "failed-receipt", "disabled"]) test(`incoming over
   release();
   assert.equal((await manual).ok, true);
   const expected = mode === "normal" ? [1, 3, 4, 2] : mode === "failed-receipt" ? [1, 4, 2] : [1, 2];
-  await settle(h, state => state.overflowReport?.total === expected.length && !state.overflowPending);
+  await settle(h, state => state.overflowReport?.total === (mode === "disabled" ? 4 : expected.length) && !state.overflowPending);
   assert.deepEqual(h.rawReads, expected);
   assert.deepEqual((await h.send("state")).records, before);
   assert.deepEqual(h.stored().records, before);
@@ -3063,7 +3056,7 @@ async function pendingMoveCase({ rawFails = false, header = true, hops = 1, chan
   await started;
   for (let i = 1; i < mails.length; i++) {
     h.events.newMail.listeners[0](mails[i].folder, { messages: [mails[i]] });
-    await settle(h, state => state.records.length === i + 1 && state.records.at(-1).status === "queued");
+    await settle(h, state => state.incomingCount === i + 1);
     if (!noMove) await h.events.moved.listeners[0]({ messages: [mails[i - 1]] }, { messages: [mails[i]] });
   }
   if (saveFails) {
@@ -3074,7 +3067,7 @@ async function pendingMoveCase({ rawFails = false, header = true, hops = 1, chan
     };
   }
   release();
-  const state = await settle(h, state => state.records.every(record => !["queued", "scanning"].includes(record.status)));
+  const state = await settle(h, state => !state.incomingCount && state.records.every(record => !["queued", "scanning"].includes(record.status)));
   await new Promise(resolve => setImmediate(resolve));
   h.expireIdle();
   return { h, state, mails };
@@ -3150,7 +3143,7 @@ async function blockedMoveProof(header = false, quarantine = false, scanResult =
   h.events.newMail.listeners[0](original.folder, { messages: [original] });
   await rawStarted;
   h.events.newMail.listeners[0](middle.folder, { messages: [middle] });
-  await settle(h, state => state.records.length === 2);
+  await settle(h, state => state.incomingCount === 2);
   await h.events.moved.listeners[0]({ messages: [original] }, { messages: [middle] });
   releaseRaw();
   await proofStarted;
@@ -4537,7 +4530,8 @@ test("intake overflow stays bounded and leaves a durable explicit reinspection n
   assert(state.receiptRecovery, "overflow never masquerades as successful inspection");
   assert.equal((await h.send("acknowledgeReceiptRecovery", { token: "stale" })).ok, false);
   const restarted = await harness({ saved: h.stored() });
-  assert((await restarted.send("state")).receiptRecovery);
+  const recoveredScope = (await restarted.send("state")).receiptRecovery;
+  assert.deepEqual(recoveredScope.folders.map(folder => [folder.accountId, folder.path]), [["one", "/Inbox"]]);
   assert.equal((await h.send("acknowledgeReceiptRecovery", { token: state.receiptRecovery.token })).ok, true);
   assert.equal((await h.send("state")).receiptRecovery, null);
   assert.equal(h.stored().receiptRecovery, null);
@@ -4622,9 +4616,10 @@ test("idle automatic intake is durable, manual inspection runs, and activity pau
     saved: { settings: { enabled: true, accountIds: ["one"], notifications: false, idleAutomatic: true } },
     scanGate: async id => { if (id === 13001) { enter(); await gate; } } });
   h.events.newMail.listeners[0](mails[0].folder, { messages: mails.slice(0, 2) });
-  await settle(h, state => state.records.length === 2 && state.idleWaiting);
+  await settle(h, state => state.incomingCount === 2 && state.idleWaiting);
   assert.equal(h.rawReads.length, 0);
-  assert(h.stored().records.every(record => record.status === "queued"));
+  assert.equal(h.stored().records.length, 0);
+  assert.equal(Object.keys(h.rawStored()).filter(key => key.startsWith("incomingReceipt:")).length, 2);
   h.api.mailTabs.getSelectedMessages = async () => ({ messages: [mails[2]] });
   assert.equal((await h.send("scanSelection")).ok, true);
   await settle(h, state => state.records.some(record => record.messageId === 13003 && record.status === "clean"));
@@ -4633,7 +4628,7 @@ test("idle automatic intake is durable, manual inspection runs, and activity pau
   await settle(h, state => state.records.find(record => record.messageId === 13001)?.status === "clean" && state.idleWaiting);
   assert.deepEqual(h.rawReads, [13003, 13001]);
   idle.change("idle");
-  await settle(h, state => state.records.every(record => record.status === "clean"));
+  await settle(h, state => state.records.length === 3 && state.records.every(record => record.status === "clean"));
   assert.deepEqual(h.rawReads, [13003, 13001, 13002]);
 });
 test("turning idle scheduling off resumes pending automatic mail", async () => {
@@ -4655,7 +4650,7 @@ test("idle wait survives restart and backend failure never marks mail clean", as
   const saved = h.stored();
   const next = await harness({ mails: [message], saved, configureIdle: () => ({onStateChanged:{addListener(){}},setDetectionInterval(){},queryState:async()=>{throw Error("idle backend failed");}}) });
   const state = await settle(next, state => state.issue.includes("idle backend failed"));
-  assert.equal(state.records[0].status, "queued"); assert.equal(next.rawReads.length, 0);
+  assert.equal(state.incomingCount, 1); assert.equal(next.rawReads.length, 0);
 });
 
 test("automatic quarantine identity reads also wait for idle", async () => {
@@ -4669,9 +4664,228 @@ test("automatic quarantine identity reads also wait for idle", async () => {
   h.events.newMail.listeners[0](isolation,{messages:[incoming]});
   await settle(h,state=>state.idleWaiting);
   assert.equal(h.rawReads.length,0);
-  assert(h.stored().records.find(item=>item.messageId===incoming.id).quarantineCheckPending);
+  assert(Object.entries(h.rawStored()).some(([key, item]) => key.startsWith("incomingReceipt:") &&
+    item.messageId === incoming.id && item.quarantineCheckPending));
   idle.change("idle");
-  await settle(h,state=>!state.records.some(item=>item.messageId===incoming.id));
+  await settle(h,state=>!state.incomingCount && !state.records.some(item=>item.messageId===incoming.id));
   assert(h.rawReads.includes(incoming.id));
   assert((await h.send("state")).records.some(item=>item.key===record.key));
+});
+
+test("active input and full protected history retain every receipt over restart in arrival order", async () => {
+  const mails = Array.from({ length: 32 }, (_, i) => mail(17000 + i));
+  const records = Array.from({ length: 1000 }, (_, i) => ({
+    key: "protected-" + i, status: "detected", locator: { accountId: "one" }
+  }));
+  const settings = { enabled: true, idleAutomatic: true, accountIds: ["one"], notifications: false };
+  const first = await harness({ mails, configureIdle: idleFixture().api, saved: { records, settings } });
+  for (const message of mails) first.events.newMail.listeners[0](message.folder, { messages: [message] });
+  const accepted = await settle(first, state => state.incomingCount === mails.length);
+  assert.equal(accepted.records.length, records.length);
+  assert(Number.isFinite(Date.parse(accepted.oldestIncoming)));
+  assert.deepEqual(first.rawReads, []);
+  const idle = idleFixture();
+  const second = await harness({ mails, configureIdle: idle.api, saved: first.rawStored() });
+  assert.equal((await second.send("state")).incomingCount, mails.length);
+  idle.change("idle");
+  const result = await settle(second, state => state.overflowReport?.counts.clean === mails.length);
+  assert.equal(result.incomingCount, 0);
+  assert.deepEqual(second.rawReads, mails.map(message => message.id));
+  assert.deepEqual(result.records.map(record => record.key), records.map(record => record.key));
+});
+
+test("activity during automatic header lookup postpones the first body read", async () => {
+  const idle = idleFixture(), incoming = mail(17100);
+  let interrupt = true;
+  const h = await harness({ mails: [incoming], configureIdle: idle.api,
+    saved: { settings: { enabled: true, idleAutomatic: true, accountIds: ["one"], notifications: false } },
+    configureMessages(messages) {
+      const get = messages.get;
+      messages.get = async id => {
+        if (interrupt) { interrupt = false; idle.change("active"); }
+        return get(id);
+      };
+    }
+  });
+  h.events.newMail.listeners[0](incoming.folder, { messages: [incoming] });
+  await settle(h, state => state.incomingCount === 1);
+  idle.change("idle");
+  await settle(h, state => state.idleWaiting && state.records[0]?.status === "queued");
+  assert.deepEqual(h.rawReads, []);
+  idle.change("idle");
+  const result = await settle(h, state => state.records[0]?.status === "clean");
+  assert.equal(result.records[0].attempts, 1);
+  assert.deepEqual(h.rawReads, [incoming.id]);
+});
+
+test("a filter move updates a waiting receipt before idle without reading either body", async () => {
+  const idle = idleFixture(), original = mail(17200);
+  original.folder.id = "inbox";
+  const moved = { ...original, id: 17201, folder: { id: "dest", path: "/Dest", accountId: "one" } };
+  const h = await harness({ mails: [original, moved], configureIdle: idle.api,
+    saved: { settings: { enabled: true, idleAutomatic: true, accountIds: ["one"], notifications: false } } });
+  h.events.newMail.listeners[0](original.folder, { messages: [original] });
+  await settle(h, state => state.incomingCount === 1);
+  h.events.moved.listeners[0]({ messages: [original] }, { messages: [moved] });
+  await settle(h, () => Object.entries(h.rawStored()).some(([key, entry]) =>
+    key.startsWith("incomingReceipt:") && entry.messageId === moved.id));
+  assert.deepEqual(h.rawReads, []);
+  idle.change("idle");
+  const result = await settle(h, state => state.records[0]?.status === "clean");
+  assert.equal(result.records[0].locator.folder.path, "/Dest");
+  assert.deepEqual(h.rawReads, [moved.id]);
+});
+
+test("restart around result storage recovers the receipt and preserves a detection exactly once", async () => {
+  const incoming = mail(17300), idle = idleFixture();
+  const settings = { enabled: true, idleAutomatic: true, accountIds: ["one"], notifications: false };
+  const scanResult = { status: "detected", signatures: ["Synthetic.Marker"], detail: "synthetic" };
+  let beforeResult, afterResult;
+  const h = await harness({ mails: [incoming], saved: { settings }, configureIdle: idle.api, scanResult,
+    scanGate: () => { beforeResult = h.rawStored(); } });
+  const remove = h.api.storage.local.remove;
+  h.api.storage.local.remove = async key => {
+    afterResult = h.rawStored();
+    await remove(key);
+  };
+  await h.events.newMail.listeners[0](incoming.folder, { messages: [incoming] });
+  idle.change("idle");
+  await settle(h, state => state.records[0]?.status === "detected" && !state.incomingCount);
+  for (const [snapshot, reads] of [[beforeResult, 1], [afterResult, 0]]) {
+    assert.equal(Object.keys(snapshot).filter(key => key.startsWith("incomingReceipt:")).length, 1);
+    const restarted = await harness({ saved: snapshot, mails: [incoming], configureIdle: idleFixture("idle").api, scanResult });
+    const state = await settle(restarted, state => state.records[0]?.status === "detected" && !state.incomingCount);
+    assert.deepEqual(state.records[0].signatures, ["Synthetic.Marker"]);
+    assert.equal(state.records.length, 1);
+    assert.equal(restarted.rawReads.length, reads);
+  }
+});
+
+for (const reason of ["messageMissing", "ambiguousMessage", "unverifiedLocation"]) {
+  test("unresolved incoming receipt ends uninspected: " + reason, async () => {
+    const receiving = mail(17400), idle = idleFixture();
+    const copies = [1, 2].map(i => ({
+      ...receiving, id: receiving.id + i, folder: { accountId: "one", path: "/Copy" + i }
+    }));
+    const h = await harness({ mails: [receiving], configureIdle: idle.api,
+      saved: { settings: { enabled: true, idleAutomatic: true, accountIds: ["one"], notifications: false } } });
+    await h.events.newMail.listeners[0](receiving.folder, { messages: [receiving] });
+    await h.api.messages.delete([receiving.id], {});
+    h.api.messages.query = async () => ({ messages: reason === "messageMissing" ? [] :
+      reason === "ambiguousMessage" ? copies : copies.slice(0, 1) });
+    idle.change("idle");
+    await settle(h, state => Boolean(state.records[0]?.nextRetry));
+    const now = Date.now;
+    Date.now = () => now() + 61000;
+    try {
+      await h.timers[0]();
+      const result = await settle(h, state => state.records[0]?.status === "incomplete");
+      assert.equal(result.records[0].unscannedReason, reason);
+      assert.equal(result.records[0].nextRetry, null);
+      assert.deepEqual(h.rawReads, []);
+    } finally { Date.now = now; }
+  });
+}
+
+test("manual selection inspects a waiting receipt once while input stays active", async () => {
+  const idle = idleFixture(), incoming = mail(17500);
+  const h = await harness({ mails: [incoming], configureIdle: idle.api,
+    saved: { settings: { enabled: true, idleAutomatic: true, accountIds: ["one"], notifications: false } } });
+  await h.events.newMail.listeners[0](incoming.folder, { messages: [incoming] });
+  const receipt = Object.entries(h.rawStored()).find(([key]) => key.startsWith("incomingReceipt:"))[1];
+  assert.equal((await h.send("scanSelection")).ok, true);
+  const state = await settle(h, state => !state.incomingCount && state.records[0]?.status === "clean");
+  assert.equal(state.records[0].key, receipt.key);
+  idle.change("idle");
+  await h.timers[0]();
+  assert.deepEqual(h.rawReads, [incoming.id]);
+});
+
+test("old automatic scanner slots gain durable receipts without replacing previous detections", async () => {
+  const incoming = mail(17600), idle = idleFixture();
+  const previous = { status: "detected", detail: "Synthetic earlier verdict",
+    sha256: await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello")), signatures: ["Synthetic.Marker"] };
+  const legacy = { key: "old-queued", status: "scanning", source: "automatic", attempts: 0,
+    locator: locator(incoming), lastResult: previous, createdAt: "2026-01-01T00:00:00Z" };
+  const h = await harness({ mails: [incoming], configureIdle: idle.api, nativeFailure: true,
+    saved: { records: [legacy], settings: { enabled: true, idleAutomatic: true, accountIds: ["one"], notifications: false } } });
+  const pending = await h.send("state");
+  assert.equal(pending.incomingCount, 1);
+  assert.equal(pending.oldestIncoming, legacy.createdAt);
+  assert.deepEqual(pending.records[0].lastResult, previous);
+  idle.change("idle");
+  const result = await settle(h, state => state.records[0]?.lastAttempt?.status === "error");
+  assert.equal(result.records[0].status, "detected");
+  assert.deepEqual(result.records[0].signatures, ["Synthetic.Marker"]);
+});
+
+test("deselecting one account retires its waiting receipts behind other active accounts", async () => {
+  const idle = idleFixture(), mails = [mail(17610), mail(17611, "two")];
+  const settings = { enabled: true, idleAutomatic: true, accountIds: ["one","two"], notifications: false };
+  const h = await harness({ mails, configureIdle: idle.api, saved:{settings} });
+  for (const message of mails) await h.events.newMail.listeners[0](message.folder,{messages:[message]});
+  await h.send("settings",{settings:{...settings,accountIds:["one"]}});
+  await h.send("settings",{settings});
+  const state = await settle(h, value => value.incomingCount === 1 && value.records.some(item => item.unscannedReason === "automaticExcluded"));
+  assert.equal(state.incomingCount, 1);
+  idle.change("idle");
+  await settle(h, value => value.records.some(item => item.status === "clean"));
+  assert.deepEqual(h.rawReads,[mails[0].id]);
+});
+
+test("a failed scanner-slot write retains the receipt and clears its warning on recovery", async () => {
+  const idle = idleFixture(), incoming = mail(17620);
+  const settings = {enabled:true,idleAutomatic:true,accountIds:["one"],notifications:false};
+  const h = await harness({mails:[incoming],configureIdle:idle.api,saved:{settings}});
+  await h.events.newMail.listeners[0](incoming.folder,{messages:[incoming]});
+  const write = h.api.storage.local.set;
+  h.api.storage.local.set = async patch => {
+    if (Object.keys(patch).some(key => key.startsWith("historyPage:"))) throw Error("slot unavailable");
+    return write(patch);
+  };
+  idle.change("idle");
+  const stalled = await settle(h,value => value.issue.includes("slot unavailable"));
+  assert.equal(stalled.incomingCount,1);
+  assert.deepEqual(h.rawReads,[]);
+  h.api.storage.local.set = write;
+  await h.timers[0]();
+  await settle(h,value => !value.issue && !value.incomingCount && value.records[0]?.status === "clean");
+});
+
+test("an older independent receipt is inspected before a destination staged for move verification", async () => {
+  const original = mail(17700), older = mail(17702);
+  original.folder.id = "inbox";
+  const destination = { ...original, id:17701, folder:{accountId:"one",id:"dest",path:"/Dest"}, raw:"Subject: changed\r\n\r\nchanged" };
+  const h = await harness({mails:[original,older,destination],
+    saved:{settings:{enabled:true,accountIds:["one"],notifications:false}}});
+  const raw = h.api.messages.getRaw;
+  let start, resume;
+  const started = new Promise(resolve => { start = resolve; });
+  const paused = new Promise(resolve => { resume = resolve; });
+  h.api.messages.getRaw = async (id, options) => {
+    const file = await raw(id, options);
+    if (id === original.id) { start(); await paused; }
+    return file;
+  };
+  await h.events.newMail.listeners[0](original.folder,{messages:[original]});
+  await started;
+  await h.events.newMail.listeners[0](older.folder,{messages:[older]});
+  await h.events.newMail.listeners[0](destination.folder,{messages:[destination]});
+  await h.events.moved.listeners[0]({messages:[original]},{messages:[destination]});
+  resume();
+  await settle(h,state => !state.incomingCount && state.records.filter(item => item.status === "clean").length === 2);
+  assert(h.rawReads.indexOf(older.id) < h.rawReads.lastIndexOf(destination.id));
+});
+
+test("one surviving same-folder copy cannot stand in for two receipts after restart", async () => {
+  const original = mail(17800), copy = {...original,id:17801};
+  const settings = {enabled:true,idleAutomatic:true,accountIds:["one"],notifications:false};
+  const records = Array.from({length:1000},(_,i)=>({key:"held-"+i,status:"detected",locator:{accountId:"one"}}));
+  const h = await harness({mails:[original,copy],configureIdle:idleFixture().api,saved:{settings,records}});
+  await h.events.newMail.listeners[0](original.folder,{messages:[original,copy]});
+  const restarted = await harness({mails:[copy],configureIdle:idleFixture("idle").api,saved:h.rawStored()});
+  const result = await settle(restarted,state=>state.overflowReport?.total === 2);
+  assert.equal(result.overflowReport.counts.incomplete,2);
+  assert(result.overflowReport.recent.every(record=>record.unscannedReason === "ambiguousMessage"));
+  assert.deepEqual(restarted.rawReads,[]);
 });

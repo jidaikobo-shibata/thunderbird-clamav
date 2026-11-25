@@ -3154,5 +3154,39 @@
   },
   "installerSaved": {
     "message": "Saved the installer file. Run the displayed command in the folder where you saved it."
+  },
+  "incomingSummary": {
+    "message": "Incoming messages waiting: $ARG1$. Oldest received: $ARG2$.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "incomingTargetMissing": {
+    "message": "The received message could not be found. It may have been moved or deleted."
+  },
+  "incomingTargetAmbiguous": {
+    "message": "Multiple messages match this receipt. The original could not be identified."
+  },
+  "incomingTargetMoved": {
+    "message": "A candidate was found at a different location. Its identity could not be verified."
+  },
+  "incomingCoverage": {
+    "message": "If no delivery event or receipt exists, the extension cannot identify the missed message automatically. In Scan, select the receiving folders and filter destinations to inspect the messages still present."
+  },
+  "incomingRecoveryFolders": {
+    "message": "Folders with missed deliveries: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "incomingKnownCopies": {
+    "message": "Multiple messages in the same account shared these identifiers. The original cannot be distinguished after restart."
   }
 }
