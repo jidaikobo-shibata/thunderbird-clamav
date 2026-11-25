@@ -739,6 +739,7 @@ $("forget-selected").addEventListener("click", () => {
 function syncSettings(settings, forceScan = false) {
   settings = normalizeAutomaticSettings(settings);
   $("notifications").checked = settings.notifications;
+  $("definition-source").value = settings.definitionSource || "addon";
   $("idle-automatic").checked = settings.idleAutomatic === true;
   if (forceScan || !scanSettingsDirty) syncScanPolicy(settings.scanSettings, forceScan);
   syncQuarantineSettings(settings, latest.accounts, folderChoices);
@@ -765,11 +766,17 @@ function renderConnection() {
     t("mail153", "最終接続確認：$1 ／ $2。$3 $4", [health.status === "ready" ? t("mail154", "応答あり") : t("mail155", "確認失敗"), new Date(health.checkedAt).toLocaleString(uiLanguage()), health.engine || "", localizeDetail(health)]) :
     t("mail156", "接続はまだ確認していません。「接続を再確認」で確認できます。"));
   const guide = $("clamav-install-guide");
+  if (!$("windows-definitions").hidden) {
+    const shared = latest.settings.definitionSource === "gui";
+    guide.querySelector("pre").hidden = shared;
+    const instructions = guide.querySelector('[data-i18n="clamavInstallInstructions"]');
+    instructions.textContent = shared ? t("definitionSourceHelp", "clamav-gui で定義を更新してください。") : t("directWindowsInstall", "公式の ClamAV と Python を導入してください。");
+  }
   $("connection-title").closest("section").classList.toggle("needs-action", DIRECT ? health?.status === "error" : ["clamav_missing", "clamav_unusable"].includes(health?.code));
   guide.hidden = health?.status === "ready";
   if (guide.dataset.code !== (health?.code || "unknown")) {
     guide.dataset.code = health?.code || "unknown";
-    guide.open = health?.code === "clamav_missing";
+    guide.open = health?.code === "clamav_missing" || (DIRECT && ["direct_unavailable", "definitions_unavailable", "clamav_unusable"].includes(health?.code));
   }
   const scan = latest.lastScan;
   setText($("last-scan-result"), scan ? t("mail157", "最終実検査：$1 ／ $2 ／ $3", [new Date(scan.checkedAt).toLocaleString(uiLanguage()), scan.engine?.includes("(clamd)") ? "clamd" : "clamscan", scan.engine || ""]) : t("mail158", "実検査の記録はありません。"));
@@ -913,6 +920,8 @@ $("settings-form").addEventListener("change", event => {
   clearScanErrors();
   const settings = { enabled: accountIds.length > 0, notifications: $("notifications").checked,
     idleAutomatic: $("idle-automatic").checked, accountIds, quarantine, scanSettings };
+  if (!$("windows-definitions").hidden && $("definition-source").value === "gui") settings.definitionSource = "gui";
+  const changedSource = latest.settings.definitionSource !== settings.definitionSource;
   const permission = quarantineNeedsPermission(latest.settings.quarantine, quarantine) ? requireMovePermission() : Promise.resolve();
   settingsSaving = true;
   void action(async () => {
@@ -922,13 +931,20 @@ $("settings-form").addEventListener("change", event => {
       latest.settings = settings;
       scanSettingsDirty = false;
       syncSettings(settings, true);
-      return !accountIds.length && wasEnabled ? t("mail167", "対象アカウントがなくなったため、自動検査を停止して保存しました。") : t("mail170", "設定を保存しました。");
     } catch (error) {
       scanSettingsDirty = false;
       syncSettings(latest.settings, true);
       error.guidance = t("mail169", "保存できませんでした。変更前の設定に戻しました。");
       throw error;
     } finally { settingsSaving = false; }
+    if (changedSource) {
+      latest.lastHealth = null;
+      renderConnection();
+      latest.lastHealth = (await request("health")).health;
+      renderConnection();
+      if (latest.lastHealth?.status === "error") throw new Error(latest.lastHealth.detail);
+    }
+    return !accountIds.length && wasEnabled ? t("mail167", "対象アカウントがなくなったため、自動検査を停止して保存しました。") : t("mail170", "設定を保存しました。");
   });
 });
 $("health").addEventListener("click", () => {

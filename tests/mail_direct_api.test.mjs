@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 import path from "node:path";
 const source = await readFile(new URL("../experiments/direct-runtime/api.js", import.meta.url), "utf8");
-function api(os = "Linux") {
+function api(os = "Linux", script = source) {
   class ExtensionError extends Error {}
   let removals = 0;
   const sandbox = { TextEncoder, TextDecoder, Cu: { importGlobalProperties() {} },
@@ -16,10 +16,10 @@ function api(os = "Linux") {
       return { setTimeout, clearTimeout };
     } },
     Cc: { "@mozilla.org/file/local;1": { createInstance: () => ({initWithPath() {}, append() {}}) } }, Ci: { nsIFile: {} },
-    Services: {appinfo: {OS: os, XPCOMABI: "aarch64-gcc3"}, uuid: {generateUUID: () => "fixed-uuid"}},
+    Services: {appinfo: {OS: os, XPCOMABI: os === "WINNT" ? "x86_64-msvc" : "aarch64-gcc3"}, dirsvc: {get: () => ({path:"C:\\Private"})}, uuid: {generateUUID: () => "fixed-uuid"}},
     IOUtils: {exists: async () => false, remove: async () => { removals++; }}
   };
-  vm.createContext(sandbox); vm.runInContext(source, sandbox);
+  vm.createContext(sandbox); vm.runInContext(script, sandbox);
   const instance = new sandbox.clamDirect();
   return { instance, sandbox, exposed: instance.getAPI({extension:{}}).clamDirect, ExtensionError, removals: () => removals };
 }
@@ -71,7 +71,34 @@ test("macOS refuses an untrusted owner, writable path, unsafe symlink and old Py
   }
 });
 test("unsupported systems fail before starting a scanner", async () => {
-  await assert.rejects(api("WINNT").exposed.open(), /Unsupported scanner operating system/);
+  await assert.rejects(api("FreeBSD").exposed.open(), /Unsupported scanner operating system/);
+});
+
+test("Windows rejects missing Python and reparse points before executing a candidate", async () => {
+  const value = api("WINNT");
+  value.sandbox.PathUtils = {join: path.win32.join};
+  const library = {declare: () => () => 0x400, close() {}};
+  value.sandbox.ChromeUtils.importESModule = () => ({ctypes:{
+    open: () => library, char16_t: {ptr: {}}
+  }});
+  await assert.rejects(value.exposed.open(), /Python3 unavailable/);
+  value.sandbox.IOUtils.exists = async () => true;
+  await assert.rejects(value.exposed.open(), /Untrusted Python installation/);
+  assert.equal(value.removals(), 0);
+});
+
+test("Windows rejects writable scanner paths and accepts only harmless ancestor creation rights", () => {
+  const script = source.replace("  const windows =", "  globalThis.verify = verifyWindowsDescriptor; const windows =");
+  const verify = api("Linux", script).sandbox.verify;
+  const trusted = new Set(["SY", "BA", "S-1-5-21-123"]);
+  for (const descriptor of ["O:BAD:(A;;FA;;;BU)", "O:BUD:(A;;FR;;;WD)", "O:SYD:NO_ACCESS_CONTROL",
+    "O:SYD:(A;;0x40000;;;BU)", "O:SYD:(XA;;FA;;;BU;(condition))"]) {
+    assert.throws(() => verify(descriptor, trusted, false));
+  }
+  const root = "O:SYD:(A;;LC;;;AU)(A;OICIIO;FA;;;AU)(A;;0x1200a9;;;BU)";
+  assert.throws(() => verify(root, trusted, false));
+  verify(root, trusted, true);
+  verify("O:S-1-5-21-123D:(A;;FA;;;BA)(A;;FRFX;;;BU)", trusted, false);
 });
 
 test("close force-closes stdin and kills without awaiting a blocked write", async () => {

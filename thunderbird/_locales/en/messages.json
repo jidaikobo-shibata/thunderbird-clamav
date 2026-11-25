@@ -3188,5 +3188,22 @@
   },
   "incomingKnownCopies": {
     "message": "Multiple messages in the same account shared these identifiers. The original cannot be distinguished after restart."
+  },
+  "directMissingDefinitions": {
+    "message": "Definitions are missing or outdated. Update them with FreshClam."
+  },
+  "definitionSourceHeading": { "message": "Virus definition folder" },
+  "legacyDefinitionFolder": { "message": "Legacy GUI (uses the shared folder after migration)" },
+  "definitionSourceHelp": { "message": "Both apps use the shared folder by default. The legacy GUI selection follows the shared folder after the GUI completes migration." },
+  "definitionSourceMismatch": { "message": "Could not verify the selected definition folder." },
+  "guiDefinitionsUnavailable": { "message": "Cannot read the definitions. Retry after the update finishes." },
+  "directWindowsHeading": {
+    "message": "Install ClamAV on Windows"
+  },
+  "directWindowsInstall": {
+    "message": "Install official 64-bit ClamAV under Program Files and python.org Python 3.13–3.15 (64-bit) in the default per-user location. Use clamav-gui to update shared definitions. For standalone use, run the PowerShell commands below."
+  },
+  "directWindowsDefinitions": {
+    "message": "After FreshClam finishes, choose Check connection again. Update the definitions regularly. Definitions older than three days prevent scanning."
   }
 }

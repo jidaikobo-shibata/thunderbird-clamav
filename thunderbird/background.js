@@ -24,7 +24,7 @@ const incomingQueue = new IncomingQueue(api.storage.local);
 const toolbar = toolbarUpdates(api.browserAction);
 const stateStorage = new StateStorage(api.storage.local);
 const DIRECT = directRuntime(api.runtime);
-const scanConnection = new ScanConnection(() => new NativeClient(api.runtime), DIRECT ? {} : { idleMs: 0 });
+const scanConnection = new ScanConnection(() => new NativeClient(api.runtime, settings.definitionSource), DIRECT ? {} : { idleMs: 0 });
 let directMigrationBackup = null, incrementalMigrationBackup = null;
 const session = crypto.randomUUID();
 const MAX_RECORDS = 1000;
@@ -107,9 +107,11 @@ async function helperInfo() {
   const generation = maintenanceGeneration;
   let client;
   try {
-    client = new NativeClient(api.runtime);
+    client = new NativeClient(api.runtime, settings.definitionSource);
     if (DIRECT) {
-      lastHealth = await readScannerHealth(client, DIRECT);
+      const health = await readScannerHealth(client, DIRECT);
+      if (client.definitionSource !== settings.definitionSource) return installation;
+      lastHealth = health;
       installation = { state: "integrated", version: api.runtime.getManifest().version,
         healthy: lastHealth.status === "ready", detail: lastHealth.detail,
         clamavCode: lastHealth.status === "ready" ? "ready" : lastHealth.code || "direct_unavailable" };
@@ -138,8 +140,12 @@ async function helperInfo() {
 
 /** Check prerequisites before enumerating mail or reserving history slots. */
 async function requireFolderScanner() {
-  const client = new NativeClient(api.runtime);
-  try { lastHealth = await readScannerHealth(client, DIRECT); }
+  const client = new NativeClient(api.runtime, settings.definitionSource);
+  try {
+    const health = await readScannerHealth(client, DIRECT);
+    if (client.definitionSource !== settings.definitionSource) throw new Error(t("definitionSourceMismatch", "選択したウイルス定義の参照先を確認できません。"));
+    lastHealth = health;
+  }
   finally { client.close(); }
   if (lastHealth.status === "ready" && !scannerReady(lastHealth)) {
     lastHealth = { ...lastHealth, status: "error", code: "protocol_incompatible",
@@ -147,14 +153,16 @@ async function requireFolderScanner() {
   }
   applyScannerHealth(installation, lastHealth, DIRECT);
   const unavailable = lastHealth.status !== "ready";
+  const detail = lastHealth.detail;
   if (unavailable) setupRequest = crypto.randomUUID();
   await save();
   await updateBadge();
   if (unavailable) {
-    const error = new Error(lastHealth.detail);
+    const error = new Error(detail);
     error.setupRequired = true;
     throw error;
   }
+  return client.definitionSource;
 }
 
 const folderScan = new FolderScan(api, {
@@ -576,7 +584,12 @@ function changeSettings(input) {
       if (batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation)) throw new Error(t("qBusy", "このメールは処理中です。"));
       // Publish only after persistence succeeds; failed saves have no runtime
       // effects. On startup, queued exclusions are derived from these settings.
-      await api.storage.local.set({ settings: next });
+      const changedSource = previous.definitionSource !== next.definitionSource;
+      await api.storage.local.set({ settings: next, ...(changedSource ? { lastHealth: null } : {}) });
+      if (changedSource) {
+        lastHealth = null;
+        if (!running) scanConnection.discard();
+      }
       settings = next;
       if (removed.length) reconcileIncoming = true;
       excludePausedAutomatic();
@@ -1399,6 +1412,9 @@ async function drain() {
         record.sha256 = digest;
         currentDigest = digest;
         scannerTouched = true;
+        if (scanConnection.current && scanConnection.current.client.definitionSource !== settings.definitionSource) {
+          scanConnection.discard();
+        }
         if (!client || client.closed) {
           connection = scanConnection.acquire();
           client = connection.client;
@@ -2275,8 +2291,9 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         if (!folderRequest || folderRequest.token !== request.token) throw new Error(t("mail068", "フォルダーの選択が変わりました。選び直してください。"));
         if (typeof request.includeSubfolders !== "boolean") throw new Error(t("mail069", "サブフォルダーの選択が不正です。"));
         const context = folderRequest, folders = context.folders || [context.folder];
-        await requireFolderScanner();
+        const checkedSource = await requireFolderScanner();
         const current = await refreshScanFolders(api, folders);
+        if (checkedSource !== settings.definitionSource) throw new Error(t("definitionSourceMismatch", "選択したウイルス定義の参照先を確認できません。"));
         if (folderRequest !== context || !current) throw new Error(t("mail070", "フォルダーが見つからないか、場所が変わりました。選び直してください。"));
         const job = await folderScan.start(current.map((folder, index) => ({ ...folder, displayNames: folders[index].displayNames })), request.includeSubfolders);
         folderRequest = null;
@@ -2286,8 +2303,9 @@ api.runtime.onMessage.addListener(async (request, sender) => {
       case "folderResume": {
         if (request.jobId !== folderScan.job?.id || !folderScan.resumable) throw new Error(t("mail071", "この検査は再開できません。画面を更新してください。"));
         const job = folderScan.job, folders = job.folders || [job.folder];
-        await requireFolderScanner();
+        const checkedSource = await requireFolderScanner();
         const current = await refreshScanFolders(api, folders);
+        if (checkedSource !== settings.definitionSource) throw new Error(t("definitionSourceMismatch", "選択したウイルス定義の参照先を確認できません。"));
         if (folderScan.job !== job || !current) throw new Error(t("mail072", "元のフォルダーが見つからないか、場所が変わりました。"));
         await folderScan.resume(current);
         void folderScan.collecting.catch(report);

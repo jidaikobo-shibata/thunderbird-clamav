@@ -2,6 +2,7 @@ import base64
 import hashlib
 from pathlib import Path
 import os
+import sys
 import subprocess
 import tempfile
 import unittest
@@ -32,9 +33,15 @@ class ScanOptionsTests(unittest.TestCase):
         try:
             session.handle({"op": "begin", "size": 1, "scanSettings": options})
             session.handle({"op": "chunk", "seq": 0, "data": base64.b64encode(b"a").decode()})
-            with patch.object(host, "scan", return_value={"status": "clean"}) as scan:
+            with tempfile.TemporaryDirectory() as tmp, \
+                 patch.object(host, "DATABASE", str(Path(tmp).resolve() / "database")), \
+                 patch.object(host, "health", return_value={"status": "ready", "engine": "test"}), \
+                 patch.object(host, "scan", return_value={"status": "clean"}) as scan:
                 session.handle({"op": "end", "sha256": hashlib.sha256(b"a").hexdigest()})
-                scan.assert_called_once_with(b"a", session.scanner, options)
+                if sys.platform == "win32":
+                    scan.assert_called_once_with(b"a", None, options, host.DATABASE)
+                else:
+                    scan.assert_called_once_with(b"a", session.scanner, options)
             self.assertIsNone(session.scan_settings)
         finally:
             session.close()
@@ -52,6 +59,9 @@ class ScanOptionsTests(unittest.TestCase):
         self.assertEqual(host.classify(1, "stdin: PUA.Example FOUND\nstdin: Heuristics.Encrypted.Zip FOUND")["status"], "incomplete")
         self.assertEqual(host.classify(1, "stdin: Unknown.Phish.Name FOUND")["status"], "detected")
 
+    @patch.object(host, "CLAMSCAN", "synthetic-scanner")
+    @patch.object(host, "TEMP_ROOT", None)
+    @patch.object(host, "windows_definitions_present", lambda database=None: True)
     def test_clamscan_flags_and_timeout_are_bounded_without_shell_interpretation(self):
         options = host.scan_options({"phishing": "notify", "macros": "display", "pua": "display", "mailMiB": 50, "expandedMiB": 200, "seconds": 120})
         with patch.object(host.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"stdin: OK\n", b"")) as run:
@@ -72,6 +82,7 @@ class ScanOptionsTests(unittest.TestCase):
             daemon.configure({"phishing": "notify", "mailMiB": 50})
             self.assertEqual(close.call_count, 2)
 
+    @unittest.skipIf(sys.platform == "win32", "POSIX clamd ALLMATCHSCAN")
     def test_allmatch_uses_private_temporary_input_and_removes_it(self):
         daemon = host.MailDaemon()
         daemon.configure({"macros": "display"})

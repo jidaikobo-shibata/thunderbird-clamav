@@ -42,6 +42,7 @@ def alive(pid):
         return False
 
 
+@unittest.skipIf(sys.platform == "win32", "POSIX guardian")
 class DirectGuardianTests(unittest.TestCase):
     def prepare(self):
         directory = Path(tempfile.mkdtemp(prefix="clam-mail-direct-", dir="/tmp"))

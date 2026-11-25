@@ -29,6 +29,24 @@ test("integrated client uses packaged transport and validates the scan policy an
   assert.deepEqual(closed, ["session"]);
 });
 
+test("the selected Windows GUI database must be acknowledged before transferring mail", async () => {
+  const previous = globalThis.messenger, requests = [];
+  const runtime = { getManifest: () => ({ experiment_apis: { clamDirect: {} } }), getPlatformInfo: async () => ({os: "win"}) };
+  globalThis.messenger = { runtime, clamDirect: { open: async () => "test", close: async () => {},
+    request: async (_, data) => {
+      const frame = JSON.parse(data);
+      requests.push([frame.op, frame.definitionSource]);
+      return JSON.stringify({id: frame.id, status: frame.op === "health" ? "ready" : "accepted"});
+    }
+  } };
+  const client = new NativeClient(runtime, "gui");
+  try {
+    await assert.rejects(client.request("health"));
+    await assert.rejects(client.scan(new Uint8Array([1]), "unused"));
+    assert.deepEqual(requests, [["health", "gui"], ["begin", "gui"]]);
+  } finally { client.close(); globalThis.messenger = previous; }
+});
+
 test("closing an opening port still cleans up its eventual session", async () => {
   let opened, closed;
   const port = directPort({ open: () => new Promise(resolve => { opened = resolve; }), close: async token => { closed = token; } });

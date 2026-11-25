@@ -11,7 +11,7 @@ from zipfile import ZipFile
 
 from native import host
 from setup import current_language, set_language, tr
-from setup.cli import run
+import sys
 from scripts.build_mail_check import build, installer_bytes
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,7 +49,9 @@ class LocalizationTests(unittest.TestCase):
         self.assertEqual(english["detailMessages"][0]["key"], "mail082")
         self.assertEqual(japanese["detail"], "未対応の操作です。")
 
+    @unittest.skipIf(sys.platform == "win32", "Legacy POSIX installer")
     def test_cli_explicit_language_overrides_environment_without_installing(self):
+        from setup.cli import run
         with tempfile.TemporaryDirectory() as temp:
             home = Path(temp)
             for language, expected in [("ja", "補助プログラム:"), ("en-US", "Helper:")]:
@@ -65,11 +67,12 @@ class LocalizationTests(unittest.TestCase):
         for filename, translations in [("native/host.py", host._EN_MESSAGES),
                                        ("setup/cli.py", setup._EN_MESSAGES),
                                        ("setup/manager.py", setup._EN_MESSAGES)]:
-            for node in ast.walk(ast.parse((ROOT / filename).read_text())):
+            for node in ast.walk(ast.parse((ROOT / filename).read_text(encoding="utf-8"))):
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "tr":
                     source = node.args[0].value
                     self.assertIn(source, translations, filename + ": " + source)
 
+    @unittest.skipIf(sys.platform == "win32", "Legacy POSIX installer")
     def test_translation_catalogs_are_packaged_and_installer_file_set_is_unchanged(self):
         with tempfile.TemporaryDirectory() as temp:
             # Build only writes dist; existing build tests use the same workspace artifacts.

@@ -3,6 +3,7 @@
 
 import base64
 import binascii
+from contextlib import contextmanager
 import hashlib
 import io
 import json
@@ -140,6 +141,13 @@ _MESSAGE_KEYS["検査が制限時間内に完了しませんでした。"] = "sc
 _EN_MESSAGES.update({"MIME解析の上限に達したため、検査範囲を確認できない部分があります。": "MIME analysis reached its resource limit; some scan coverage could not be verified.", " MIME解析の上限に達した部分があります。脅威の検出結果は保持しています。": " MIME analysis reached its resource limit. The malware detection is preserved."})
 _MESSAGE_KEYS.update({"MIME解析の上限に達したため、検査範囲を確認できない部分があります。": "mimeLimited", " MIME解析の上限に達した部分があります。脅威の検出結果は保持しています。": "mimeLimitedThreat"})
 
+_EN_MESSAGES["定義が不足しているか古くなっています。FreshClamで更新してください。"] = "Definitions are missing or outdated. Update them with FreshClam."
+_EN_MESSAGES["定義を読み込めません。更新完了後に再試行してください。"] = (
+    "Cannot read the definitions. Retry after the update finishes.")
+_MESSAGE_KEYS["定義が不足しているか古くなっています。FreshClamで更新してください。"] = "directMissingDefinitions"
+_MESSAGE_KEYS["定義を読み込めません。更新完了後に再試行してください。"] = "guiDefinitionsUnavailable"
+
+
 def tr(message):
     text = message if _LANGUAGE == "ja" else _EN_MESSAGES.get(message, message)
     key = _MESSAGE_KEYS.get(message)
@@ -209,8 +217,25 @@ def macos_clamav():
     return None, None, prefix + "/var/lib/clamav", rejected
 
 
+def windows_clamav():
+    import winreg
+    database = str(Path(os.environ["LOCALAPPDATA"]) / "ClamAV" / "database")
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion",
+                            access=winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+            prefix = Path(winreg.QueryValueEx(key, "ProgramFilesDir")[0])
+        executable = prefix / "ClamAV" / "clamscan.exe"
+        if not executable.is_absolute() or executable.resolve() != executable:
+            raise OSError("Unexpected ClamAV installation path")
+        return str(executable) if executable.is_file() else None, None, database, False
+    except OSError:
+        return None, None, database, True
+
+
 if sys.platform == "darwin":
     CLAMSCAN, CLAMD, DATABASE, CLAMAV_TRUST_ERROR = macos_clamav()
+elif sys.platform == "win32":
+    CLAMSCAN, CLAMD, DATABASE, CLAMAV_TRUST_ERROR = windows_clamav()
 
 
 def macos_rss(pid):
@@ -373,7 +398,11 @@ def encrypted_mail(data):
 def mime_worker():
     # Fail closed if limits or parent monitoring cannot be applied.
     try:
-        import resource
+        if sys.platform == "win32":
+            import runpy
+            runpy.run_path(str(Path(__file__).with_name("windows.py")))["limit_mime"]()
+        else:
+            import resource
         if sys.platform == "linux":
             resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
         elif sys.platform == "darwin":
@@ -385,11 +414,12 @@ def mime_worker():
 
             signal.signal(signal.SIGALRM, check_parent)
             signal.setitimer(signal.ITIMER_REAL, 0.1, 0.1)
-        else:
+        elif sys.platform != "win32":
             return 1
-        resource.setrlimit(resource.RLIMIT_CPU, (3, 3))
-        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-        child_lifetime(os.getppid())
+        if sys.platform != "win32":
+            resource.setrlimit(resource.RLIMIT_CPU, (3, 3))
+            resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+            child_lifetime(os.getppid())
         data = sys.stdin.buffer.read(MAX_TRANSFER + 1)
         if len(data) > MAX_TRANSFER:
             return 1
@@ -408,6 +438,8 @@ def mime_worker():
 def mime_inspection(data):
     try:
         command = [sys.executable, "-I", "-B", str(Path(__file__).absolute()), "--mime-check"]
+        if sys.platform == "win32":
+            command.insert(2, "-S")
         if sys.platform == "darwin":
             with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as child:
                 deadline = time.monotonic() + 5
@@ -642,11 +674,68 @@ class MailDaemon:
             self.temp = None
 
 
-def scan_clamscan(data, options=None):
+@contextmanager
+def windows_definitions(source):
+    """Hold a shared lock on the byte that clamav-gui locks exclusively for FreshClam."""
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+
+    class Overlapped(ctypes.Structure):
+        _fields_ = [("internal", ctypes.c_size_t), ("high", ctypes.c_size_t),
+                    ("offset", wintypes.DWORD), ("offset_high", wintypes.DWORD), ("event", wintypes.HANDLE)]
+
+    local = Path(os.environ["LOCALAPPDATA"])
+    directory = Path(DATABASE)
+    legacy = source == "gui" and not (local / "ClamAV" / "gui-definitions-ready").is_file()
+    if legacy:
+        directory = local / "clamav-gui" / "database"
+    lock = directory.parent / "freshclam.lock"
+    if directory.resolve() != directory or lock.resolve() != lock:
+        raise OSError("Unexpected definition directory")
+    if not legacy and not lock.exists():
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        with lock.open("ab"):
+            pass
+    with lock.open("rb") as stream:
+        acquire = ctypes.WinDLL("kernel32", use_last_error=True).LockFileEx
+        acquire.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD,
+                            wintypes.DWORD, ctypes.POINTER(Overlapped)]
+        acquire.restype = wintypes.BOOL
+        if not acquire(msvcrt.get_osfhandle(stream.fileno()), 1, 0, 1, 0, ctypes.byref(Overlapped())):
+            raise ctypes.WinError(ctypes.get_last_error())
+        yield str(directory)
+
+
+def windows_definitions_present(database=None):
+    directory = Path(database or DATABASE)
+    try:
+        for name in ("daily", "main", "bytecode"):
+            files = (directory / (name + extension) for extension in (".cvd", ".cld"))
+            if not any(path.is_file() and path.stat().st_size > 0 for path in files):
+                return False
+        return True
+    except OSError:
+        return False
+
+
+def gui_definitions_error():
+    return {"status": "error", "code": "definitions_unavailable", "signatures": [],
+            "detail": tr("定義を読み込めません。更新完了後に再試行してください。")}
+
+
+def definitions_error():
+    return {"status": "error", "code": "definitions_unavailable", "signatures": [],
+            "detail": tr("定義が不足しているか古くなっています。FreshClamで更新してください。")}
+
+
+def scan_clamscan(data, options=None, database=None):
     if CLAMAV_TRUST_ERROR:
         return {"status": "error", "signatures": [], "detail": tr('ClamAVを起動・確認できません。導入状態と実行権限を確認してください。')}
     if not CLAMSCAN:
         return {"status": "error", "signatures": [], "detail": tr('ClamAVが対応する導入先に見つかりません。設定の導入案内を確認してください。')}
+    if sys.platform == "win32" and not windows_definitions_present(database):
+        return definitions_error()
     options = scan_options(options)
     args = [CLAMSCAN, "--stdout", "--no-summary", "--scan-mail=yes",
             "--allmatch=yes", "--alert-encrypted=yes", "--alert-exceeds-max=yes",
@@ -660,8 +749,8 @@ def scan_clamscan(data, options=None):
         "--phishing-scan-urls=" + ("yes" if options["phishing"] != "off" else "no"),
         "--alert-macros=" + ("yes" if options["macros"] != "off" else "no"),
         "--detect-pua=" + ("yes" if options["pua"] != "off" else "no")]
-    if sys.platform == "darwin":
-        args.insert(1, "--database=" + DATABASE)
+    if sys.platform in ("darwin", "win32"):
+        args.insert(1, "--database=" + (database or DATABASE))
     try:
         # ClamAV may unpack containers internally. Give it a private temporary
         # directory, including on failures/timeouts, rather than keeping mail.
@@ -685,7 +774,7 @@ def scan_clamscan(data, options=None):
     return value
 
 
-def scan(data, scanner=None, options=None):
+def scan(data, scanner=None, options=None, database=None):
     policy = scan_options(options)
     if not data or len(data) > policy["mailMiB"] * 1024 * 1024:
         return {"status": "incomplete", "signatures": [],
@@ -694,7 +783,10 @@ def scan(data, scanner=None, options=None):
     if scanner is not None and (options is not None or isinstance(scanner, MailDaemon)):
         scanner.configure(policy)
     try:
-        value = scanner.scan(data) if scanner else (scan_clamscan(data) if options is None else scan_clamscan(data, policy))
+        if database is not None:
+            value = scan_clamscan(data, policy, database)
+        else:
+            value = scanner.scan(data) if scanner else (scan_clamscan(data) if options is None else scan_clamscan(data, policy))
     except DaemonUnavailable:
         fallback = True
         value = scan_clamscan(data) if options is None else scan_clamscan(data, policy)
@@ -725,19 +817,32 @@ def scan(data, scanner=None, options=None):
     return value
 
 
-def health():
+def health(database=None):
     if CLAMAV_TRUST_ERROR:
         return {"status": "error", "code": "clamav_unusable", "detail": tr('ClamAVを起動・確認できません。導入状態と実行権限を確認してください。')}
     if not CLAMSCAN or not Path(CLAMSCAN).is_file():
         return {"status": "error", "code": "clamav_missing", "detail": tr('ClamAVが対応する導入先に見つかりません。設定の導入案内を確認してください。')}
     try:
-        result = subprocess.run([CLAMSCAN, "--version"], capture_output=True,
+        command = [CLAMSCAN, "--version"]
+        if sys.platform == "win32":
+            command.insert(1, "--database=" + (database or DATABASE))
+        result = subprocess.run(command, capture_output=True,
                                 timeout=10, check=False)
         if result.returncode:
             raise OSError("version failed")
         version = result.stdout.decode("utf-8", "replace").strip()[:300]
         if not version.startswith("ClamAV "):
             raise OSError("invalid version")
+        if sys.platform == "win32":
+            if not windows_definitions_present(database):
+                return definitions_error()
+            fields = version.split("/")
+            if len(fields) != 3 or not fields[1].isdigit():
+                return definitions_error()
+            import email.utils
+            stamp = email.utils.parsedate(fields[2])
+            if not stamp or not 0 <= time.time() - time.mktime(stamp) <= 3 * 86400:
+                return {**definitions_error(), "engine": version}
     except (OSError, subprocess.TimeoutExpired):
         return {"status": "error", "code": "clamav_unusable", "detail": tr('ClamAVを起動・確認できません。導入状態と実行権限を確認してください。')}
     return {"status": "ready", "protocol": PROTOCOL, "engine": version,
@@ -751,13 +856,14 @@ class Session:
         self.buffer = None
         self.expected = 0
         self.sequence = 0
-        self.scanner = MailDaemon()
+        self.scanner = None if sys.platform == "win32" else MailDaemon()
         self.administration = None
         self.scan_settings = None
 
     def close(self):
         self.reset()
-        self.scanner.close()
+        if self.scanner:
+            self.scanner.close()
         if self.administration is not None:
             self.administration.close()
 
@@ -772,7 +878,22 @@ class Session:
     def handle(self, request):
         set_language(request.get("language", "ja"))
         operation = request.get("op")
+        source = request.get("definitionSource", "addon")
+        if source != "addon" and not (source == "gui" and sys.platform == "win32" and DIRECT_RUNTIME
+                                      and operation in ("begin", "health")):
+            raise ProtocolError("Invalid definition source")
+        if DIRECT_RUNTIME and operation not in {"health", "begin", "chunk", "end", "abort"}:
+            raise ProtocolError("Unsupported direct scan operation")
         if operation == "health":
+            if sys.platform == "win32":
+                try:
+                    with windows_definitions(source) as database:
+                        result = health(database)
+                        if source == "gui":
+                            result["definitionSource"] = "gui"
+                        return result
+                except OSError:
+                    return gui_definitions_error()
             return health()
         if operation in {"manageInfo", "managePlan", "manageApply"}:
             if self.buffer is not None:
@@ -789,7 +910,8 @@ class Session:
                     return self.administration.info()
                 if operation == "managePlan":
                     return self.administration.prepare(request.get("operation"), request.get("package"))
-                self.scanner.close()
+                if self.scanner:
+                    self.scanner.close()
                 return self.administration.apply(request.get("token"))
             except (ImportError, OSError, ValueError) as error:
                 raise ProtocolError(tr('管理機能を利用できません。CLIで導入・修復してください。') + str(error)) from error
@@ -807,9 +929,10 @@ class Session:
             if type(size) is not int or not 0 < size <= limit:
                 raise ProtocolError(tr('メールサイズが不正か、25MiBを超えています。'))
             self.expected = size
+            self.definition_source = source
             self.sequence = 0
             self.buffer = io.BytesIO()
-            return {"status": "accepted"}
+            return {"status": "accepted", **({"definitionSource": "gui"} if source == "gui" else {})}
         if operation == "abort":
             self.reset()
             return {"status": "aborted"}
@@ -836,8 +959,19 @@ class Session:
             if request.get("sha256") != digest:
                 raise ProtocolError(tr('メールデータの照合に失敗しました。'))
             options = self.scan_settings
+            source = self.definition_source
             self.reset()
             self.scan_settings = None
+            if sys.platform == "win32":
+                try:
+                    with windows_definitions(source) as database:
+                        # FreshClam may have replaced the definitions since the last health check.
+                        current = health(database)
+                        if current["status"] != "ready":
+                            return {**current, "signatures": [], "scanSettings": options}
+                        return {**scan(data, None, options, database), "engine": current["engine"]}
+                except OSError:
+                    return {**gui_definitions_error(), "scanSettings": options}
             return scan(data, self.scanner) if options is None else scan(data, self.scanner, options)
         raise ProtocolError(tr('未対応の操作です。'))
 

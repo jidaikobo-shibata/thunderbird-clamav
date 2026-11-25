@@ -1,10 +1,10 @@
-# 内蔵検査方式（0.20.0a27 試用版）
+# 内蔵検査方式（0.20.0a48 試用版）
 
 このブランチの実験版は、現行の画面・受信検査・フォルダー検査・履歴・確認メモ・通知・隔離・完全削除を、アドオン内蔵の検査処理へ接続します。合成メール専用の0.1.0試作とは別の成果物です。
 
 ## 利用条件と導入
 
-- Ubuntuの通常版Thunderbird 153系を維持し、macOSのHomebrew版ClamAVへ対応しました。Ubuntu 153.7.0esrの既存検証とmacOSの検証は下記のとおりです。Snap/Flatpak、Windows、他のメジャーバージョンは未検証です。
+- Ubuntuの通常版Thunderbird 153系を維持し、macOSのHomebrew版ClamAVへ対応しました。Ubuntu 153.7.0esrの既存検証とmacOSの検証は下記のとおりです。Windows x64 の検証結果は末尾に記載しています。Snap/Flatpak は未検証です。
 - OSにClamAVとPython3が必要です。検査処理の追加Python/npm依存はありません。ClamAVの導入にはパッケージ管理による依存の追加が必要な場合があります。常駐サービスの登録は不要です。
 - 検証済みのPython検査処理をXPIに同梱し、Python3で必要時に起動します。補助プログラムの別途設置・Native Messaging登録・個別更新は不要です。
 - Experiment APIを使うため、インストール時にはThunderbirdとコンピューターへの全面アクセス権限が必要です。完全削除・手動隔離などの確認画面は維持しています。
@@ -42,7 +42,7 @@ python3 -B scripts/smoke_direct_mail_check.py --scenario recovery
 node scripts/smoke_mail_ui.mjs --direct
 ```
 
-ビルド結果は `dist/clam-mail-check-direct-0.20.0a47.xpi` です。テスト用のメール取り込み・自動更新・診断APIはこの配布物へ含めません。Ubuntuの実機検証は独立Wayland・D-Bus・XDG設定、macOSは独立したThunderbirdインスタンスと使い捨てプロファイルを使用し、オフラインで起動します。実画面の操作・Xwayland・リモート操作用の権限変更は使いません。
+ビルド結果は `dist/clam-mail-check-direct-0.20.0a48.xpi` です。テスト用のメール取り込み・自動更新・診断APIはこの配布物へ含めません。Ubuntuの実機検証は独立Wayland・D-Bus・XDG設定、macOSは独立したThunderbirdインスタンスと使い捨てプロファイルを使用し、オフラインで起動します。実画面の操作・Xwayland・リモート操作用の権限変更は使いません。
 
 詳細な診断結果はGit除外の出力先へ、監視処理の詳細は非公開の作業メモへ保存しています。公式アドオンサイトへの公開・申請は行っていません。独自Experiment APIの公開条件については引き続き確認が必要です。
 
@@ -379,3 +379,51 @@ ThunderbirdのbrowserAction更新はウィンドウのrequestAnimationFrameを�
 
 - `intake` は履歴1000件を保護したまま、メール作成画面で合成メールを12通受信します。無操作検知の状態はテスト側から操作中に固定します。受信通知の実測件数とテスト側の受信台帳から再通知した件数を個別に記録します。移動・コピー・削除の後にThunderbirdを通常終了し、検査再開後に結果保存の直前と直後でテスト対象のThunderbirdを強制終了します。再起動後の集計、判定、本文の再取得回数を検証します。
 - `latency` は同じ条件で合成メール32通の受付を再生し、作成画面の描画間隔を測定します。`--comparison-xpi` で旧版のXPIを指定できます。OSからのキー入力やMozcの変換操作は生成しません。
+## Windows x64（0.20.0a11）
+
+Windows 11 x64、Mozilla Thunderbird 153.7.0 ESR、PSF Python 3.15.2、Cisco ClamAV 1.5.5 で確認しました。153 系用の配布 XPI を独立プロファイルのアドオンマネージャーが 153 で有効、160.0 で互換性対象外と判定しました。内蔵 Experiment が使う内部 API はメジャーバージョンに依存します。[Thunderbird の Experiment API](https://developer.thunderbird.net/add-ons/mailextensions/experiments)
+
+### Thunderbird 160 系
+
+Windows 11 x64 の Thunderbird 160.0 で、160 系専用 XPI が使い捨てプロファイルで有効になることを確認しました。ビルドは `python scripts/build_direct_mail_check.py --thunderbird-major 160`。153 系用と同じアドオン ID・検査コードを使用し、マニフェストの互換バージョン指定だけが異なります。
+
+160.0 のヘッドレス・オフライン環境で既存の Windows 統合試験全9シナリオを実行しました。合成メール4種、手動・自動隔離と対象確認後の削除、再検査失敗時の履歴、更新後の設定、フォルダー中止・再開、依存不足・保存失敗からの復旧、終了・無効化・削除・異常終了時の清掃を確認しました。統合試験には検証用 XPI と専用の定義フォルダーを使用しました。160 系の他の更新版、他 OS 上の 160、実サーバーからの受信、普段のプロファイルを使う操作は未検証です。
+
+### Windows の定義共有（0.20.0a12）
+
+- 従来の参照先を既定とし、利用者が選んだ場合に限り、同じユーザーの clamav-gui 用定義を参照します。状態確認とメール転送開始で共有先の識別値を照合し、転送中のメールは開始時の選択で検査します。別の参照先に切り替えるときは、次のメールから検査接続を作り直します。
+- GUI は FreshClam 実行中に `freshclam.lock` の先頭1バイトを排他ロックします。アドオンは同じファイルを読み取り専用で開き、Windows の共有読み取りロックを取ってから定義と鮮度を確認し、実検査が終わるまで保持します。定義更新と競合した検査は失敗として報告します。再検査は GUI の更新完了後に行います。GUI の手動更新が検査と重なる場合は検査後に再試行します。
+- 隣の GUI の更新処理と実 FreshClam を専用フォルダーで実行し、更新中の検査拒否、更新後の回復、同時読み取り、読み取り中の手動更新拒否を確認しました。実機での確認は Windows 11 x64。既存ユーザーの GUI の定義・タスク・メールには変更を加えていません。
+- 再現するには下記の Windows 統合試験の `--scenario full` に `--shared-definitions` を追加します。使い捨てフォルダーに専用定義を複製し、設定画面の操作、合成メールの検査、上書き更新後の選択保持と切り戻しを確認します。
+
+### 起動と清掃
+
+- Windows の公式パッケージには clamd と clamscan が含まれます。既存の POSIX 用 clamd は専用 Unix ソケットとファイル記述子・シグナルに依存しています。Windows では認証のない TCP 待受やサービスの設定をせず、1通ごとに clamscan へ標準入力で渡します。反復時に定義の再ロードが必要です。結果分類、フレーム長・転送量・ダイジェストの検証、展開量・再帰・注意情報の扱いは共通です。[Windows 版 ClamAV](https://docs.clamav.net/faq/faq-win32.html)・[検査方式](https://docs.clamav.net/manual/Usage/Scanning.html)
+- Python はユーザー単位の固定候補に限定し、再解析ポイント・祖先の所有者・実効書込権限・バージョンを確認します。ClamAV は標準 Program Files に限定し、実行前に権限と実体のパスを確認します。同じ利用者とシステム管理者を信頼する設計です。メール・UI からコマンドやパスを指定する機能はありません。
+- ワーカーはメールの受信前に専用 Job Object に入ります。監視プロセスが最後のハンドルを閉じるか異常終了すると、OS が子孫を終了します。監視側は Thunderbird のプロセスハンドルも監視します。ジョブ全体のコミット上限は 4 GiB。MIME 解析には別に 512 MiB とユーザー CPU 時間3秒の上限、呼び出し側に5秒の制限があります。[Microsoft の Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
+- 展開用ディレクトリはユーザー別領域に作り、Python 3.13 以降の Windows 用 0700 相当の DACL を適用します。通常は監視プロセスが清掃し、監視自体が停止したときは Thunderbird 側もディレクトリの削除を再試行します。[Python の mkdir](https://docs.python.org/3/library/os.html#os.mkdir)
+
+### 検証結果
+
+| 方法 | 結果 |
+| --- | --- |
+| 使い捨てプロファイル・オフラインの実 Thunderbird と公式定義 | 通常は未検出、EICAR 添付と ZIP は検出、暗号化は不完全。新着イベントでの自動検査、手動・自動隔離、対象確認後の完全削除、追加設定を確認。新着は合成メールを取り込み、通知イベントを発生させた。 |
+| フォルダー・履歴・更新 | 進捗・中止・再開、同一内容の再検査後の確認メモ、通信失敗時の旧検出名とハッシュ、上書き後の自動検査オフ・設定・履歴を確認。 |
+| 使い捨て試験 XPI で ClamAV / Python の不在を個別に再現 | 開始・再開を拒否し、履歴・メモ・保存済み進捗を保持。日本語・英語の設定画面で Windows 導入案内が開くことを確認。 |
+| 終了経路 | 完了・通信失敗・中止、上書き・無効化・削除、Thunderbird の通常終了・強制終了で各試験が監視した PID とセッションディレクトリの消滅を確認。監視とワーカーの異常終了では合成一時ファイルを作り、実際の DACL と追加の子プロセスの消滅も確認。 |
+| Windows の下位層 | 期限切れの実定義がエラーになり、専用 FreshClam 更新後に検査成功。日本語と空白を含む定義・一時パスで実 ClamAV が検査成功。パッケージ内ワーカーでサイズ上限と管理操作の拒否を確認。実プロセスで MIME メモリー・CPU 上限を確認。合成メールの検査中に実 clamscan.exe を終了させ、エラー応答とセッション清掃を確認。 |
+| 模擬試験 | Windows の起動失敗・外側のタイムアウト・定義不足・古さ、危険な権限と再解析ポイントの拒否を検証。実 ClamAV の内部スキャン時間を意図的に超過させる負荷試験は未実施。 |
+
+統合試験の XPI には、合成メール投入・故障注入・更新用の処理と専用定義の場所を組み込みます。配布 XPI は別にビルドし、同じ ID・153 系の上限・MIT ライセンス・本番ソースとの一致、試験 API とメールの除外を検証しています。
+
+再現時は下記をリポジトリのルートから実行します。両パスは検証専用に展開した公式 153 ESR と FreshClam の定義を指します。
+
+~~~powershell
+py -3.15 -X utf8 -B scripts/smoke_direct_mail_check.py --scenario full --windows-thunderbird ".codex-private/windows/tb/core/thunderbird.exe" --windows-database ".codex-private/windows/db"
+~~~
+
+Windows 用 Python 試験で実エンジンの異常終了も検証する際は、環境変数 CLAM_MAIL_TEST_DATABASE に同じ専用定義ディレクトリの絶対パスを設定してから、python -X utf8 -B -m unittest discover -s tests を実行します。
+
+同じ Thunderbird 試験コマンドで missing、no-python、quit、disable、uninstall、guardian、worker、recovery を個別に実行できます。日英画面は missing と no-python で検証します。通常のプロファイルや実メールは使いません。
+
+Windows ARM64、Python 3.13・3.14 の実機、電源断・全プロセス同時強制終了時の清掃、実サーバーからの新着受信は未確認です。今回の macOS 実機試験は未実施です。Ubuntu WSL では POSIX の回帰試験を実行しました。旧方式の実ホスト登録試験と GUI ランチャーのビルド試験は、それぞれ Linux 版 ClamAV と C コンパイラーが環境にないためエラーとなりました。同じ2件は変更前の main でも再現しました。

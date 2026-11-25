@@ -187,29 +187,59 @@ try {
   let state = await request("state");
   const fixture = await messenger.testFixture.prepare();
   check(state.installation.state === "integrated", "Integrated scanner state");
-  if (options.scenario === "missing") {
-    check(state.lastHealth.code === "clamav_missing", "Missing ClamAV is explicit");
-    const previous = JSON.stringify(state.records);
+  if (options.shared) {
+    if (report.version === "0.20.0a1") {
+      check(!state.settings.definitionSource, "Existing installations keep their definition folder");
+      const select = document.getElementById("definition-source");
+      for (let i = 0; i < 100 && !document.querySelector("#accounts input:checked"); i++) await wait(100);
+      check(document.querySelector("#accounts input:checked") && !select.disabled, "Settings are ready");
+      select.value = "gui";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    state = await settled(value => value.settings.definitionSource === "gui" &&
+      (value.lastHealth?.definitionSource === "gui" || value.lastHealth?.status === "error"), 30);
+    check(state.lastHealth.status === "ready", "Shared folder health: " + JSON.stringify(state.lastHealth));
+    report.sharedDefinitions = true;
+  }
+  if (["missing", "no-python"].includes(options.scenario)) {
+    const missingPython = options.scenario === "no-python";
+    check(state.lastHealth.code === (missingPython ? "direct_unavailable" : "clamav_missing"), "Missing prerequisite: " + JSON.stringify(state.lastHealth));
+    const saved = () => messenger.storage.local.get(["folderJob", "folderCheckpoint", "records"]);
+    const guide = document.getElementById("clamav-install-guide");
+    if ((await messenger.runtime.getPlatformInfo()).os === "win") {
+      for (let i = 0; i < 100 && (!guide.open || guide.hidden); i++) await wait(100);
+      check(guide.open && !guide.hidden && guide.textContent.includes("freshclam.exe"), "Windows installation guide is visible");
+      const heading = missingPython ? "Install ClamAV on Windows" : "ClamAV の導入方法（Windows）";
+      check(guide.querySelector("summary").textContent === heading, "Localized Windows guide: " + guide.querySelector("summary").textContent);
+    }
+    const previous = JSON.stringify(await saved());
     const context = await request("folderContext", { folderId: fixture.source.id });
     const response = await messenger.runtime.sendMessage({type:"folderStart",token:context.token,includeSubfolders:false});
     check(!response.ok && response.setupRequired, "Missing scanner blocks folder start");
     state = await request("state");
-    check(JSON.stringify(state.records) === previous && !state.folderJob, "Missing scanner preserves records and review notes");
-    const held = new NativeClient(messenger.runtime);
-    check((await held.request("health")).code === "clamav_missing", "Missing scanner never reports clean");
+    const resume = await messenger.runtime.sendMessage({type:"folderResume",jobId:state.folderJob.id});
+    check(!resume.ok && resume.setupRequired, "Missing scanner blocks resume");
+    check(JSON.stringify(await saved()) === previous, "Missing scanner preserves records, review notes and progress");
+    if (!missingPython) {
+      const held = new NativeClient(messenger.runtime);
+      check((await held.request("health")).code === "clamav_missing", "Missing scanner never reports clean");
+    }
     report.missingScanner = true;
     report.runtime = await messenger.testFixture.runtime();
     report.ok = true;
     await messenger.testFixture.report(JSON.stringify(report));
   } else {
   check(state.lastHealth.status === "ready", "Health ready: " + JSON.stringify(state.lastHealth));
-  check(state.settings.accountIds.includes(fixture.accountId) && state.settings.notifications === false, "Settings retained");
+  check(!state.settings.notifications, "Notification preference retained");
+  if (report.version === "0.20.0a1" || options.scenario !== "full") {
+    check(state.settings.accountIds.includes(fixture.accountId), "Enabled account retained");
+  }
   check(state.records.find(record => record.key === "preserved-review")?.review.note === "Synthetic human decision", "Human decision retained");
   const backup = await messenger.testFixture.backup(state.directMigrationBackup.path);
   check(backup.storage.records.length === 1 && backup.storage.records[0].review.note === "Synthetic human decision", "Pre-migration backup retained");
   report.migration = true;
   await messenger.testFixture.report(JSON.stringify({...report,running:true}));
-  if (["quit", "uninstall"].includes(options.scenario)) {
+  if (["quit", "uninstall", "disable", "guardian", "worker"].includes(options.scenario)) {
     report.lifecycleOnly = true;
   } else if (report.version === "0.20.0a1") {
     report.rawSamples = [];
@@ -332,6 +362,17 @@ try {
     report.pagedMoveIsolation = true;
     report.pagedMoveReplay = true;
     let threat = state.records.find(record => record.locator.subject === "Synthetic attachment");
+    await messenger.testFixture.failNextScan();
+    await request("retry", {key:threat.key});
+    state = await settled(value => value.fixtureScanRunning === false &&
+      value.records.find(row => row.key === threat.key)?.lastAttempt?.status === "error");
+    const previousThreat = state.records.find(row => row.key === threat.key);
+    check(previousThreat.status === "detected" && previousThreat.sha256 === threat.sha256 &&
+      JSON.stringify(previousThreat.signatures) === JSON.stringify(threat.signatures) &&
+      state.records.find(row => row.key === incomplete.key)?.review?.note === "Synthetic reviewed encryption",
+      "Failed rescan preserves detection, signatures and review history");
+    await messenger.testFixture.idle();
+    report.failedRescan = true;
     report.stage = "quarantine";
     const moved = await request("quarantineMany", { keys: [threat.key], hashes: { [threat.key]: threat.sha256 }, destinations: state.settings.quarantine });
     check(moved.moved === 1, "Manual quarantine");
@@ -545,6 +586,9 @@ try {
     state = await settled(value => value.folderJob?.status === "stopped");
     report.cancelledSessions = await messenger.testFixture.idle();
     report.cancellation = true;
+    await request("folderResume", {jobId:state.folderJob.id});
+    state = await settled(value => value.folderJob?.status === "completed");
+    await messenger.testFixture.idle();
     report.stage = "forget-history";
     const historyBeforeForget = state.records.length;
     const forget = await request("prepareForget", {keys:[largeKey]});
@@ -753,31 +797,46 @@ try {
 
 
     state=await request('state');
-
-
-
-
   } else {
     check(state.settings.scanSettings.mailMiB === 50 && state.settings.quarantine[fixture.accountId].auto, "Updated settings retained");
     check(state.records.some(record => record.status === "deleted") && state.records.some(record => record.quarantine?.status === "moved"), "Updated result history retained");
     check(!state.records.some(record => record.locator.subject === "Synthetic size preflight"), "Committed history removal survives update");
+    if (options.shared) {
+      check(!state.settings.enabled, "Automatic scanning stays disabled after update");
+      const select = document.getElementById("definition-source");
+      for (let i = 0; i < 100 && (select.value !== "gui" || select.disabled); i++) await wait(100);
+      select.value = "addon";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      state = await settled(value => !value.settings.definitionSource && value.lastHealth?.status === "ready" &&
+        !value.lastHealth.definitionSource, 30);
+      check(!state.settings.enabled, "Switching back preserves automatic scanning off");
+      await request("settings", {settings:{...state.settings, enabled:true, accountIds:[fixture.accountId]}});
+      report.restoredDefaultDefinitions = true;
+    }
     report.experimentalUpdate = true;
   }
   // Leave one actual clamd alive so the launcher can verify update/crash cleanup.
   const retained = new NativeClient(messenger.runtime);
   const sample = new TextEncoder().encode("Subject: synthetic lifecycle\r\n\r\nhello");
   check((await retained.scan(sample, await sha256(sample), state.settings.scanSettings)).status === "clean", "Lifecycle scan");
-  const lifecycleRaw = fixture.mails.plain.replace(/Subject: [^\r\n]+/, "Subject: Synthetic lifecycle background " + report.version).replace(/Message-ID: [^\r\n]+/i, "Message-ID: <lifecycle-background-" + report.version + "@example.invalid>");
-  const lifecycleMail = await messenger.messages.import(new File([lifecycleRaw], "lifecycle.eml", {type:"message/rfc822"}), fixture.source.id, {read:false,new:true});
-  await messenger.testFixture.inject(lifecycleMail.id);
-  await settled(state=>state.records.some(record=>record.messageId===lifecycleMail.id&&record.status==="clean"));
+  if (!["guardian", "worker"].includes(options.scenario)) {
+    const lifecycleRaw = fixture.mails.plain.replace(/Subject: [^\r\n]+/, "Subject: Synthetic lifecycle background " + report.version).replace(/Message-ID: [^\r\n]+/i, "Message-ID: <lifecycle-background-" + report.version + "@example.invalid>");
+    const lifecycleMail = await messenger.messages.import(new File([lifecycleRaw], "lifecycle.eml", {type:"message/rfc822"}), fixture.source.id, {read:false,new:true});
+    await messenger.testFixture.inject(lifecycleMail.id);
+    await settled(state=>state.records.some(record=>record.messageId===lifecycleMail.id&&record.status==="clean"));
+  }
   report.runtime = await messenger.testFixture.runtime();
-  check(report.runtime.sessions.length >= 2, "Lifecycle cleanup includes a retained background scanner");
-  report.retainedBackgroundScanner = true;
+  if (!["guardian", "worker"].includes(options.scenario)) {
+    check(report.runtime.sessions.length >= 2, "Lifecycle cleanup includes a retained background scanner");
+    report.retainedBackgroundScanner = true;
+  }
+  if (options.shared && report.version === "0.20.0a1") {
+    await request("settings", {settings:{...state.settings, enabled:false, accountIds:[]}});
+  }
   report.ok = true;
   await messenger.testFixture.report(JSON.stringify(report));
   if (report.version === "0.20.0a1") await messenger.testFixture.update();
-  else if (["quit", "uninstall"].includes(options.scenario)) await messenger.testFixture.finish(options.scenario);
+  else if (["quit", "uninstall", "disable"].includes(options.scenario)) await messenger.testFixture.finish(options.scenario);
   }
   }
 } catch (error) {

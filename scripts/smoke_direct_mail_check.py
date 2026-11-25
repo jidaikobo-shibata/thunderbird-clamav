@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -44,19 +45,23 @@ def mails():
     return data
 
 
-def fixture_xpi(target, original, version, scenario="full"):
+def fixture_xpi(target, original, version, scenario="full", database=None, shared_root=None):
     with zipfile.ZipFile(original) as source:
         payload = {name: source.read(name) for name in source.namelist()}
     manifest = json.loads(payload["manifest.json"])
     manifest["version"] = version
     manifest["permissions"].append("messagesImport")
     manifest["experiment_apis"]["testFixture"] = {"schema": "fixture/schema.json", "parent": {"scopes": ["addon_parent"], "paths": [["testFixture"]], "script": "fixture/api.js"}}
-    params = {"prepare": [], "inject": [{"name": "message", "type": "integer"}], "update": [],
+    params = {"prepare": [], "failNextScan": [], "inject": [{"name": "message", "type": "integer"}], "update": [],
               "backup": [{"name": "path", "type": "string"}], "runtime": [], "report": [{"name": "data", "type": "string"}],
               "finish": [{"name": "action", "type": "string"}], "idle": [], "coverMain": [{"name":"pauseFallback","type":"boolean","optional":True}], "restoreFrames": [], "composeFrames": []}
     payload["fixture/schema.json"] = json.dumps([{"namespace": "testFixture", "functions": [{"name": name, "type": "function", "async": True, "parameters": values} for name, values in params.items()]}]).encode()
     payload["fixture/mail.json"] = json.dumps(mails()).encode()
-    payload["fixture/options.json"] = json.dumps({"scenario": scenario}).encode()
+    payload["fixture/options.json"] = json.dumps({"scenario": scenario, "shared": bool(shared_root)}).encode()
+    if shared_root:
+        payload["direct/host.py"] += f"\nos.environ['LOCALAPPDATA'] = {str(shared_root.resolve())!r}\n".encode()
+    if database:
+        payload["direct/host.py"] += f"\nDATABASE = {str(database.resolve())!r}\n".encode()
     log_path = str(target.parent / "direct-daemon.log")
     payload["direct/host.py"] += ("\n_TestDaemonBase = MailDaemon\nclass MailDaemon(_TestDaemonBase):\n"
         " def close(self):\n"
@@ -66,6 +71,22 @@ def fixture_xpi(target, original, version, scenario="full"):
         f"    with open({log_path!r}, 'ab') as log: log.write(self.diagnostics.read(MAX_FRAME))\n"
         "   except OSError: pass\n"
         "  return super().close()\n").encode()
+    if scenario in ("guardian", "worker"):
+        # Only the disposable fixture can create this synthetic unpacked file and child.
+        payload["direct/host.py"] += b"""
+import threading
+def crash_fixture():
+    root = Path(__file__).parent
+    while not (root / "arm").is_file():
+        time.sleep(0.05)
+    (root / "mail" / "synthetic.tmp").write_bytes(b"synthetic mail")
+    with subprocess.Popen([sys.executable, "-I", "-S", "-c", "import time; time.sleep(120)"]) as child:
+        (root / "child").write_text(str(child.pid))
+        while not (root / "exit-worker").is_file():
+            time.sleep(0.05)
+        os._exit(91)
+threading.Thread(target=crash_fixture, daemon=True).start()
+"""
     if scenario == "missing":
         payload["direct/host.py"] += b'\nCLAMSCAN = "/nonexistent-clam-mail-test/clamscan"\nCLAMD = "/nonexistent-clam-mail-test/clamd"\nCLAMAV_TRUST_ERROR = False\n'
     for name in ["api.js", "seed.js", "driver.js"]:
@@ -367,7 +388,7 @@ def fixture_xpi(target, original, version, scenario="full"):
           return fixtureRemove(key);
         };
         const incomingQueue =""")
-    if scenario == "recovery":
+    if scenario in ("missing", "no-python", "recovery"):
         # Faults exist only in instrumented, disposable-profile XPIs.
         payload["fixture/seed.js"] = payload["fixture/seed.js"].replace(
             b"await messenger.testFixture.update();", b"""
@@ -380,6 +401,7 @@ def fixture_xpi(target, original, version, scenario="full"):
             });
             await messenger.testFixture.update();
             """)
+    if scenario == "recovery":
         payload["background.js"] = payload["background.js"].replace(b"const api = messenger;", b"""
         const api = messenger;
         const realStorageSet = api.storage.local.set.bind(api.storage.local);
@@ -392,6 +414,8 @@ def fixture_xpi(target, original, version, scenario="full"):
           return realStorageSet(value);
         };
         """)
+    if scenario == "no-python":
+        payload["direct/api.js"] += b'\nvar MissingPythonBase = clamDirect; clamDirect = class extends MissingPythonBase { async windowsPython() { throw new Error("Python3 unavailable in supported Windows installation locations"); } };\n'
     if version == "0.19.2":
         manifest["experiment_apis"].pop("clamDirect")
         manifest["background"] = {"page": "fixture-seed.html"}
@@ -403,6 +427,8 @@ def fixture_xpi(target, original, version, scenario="full"):
         payload["background.html"] = payload["background.html"].replace(b"</html>", b'<iframe src="dashboard.html"></iframe></html>')
         payload["background.js"] = payload["background.js"].replace(
             b'api.runtime.onInstalled.addListener(() => { void openDashboard().catch(report); });', b'// Test iframe opens the dashboard.')
+        payload["background.js"] = payload["background.js"].replace(
+            b"ok: true, directMigrationBackup, settings", b"ok: true, fixtureScanRunning: running, directMigrationBackup, settings")
         payload["direct/api.js"] += b'''\nvar TestDirectBase = clamDirect; clamDirect = class extends TestDirectBase {
           trace = [];
           async smallCommand(command, args) {
@@ -410,6 +436,14 @@ def fixture_xpi(target, original, version, scenario="full"):
             try { const value = await super.smallCommand(command, args); entry.ok = true; return value; }
             catch (error) { entry.error = String(error); throw error; }
             finally { entry.elapsed = Date.now() - entry.started; await IOUtils.writeJSON(PathUtils.join(PathUtils.profileDir, "direct-startup.json"), this.trace); }
+          }
+          async request(token, data) {
+            if (this.extension.__failNextScan && JSON.parse(data).op === "end") {
+              this.extension.__failNextScan = false;
+              await this.close(token);
+              throw new Error("Synthetic scanner disconnect");
+            }
+            return super.request(token, data);
           }
           opened = [];
           async open() { const token = await super.open(); this.extension.__testDirect = this;
@@ -422,6 +456,18 @@ def fixture_xpi(target, original, version, scenario="full"):
 
 
 def alive(pid):
+    if sys.platform == "win32":
+        import _winapi
+        try:
+            handle = _winapi.OpenProcess(0x100000, False, pid)
+        except OSError as error:
+            if error.winerror == 87:
+                return False
+            raise
+        try:
+            return _winapi.WaitForSingleObject(handle, 0) == 258
+        finally:
+            _winapi.CloseHandle(handle)
     if sys.platform == "darwin":
         from importlib.util import spec_from_file_location, module_from_spec
         spec = spec_from_file_location("direct_guardian", ROOT / "experiments/direct-runtime/guardian.py")
@@ -433,8 +479,36 @@ def alive(pid):
         return False
 
 
+def verify_private_windows_file(path):
+    # Validate the actual inherited DACL on an unpacked file, using numeric SIDs.
+    command = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    script = """
+$ErrorActionPreference = 'Stop'
+$sid = [System.Security.Principal.SecurityIdentifier]
+$current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$allowed = @($current, 'S-1-5-18', 'S-1-5-32-544', 'S-1-3-4')
+$rules = [System.IO.File]::GetAccessControl($env:CLAM_MAIL_SYNTHETIC).GetAccessRules($true, $true, $sid)
+if (!$rules.Count) { exit 1 }
+foreach ($rule in $rules) {
+    if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -notin $allowed) { exit 1 }
+}
+"""
+    subprocess.run([str(command), "-NoProfile", "-NonInteractive", "-Command", script],
+                   env={**os.environ, "CLAM_MAIL_SYNTHETIC": str(path)}, timeout=10, check=True)
+
+
 def descendants(pid):
     result = [pid]
+    if sys.platform == "win32":
+        import csv
+        # Snapshot process IDs only. Never inspect mail or command lines.
+        script = "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Csv -NoTypeInformation"
+        rows = subprocess.check_output([str(Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"),
+                                        "-NoProfile", "-NonInteractive", "-Command", script], text=True)
+        tree = list(csv.DictReader(rows.splitlines()))
+        for parent in result:
+            result.extend(int(row["ProcessId"]) for row in tree if int(row["ParentProcessId"]) == parent and int(row["ProcessId"]) not in result)
+        return result
     if sys.platform == "darwin":
         rows = subprocess.check_output(["/bin/ps", "-axo", "pid=,ppid="], text=True)
         children = {}
@@ -454,26 +528,60 @@ def descendants(pid):
     return result
 
 
+class DisposableProfile(tempfile.TemporaryDirectory):
+    def cleanup(self):
+        # Windows may keep a profile database locked briefly as content processes exit.
+        for attempt in range(100):
+            try:
+                return super().cleanup()
+            except PermissionError:
+                if sys.platform != "win32" or attempt == 99:
+                    raise
+                time.sleep(0.1)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--scenario", choices=["full", "intake", "latency", "missing", "quit", "uninstall", "recovery", "invalid-storage"], default="full")
+    parser.add_argument("--windows-thunderbird", type=Path, help="Thunderbird 153 or 160 executable")
+    parser.add_argument("--windows-database", type=Path, help="FreshClam database for the disposable fixture only")
+    parser.add_argument("--scenario", choices=["full", "missing", "no-python", "quit", "uninstall", "intake", "latency", "invalid-storage", "disable", "guardian", "worker", "recovery"], default="full")
+    parser.add_argument("--shared-definitions", action="store_true", help="Exercise the Windows GUI definition selector with a disposable copy")
     parser.add_argument("--comparison-xpi", type=Path, help="Use a previous build for the latency scenario")
     options = parser.parse_args()
+    if options.shared_definitions and (sys.platform != "win32" or options.scenario != "full"):
+        parser.error("--shared-definitions requires the Windows full scenario")
     if options.comparison_xpi and options.scenario != "latency":
         parser.error("--comparison-xpi requires --scenario latency")
-    xpi = options.comparison_xpi or build()
-    output = ROOT / ("dist/direct-mail-integration" + ("-" + options.scenario if options.scenario != "full" else ""))
+    major = 153
+    if sys.platform == "win32":
+        if not options.windows_thunderbird or not options.windows_database:
+            parser.error("Windows requires explicit disposable executable and database paths")
+        ini = options.windows_thunderbird.with_name("application.ini").read_text(encoding="utf-8")
+        major = next((v for v in (153, 160) if any(line.startswith(f"Version={v}.") for line in ini.splitlines())), None)
+        if major is None:
+            parser.error("Thunderbird 153.x or 160.x required")
+    if options.scenario in ("guardian", "worker", "no-python") and sys.platform != "win32":
+        parser.error("This lifecycle fixture requires the Windows guardian")
+    xpi = options.comparison_xpi or build(major)
+    output = ROOT / ("dist/direct-mail-integration" + ("-tb160" if major == 160 else "") + ("-" + options.scenario if options.scenario != "full" else ""))
+    if options.shared_definitions:
+        output = output.with_name(output.name + "-shared")
     if options.comparison_xpi:
         output = output.with_name(output.name + "-baseline")
     output.mkdir(parents=True, exist_ok=True)
     (output / "result.json").write_text('{"status":"running"}\n')
-    with tempfile.TemporaryDirectory(prefix="clam-direct-mail-") as temporary:
+    with DisposableProfile(prefix="clam-direct-mail-") as temporary:
         directory = Path(temporary)
         runtime = directory / "runtime"; runtime.mkdir(mode=0o700)
         profile = directory / "profile"; (profile / "extensions").mkdir(parents=True)
-        fixture_xpi(profile / "extensions" / (ID + ".xpi"), xpi, "0.19.2", options.scenario)
-        fixture_xpi(profile / "real-first.xpi", xpi, "0.20.0a1", options.scenario)
-        fixture_xpi(profile / "real-next.xpi", xpi, "0.20.0a2", options.scenario)
+        shared_root = directory / "shared" if options.shared_definitions else None
+        if shared_root:
+            gui = shared_root / "clamav-gui"
+            shutil.copytree(options.windows_database, gui / "database")
+            (gui / "freshclam.lock").touch()
+        for target, version in [(profile / "extensions" / (ID + ".xpi"), "0.19.2"),
+                                (profile / "real-first.xpi", "0.20.0a1"), (profile / "real-next.xpi", "0.20.0a2")]:
+            fixture_xpi(target, xpi, version, options.scenario, options.windows_database, shared_root)
         (profile / "real-mail-test-enabled").touch()
         prefs = {"extensions.autoDisableScopes": 0, "extensions.enabledScopes": 15, "extensions.startupScanScopes": 15,
             "extensions.logging.enabled": True, "mail.shell.checkDefaultClient": False, "mail.provider.enabled": False,
@@ -481,6 +589,8 @@ def main():
             "datareporting.policy.dataSubmissionEnabled": False, "datareporting.healthreport.uploadEnabled": False,
             "extensions.getAddons.cache.enabled": False, "devtools.console.stdout.content": True,
             "browser.dom.window.dump.enabled": True}
+        if sys.platform == "win32":
+            prefs["intl.locale.requested"] = "en-US" if options.scenario == "no-python" else "ja"
         (profile / "user.js").write_text("".join(f"user_pref({json.dumps(k)}, {json.dumps(v)});\n" for k, v in prefs.items()))
         bus = directory / "bus.conf"
         bus.write_text('<busconfig><type>session</type><listen>unix:tmpdir=/tmp</listen><policy context="default"><allow send_destination="*"/><allow receive_sender="*"/><allow own="*"/></policy></busconfig>')
@@ -496,6 +606,8 @@ def main():
                     command = ["/Applications/Thunderbird.app/Contents/MacOS/thunderbird", "--headless"]
                     env = {**os.environ, "MOZ_NO_REMOTE": "1", "MOZ_CRASHREPORTER_DISABLE": "1",
                            "MOZ_LOG": "PageMessages:5,console:5"}
+                elif sys.platform == "win32":
+                    command = [str(options.windows_thunderbird.resolve()), "--headless"]
                 elif sys.platform == "linux":
                     compositor = subprocess.Popen(["/usr/bin/weston", "--backend=headless", "--renderer=pixman", "--shell=kiosk-shell.so", "--no-config", "--idle-time=0", "--socket=clam-direct-mail", "--log=" + str(directory / "weston.log")], env=env, stdout=log, stderr=log, start_new_session=True)
                     processes.append(compositor)
@@ -532,11 +644,11 @@ def main():
                             restarts.append(stage)
                             browser = launch()
                     results = []
-                    versions = ["0.20.0a1"] if options.scenario in ("latency", "missing", "recovery", "invalid-storage") else ["0.20.0a1", "0.20.0a2"]
+                    versions = ["0.20.0a1"] if options.scenario in ("latency", "missing", "no-python", "recovery", "invalid-storage") else ["0.20.0a1", "0.20.0a2"]
                     for version in versions:
                         path = profile / f"direct-result-{version}.json"
                         if path.exists():
-                            result = json.loads(path.read_text())
+                            result = json.loads(path.read_text(encoding="utf-8"))
                             if not result["ok"]: raise RuntimeError(result)
                             results.append(result)
                     if len(results) == len(versions):
@@ -550,15 +662,41 @@ def main():
                             closed = [*result.get("completedSessions", []), *result.get("rescanCleanup", []), *result.get("cancelledSessions", [])]
                             assert all(not Path(value["directory"]).exists() and not alive(value["pid"]) for value in closed), "Completed/cancelled scan left resources"
                         children = [pid for session in active["sessions"] for pid in descendants(session["pid"])]
-                        assert len(children) >= (2 if options.scenario in ("latency", "missing", "recovery", "invalid-storage") else 3), "Expected supervised scanner descendants"
-                        if options.scenario in ("full", "latency", "intake", "missing", "recovery", "invalid-storage"):
-                            os.kill(active["parent"], signal.SIGKILL)
+                        if options.scenario == "no-python":
+                            assert not children and not active["sessions"]
+                        else:
+                            assert len(children) >= (2 if sys.platform == "win32" or options.scenario in ("missing", "no-python", "latency", "invalid-storage", "recovery") else 3), "Expected supervised scanner descendants"
+                        if options.scenario in ("guardian", "worker"):
+                            session, = active["sessions"]
+                            root = Path(session["directory"])
+                            (root / "arm").touch()
+                            for _ in range(100):
+                                marker = root / "child"
+                                if marker.exists() and marker.read_text().isdigit():
+                                    break
+                                time.sleep(0.05)
+                            children.append(int(marker.read_text()))
+                            assert alive(children[-1])
+                            verify_private_windows_file(root / "mail" / "synthetic.tmp")
+                            if options.scenario == "guardian":
+                                os.kill(session["pid"], signal.SIGTERM)
+                            else:
+                                (root / "exit-worker").touch()
+                        elif options.scenario in ("full", "latency", "intake", "invalid-storage", "missing", "no-python", "recovery"):
+                            if sys.platform == "win32":
+                                assert active["parent"] == browser.pid
+                                browser.kill()
+                            else:
+                                os.kill(active["parent"], signal.SIGKILL)
                         else:
                             (profile / "direct-action-ready").touch()
                         for _ in range(300):
                             if not any(alive(pid) for pid in children) and all(not Path(session["directory"]).exists() for session in active["sessions"]): break
                             time.sleep(0.05)
-                        else: raise RuntimeError("Parent crash left a scanner or private mail files")
+                        else:
+                            remaining = [pid for pid in children if alive(pid)]
+                            directories = [s["directory"] for s in active["sessions"] if Path(s["directory"]).exists()]
+                            raise RuntimeError(f"Scanner cleanup incomplete: live={remaining}, directories={directories}")
                         report = {"ok": True, "scenario": options.scenario, "results": results,
                                   "updateCleanup": len(results) == 2, "lifecycleCleanup": True,
                                   **({"processRestarts": restarts} if restarts else {})}
@@ -578,14 +716,21 @@ def main():
                     try:
                         if process.poll() is None:
                             try:
-                                os.killpg(process.pid, signal.SIGTERM)
+                                if sys.platform == "win32":
+                                    process.terminate()
+                                else:
+                                    os.killpg(process.pid, signal.SIGTERM)
                             except PermissionError:
                                 if process.poll() is None:
                                     process.terminate()
                         process.wait(timeout=5)
                     except ProcessLookupError: pass
                     except subprocess.TimeoutExpired:
-                        os.killpg(process.pid, signal.SIGKILL); process.wait(timeout=5)
+                        if sys.platform == "win32":
+                            process.kill()
+                        else:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        process.wait(timeout=5)
                 for path in profile.glob("direct-result-*.json"):
                     (output / path.name).write_bytes(path.read_bytes())
                 for path in profile.glob("direct-startup.json"):
