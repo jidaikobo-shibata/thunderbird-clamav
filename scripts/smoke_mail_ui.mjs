@@ -221,7 +221,9 @@ try {
       if (request.type === "prepareDelete") return { ok: true, token: "test-ticket", ...target(request.key) };
       if (request.type === "deletePermanently") testState.records.find(record => record.key === request.key).status = "deleted";
       if (request.type === "cancelDeletePreparation" && testState.batch?.preparationId === request.preparationId && !ignorePreparationCancel) testState.batch.stopRequested = true;
+      if (request.type === "locateHistory") return {ok:true, candidates:[{id:21, position:"candidate",folder:{accountId:"test",path:"/Archive",name:"Archive"}}]};
       if (request.type === "prepareDeleteBatch") {
+        if (window.lookupFailure && request.keys.includes(window.lookupFailure)) return {ok:true, failures:[{key:window.lookupFailure,detail:"Moved"}]};
         if (failPrepareDelete) return {ok:false,error:"synthetic content mismatch <img src=x onerror=window.bad=true>" + " 検査対象の確認に失敗しました。".repeat(25)};
         batchKeys = request.keys;
         if (holdDeletePreparation) {
@@ -358,6 +360,19 @@ try {
       await until("!document.getElementById('delete-selected').disabled");
       assert.equal(await evaluate("!document.getElementById('delete-dialog').open && testCalls.slice(lateCancelStart).some(call=>call.type==='cancelDeleteBatch')"),true);
       await evaluate("ignorePreparationCancel=false");
+      await evaluate("holdDeletePreparation=false;window.lookupFailure=testCalls.filter(c=>c.type==='prepareDeleteBatch').at(-1).keys[0];window.lookupStart=testCalls.length;document.getElementById('delete-selected').click()");
+      await until("document.getElementById('locate-dialog').open");
+      assert.equal(await evaluate("document.getElementById('locate-continue').disabled"),true);
+      await evaluate("document.querySelector('#locate-rows button').click()");
+      await until("document.querySelector('#locate-rows button').textContent.includes('Archive')");
+      await evaluate("document.querySelector('#locate-rows button').click()");
+      await until("!document.getElementById('locate-continue').disabled");
+      await evaluate("document.getElementById('locate-continue').click()");
+      await until("document.getElementById('delete-dialog').open && !document.getElementById('delete-ack').disabled");
+      assert.equal(await evaluate("testCalls.filter(c=>c.type==='prepareDeleteBatch').at(-1).keys.includes(lookupFailure)"),false);
+      assert.equal(await evaluate("testCalls.slice(lookupStart).some(c=>c.type==='deleteBatch')"),false);
+      await evaluate("window.lookupFailure=null;document.getElementById('delete-cancel').click()");
+      await until("!document.getElementById('delete-selected').disabled");
       // Foreground failures remain visible after the dialog closes, with no unsafe deletion.
       await evaluate("holdDeletePreparation=false;testState.batch=null;failPrepareDelete=true;window.scrollTo(0,document.body.scrollHeight);document.getElementById('delete-selected').focus();document.getElementById('delete-selected').click()");
       await until("document.getElementById('message-dialog').open");

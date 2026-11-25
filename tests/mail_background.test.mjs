@@ -4889,3 +4889,40 @@ test("one surviving same-folder copy cannot stand in for two receipts after rest
   assert(result.overflowReport.recent.every(record=>record.unscannedReason === "ambiguousMessage"));
   assert.deepEqual(restarted.rawReads,[]);
 });
+
+test("unverified moved candidates scan separately and cannot authorize deletion of the original", async () => {
+  const origin = mail(19300), moved = {...origin,id:19301,folder:{accountId:"one",path:"/Archive"}};
+  const record = {key:"receipt", status:"incomplete", source:"automatic", session:"old", messageId:origin.id,
+    locator:locator(origin), unscannedReason:"unverifiedLocation", sha256:null};
+  const h = await harness({mails:[moved], deleteAllowed:true, saved:{records:[record]}});
+  const keys = [record.key];
+  const prep = await h.send("prepareDeleteBatch", {keys, recover:true});
+  assert.deepEqual(prep.failures.map(item => item.key), keys);
+  assert.equal(prep.token, undefined);
+  assert.equal((await h.send("checkRetryTargets",{keys})).failures.length,1);
+  const result = await h.send("locateHistory",{key:record.key});
+  assert.deepEqual(result.candidates.map(item=>item.folder.path), ["/Archive"]);
+  const candidate = result.candidates[0];
+  const request = {key:record.key, messageId:candidate.id, position:candidate.position, session:result.session};
+  assert.equal((await h.send("scanHistoryCandidate",{...request,position:"stale"})).ok,false);
+  assert.equal((await h.send("scanHistoryCandidate",request)).ok,true);
+  const state = await settle(h, state=>state.records.some(item=>item.status==="clean"));
+  const original = state.records.find(item=>item.key===record.key);
+  assert.equal(original.locator.folder.path,"/Inbox");
+  assert.equal(original.status,"incomplete");
+  assert.equal(original.candidateScanKey,state.records.find(item=>item.status==="clean").key);
+  assert.equal((await h.send("prepareDelete",{key:record.key})).ok,false);
+  assert.deepEqual(h.deleted,[]);
+});
+
+test("finding a unique digest updates the location; identical copies remain choices", async () => {
+  const original = mail(19310), moved = {...original,id:19311,folder:{accountId:"one",path:"/Archive"}};
+  const hash = await sha256(new TextEncoder().encode("Subject: example\r\n\r\nhello"));
+  const record = {key:"result",status:"detected",source:"automatic",locator:locator(original),sha256:hash};
+  const h = await harness({mails:[moved], saved:{records:[record]}});
+  assert.equal((await h.send("locateHistory",{key:"result"})).verified,true);
+  assert.equal(h.stored().records[0].locator.folder.path,"/Archive");
+  const second = await harness({mails:[original,moved],saved:{records:[record]}});
+  assert.equal((await second.send("locateHistory",{key:"result"})).candidates.length,2);
+  assert.deepEqual(second.deleted,[]);
+});

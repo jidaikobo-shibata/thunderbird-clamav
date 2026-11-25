@@ -1,14 +1,14 @@
 # ClamAV Mail Check / ClamAV メール検査
 
 Thunderbirdのメールを、コンピューターにインストールしたClamAVで検査する拡張機能です。
-このブランチは **0.20.0a48（試用版）** です。補助プログラムの別途インストールは不要です。
+このブランチは **0.20.0a49（試用版）** です。補助プログラムの別途インストールは不要です。
 公開済みの0.20.0a5はUbuntu向けです。このブランチのXPIは末尾のビルド手順で作成できます。GitHubにはまだ公開していません。
 
 [English installation guide](README.en.md)
 
 ## インストール
 
-1. Thunderbird 160 系の Windows 版には `dist/clam-mail-check-direct-0.20.0a48-tb160.xpi`、153 系には `dist/clam-mail-check-direct-0.20.0a48.xpi` を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
+1. Thunderbird 160 系の Windows 版には `dist/clam-mail-check-direct-0.20.0a49-tb160.xpi`、153 系には `dist/clam-mail-check-direct-0.20.0a49.xpi` を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
 2. Thunderbirdのアドオンマネージャーで、歯車メニューの「ファイルからアドオンをインストール」を選び、XPIを指定します。
 3. 表示される権限を確認してインストールします。Experiment APIを使用するため、Thunderbirdとコンピューターへの全面アクセス権限が必要です。
 4. ツールバーのアイコンから画面を開き、「設定」末尾の「ClamAVの状態」で「接続を再確認」を押します。ClamAVが未導入なら、表示される導入手順に従います。ウイルス定義の初回更新も完了させてください。
@@ -135,6 +135,8 @@ ClamAVが検出しないメールの安全性を保証するものではあり�
 
 通常のフォルダー移動でも、移動イベントと本文の照合によって既存の履歴の場所を更新します。検査結果と確認メモは保持し、移動先で再び新着扱いの通知を受けても、更新済みの同じメールを別の履歴として追加しません。検査中の移動では古い場所の情報で上書きしないようにします。本文を確認できない場合や候補が複数ある場合は、自動では引き継ぎません。コピーしたメールは別件として扱います。
 
+「検査結果」で完全削除・再検査・開く操作の対象を特定できなかった場合は、その場で「対象メールを探し直す」を選べます。検査時の内容に一致する候補が1通なら現在のフォルダーを確認して操作を続けられます。同一性を確認できない候補は、フォルダー名を見て個別に検査できます。候補の結果は別の行に記録されます。見つからないメールは今回の操作から外せます。完全削除の前に、最終的な対象と件数が表示されます。
+
 以前の版で既にできた重複履歴は、自動削除・統合しません。
 
 ## 起動時の保存エラーからの復旧
@@ -190,7 +192,7 @@ python3 -B scripts/check_source.py
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-160 系用は `python scripts/build_direct_mail_check.py --thunderbird-major 160` でビルドします。既定の 153 系用の成果物は`dist/clam-mail-check-direct-0.20.0a48.xpi`です。同じXPIにUbuntu/macOS/Windows用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
+160 系用は `python scripts/build_direct_mail_check.py --thunderbird-major 160` でビルドします。既定の 153 系用の成果物は`dist/clam-mail-check-direct-0.20.0a49.xpi`です。同じXPIにUbuntu/macOS/Windows用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
 
 ```bash
 for test_file in tests/*.test.mjs; do

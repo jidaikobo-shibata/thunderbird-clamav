@@ -51,6 +51,7 @@ async function request(type, values = {}) {
     if (response?.setupRequired) { await refresh(); openSetup(); }
     const error = new Error(response?.error || t("mail102", "拡張の処理に接続できませんでした。"));
     if (["deletePermanently", "deleteBatch", "quarantineMany"].includes(type)) error.guidance = t("messageEffects", "処理が途中まで進んでいる可能性があります。再実行の前に、検査結果とメールの状態を確認してください。");
+    error.lookupFailed = response?.lookupFailed;
     throw error;
   }
   if (type === "state") startupFailed = false;
@@ -120,7 +121,7 @@ function updateControls() {
     entry.checkbox.disabled = locked || !selectable(record);
     entry.checkbox.checked = selected.has(record.key);
     entry.row.dataset.selected = String(entry.checkbox.checked);
-    entry.open.disabled = locked || !record.sha256 || ["queued", "scanning", "deleted"].includes(record.status);
+    entry.open.disabled = locked || ["queued", "scanning", "deleted"].includes(record.status);
     entry.retry.disabled = locked || !canRetry(record);
     entry.remove.disabled = locked || !canDelete(record);
     entry.forget.disabled = locked || !canForget(record);
@@ -337,7 +338,7 @@ function confirmDeletion(targets, history = false, preparedInDialog = false) {
   setText($("delete-title"), history ? t("forgetTitle", "履歴だけ消去") : t("mail357", "メールの完全削除"));
   setText($("delete-warning"), history ? t("forgetWarning", "選択した検査履歴だけを消去します。メール本体は残ります。状態が変わった履歴は消去しません。") : t("mail358", "ごみ箱を経由せず完全に削除します。元には戻せません。IMAPではサーバーと他端末にも反映されます。"));
   setText($("delete-ack-text"), history ? t("forgetAck", "対象の履歴を確認しました。メール本体は残ることを理解しました。") : t("mail359", "上の対象を確認し、元に戻せないことを理解しました"));
-  setText($("delete-confirm"), history ? t("forgetTitle", "履歴だけ消去") : t("mail360", "完全に削除する"));
+  setText($("delete-confirm"), history ? t("forgetTitle", "履歴だけ消去") : t("deleteSelectedCount", "メールを完全削除（$1通）", [targets.length]));
   $("delete-targets").parentElement.hidden = false;
   $("delete-targets").replaceChildren();
   setText($("delete-count"), history ? t("forgetConfirmCount", "消去する履歴：$1件（画面外を含む全対象を下に表示しています）", [targets.length]) : t("deleteConfirmCount", "完全削除するメール：$1通（画面外を含む全対象を下に表示しています）", [targets.length]));
@@ -370,6 +371,86 @@ function renderDeletePreparation(progress) {
   $("delete-preparation-bar").value = completed;
   $("delete-preparation-bar").setAttribute("aria-label", t("deletePreparingProgress", "削除対象の照合済み件数"));
 }
+// Preserve the dashboard selection. Only the keys explicitly retained here
+// go through the original operation's preparation and confirmation again.
+function recoverTargets(keys, failures, verb) {
+  const dialog = $("locate-dialog"), rows = $("locate-rows"), proceed = $("locate-continue");
+  const unresolved = new Set(failures.map(item => item.key)), retained = new Set(keys);
+  rows.replaceChildren();
+  setText($("locate-summary"), t("locateSummary", "$1通のうち$2通を特定できませんでした。", [keys.length, failures.length]));
+  function update() {
+    proceed.disabled = unresolved.size > 0;
+    setText(proceed, retained.size ? t("locateContinue", "$1に進む（$2通）", [verb, retained.size]) : t("locateFinish", "閉じる"));
+  }
+  for (const {key, detail} of failures) {
+    const record = latest.records.find(item => item.key === key);
+    const row = rows.appendChild(document.createElement("li"));
+    row.appendChild(document.createElement("strong")).textContent = record?.locator.subject || t("mail022", "件名なし");
+    const status = row.appendChild(document.createElement("p"));
+    status.setAttribute("role", "status"); status.textContent = detail;
+    const controls = row.appendChild(document.createElement("div"));
+    function button(label, handler) {
+      const element = controls.appendChild(document.createElement("button"));
+      element.type = "button"; element.textContent = label;
+      element.onclick = async () => {
+        for (const b of controls.children) b.disabled = true;
+        try { await handler(); }
+        catch (error) { status.textContent = error.message; }
+        finally {
+          for (const b of controls.children) b.disabled = false;
+          if (dialog.open && row.isConnected && document.activeElement === document.body)
+            (controls.querySelector("button") || (!proceed.disabled && proceed) || dialog.querySelector('[value="cancel"]')).focus();
+        }
+      };
+    }
+    function done(text, keep) {
+      if (!dialog.open || !row.isConnected) return;
+      status.textContent = text; controls.replaceChildren();
+      unresolved.delete(key); if (!keep) retained.delete(key);
+      update();
+    }
+    const exclude = () => button(t("locateExclude", "この操作から外す"), () => done(t("locateExcluded", "今回の対象から外しました。"), false));
+    button(t("locateSearch", "対象メールを探し直す"), async () => {
+      status.textContent = t("locateSearching", "候補を探しています。");
+      const result = await request("locateHistory", {key});
+      if (!dialog.open || !row.isConnected) return;
+      if (result.verified) {
+        done(t("locateVerified", "内容が一致しました。現在のフォルダー：$1", [folderLabel(result.folder, folderNames, result.folder.accountId)]), true);
+        return;
+      }
+      controls.replaceChildren();
+      status.textContent = result.candidates.length ? t("locateUnverified", "元のメールと同じか確認できません。候補を新しい検査として受け付けます。") : t("locateMissing", "現在のメールを特定できません。");
+      for (const candidate of result.candidates) {
+        const folder = folderLabel(candidate.folder, folderNames, candidate.folder.accountId);
+        button(t("locateScan", "$1 の候補を検査", [folder]), async () => {
+          await request("scanHistoryCandidate", {key, messageId:candidate.id, position:candidate.position, session:result.session});
+          done(t("locateQueued", "候補の検査を受け付けました。結果は別の行に表示します。"), false);
+        });
+      }
+      exclude();
+    });
+    exclude();
+  }
+  update(); dialog.returnValue = "cancel";
+  return new Promise(resolve => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "continue" ? [...retained] : []), {once:true});
+    dialog.showModal();
+  });
+}
+
+async function retryTargets(keys, single = false) {
+  const {failures} = await request("checkRetryTargets", {keys});
+  if (failures?.length) keys = await recoverTargets(keys, failures, t("mail134", "再検査"));
+  if (!keys.length) return t("locateFinished", "対象の確認を終了しました。");
+  if (single) {
+    await request("retry", {key:keys[0], checkedLocation:true});
+    return t("mail135", "再検査を受け付けました。");
+  }
+  const response = await request("retryMany", {keys, checkedLocation:true});
+  for (const key of keys) selected.delete(key);
+  return t("mail147", "$1件の再検査を受け付けました。", [response.count]);
+}
+
 async function prepareDeleteConfirmation(keys) {
   const dialog = $("delete-dialog");
   const context = { id: crypto.randomUUID(), total: keys.length, preparing: true, cancelled: false, started: false };
@@ -395,7 +476,16 @@ async function prepareDeleteConfirmation(keys) {
     if (context.cancelled || !dialog.open) return null;
     context.started = true;
     let prepared;
-    try { prepared = await request("prepareDeleteBatch", { keys, preparationId: context.id }); }
+    try {
+      for (;;) {
+        prepared = await request("prepareDeleteBatch", { keys, preparationId: context.id, recover:true });
+        if (context.cancelled || !dialog.open || !prepared.failures?.length) break;
+        keys = await recoverTargets(keys, prepared.failures, t("mail357", "メールの完全削除"));
+        if (!keys.length) return null;
+        context.id = crypto.randomUUID(); context.total = keys.length;
+        renderDeletePreparation();
+      }
+    }
     catch (error) { error.guidance = t("messageDeleteNotStarted", "メールは削除していません。対象を再検査し、結果を確認してからもう一度お試しください。"); throw error; }
     if (context.cancelled || !dialog.open || prepared.cancelled) {
       if (prepared.token) await request("cancelDeleteBatch", { token: prepared.token });
@@ -422,7 +512,12 @@ async function deleteOne(key) {
   feedback.status(t("mail127", "削除対象を照合しています。"));
   let target;
   try { target = await request("prepareDelete", { key }); }
-  catch (error) { error.guidance = t("messageDeleteNotStarted", "メールは削除していません。対象を再検査し、結果を確認してからもう一度お試しください。"); throw error; }
+  catch (error) {
+    if (!error.lookupFailed) throw error;
+    const keys = await recoverTargets([key], [{key, detail:error.message}], t("mail357", "メールの完全削除"));
+    if (!keys.length) return t("locateFinished", "対象の確認を終了しました。");
+    target = await request("prepareDelete", {key});
+  }
   if (!await confirmDeletion([target])) {
     await request("cancelDelete", { token: target.token });
     return t("mail128", "削除をキャンセルしました。");
@@ -461,11 +556,21 @@ function makeRow(record) {
     if (blocked()) return;
     const current = latest.records.find(item => item.key === record.key);
     if (current?.status === "detected" && !confirm(t("mail132", "脅威候補を検出したメールを開きます。本文が表示されます。添付ファイルやリンクは開かずに確認してください。"))) return;
-    void action(() => request("open", { key: record.key }), t("mail133", "Thunderbirdで対象メールを開きました。"));
+    void action(async () => {
+      const key = record.key;
+      try { await request("open", {key}); }
+      catch (error) {
+        if (!error.lookupFailed) throw error;
+        const keys = await recoverTargets([key], [{key, detail:error.message}], t("mail131", "開く"));
+        if (!keys.length) return t("locateFinished", "対象の確認を終了しました。");
+        await request("open", {key});
+      }
+      return t("mail133", "Thunderbirdで対象メールを開きました。");
+    });
   });
   const retry = cells[4].appendChild(document.createElement("button"));
   retry.textContent = t("mail134", "再検査");
-  retry.addEventListener("click", () => { void action(() => request("retry", { key: record.key }), t("mail135", "再検査を受け付けました。")); });
+  retry.addEventListener("click", () => { void action(() => retryTargets([record.key], true)); });
   const review = cells[4].appendChild(document.createElement("button"));
   review.className = "review-action";
   review.addEventListener("click", () => {
@@ -545,7 +650,7 @@ function renderRecords() {
     setText(entry.parts.subject, record.locator.subject || t("mail022", "件名なし"));
     const account = latest.accounts.find(account => account.id === record.locator.accountId)?.name || record.locator.accountId || "";
     setText(entry.parts.location, [account, folderLabel(record.locator.folder, folderNames, record.locator.accountId)].filter(Boolean).join(t("listSeparator", " ／ ")));
-    setText(entry.parts.detail, [scanHistoryDescription(record) || localizeDetail(record), advisoryDescription(record), quarantineSummary(record, folderNames), isReviewed(record) && record.review.note ? t("reviewMemo", "判断メモ：$1", [record.review.note]) : ""].filter(Boolean).join(" "));
+    setText(entry.parts.detail, [scanHistoryDescription(record) || localizeDetail(record), advisoryDescription(record), record.candidateScanKey && t("locateQueued", "候補の検査を受け付けました。結果は別の行に表示します。"), quarantineSummary(record, folderNames), isReviewed(record) && record.review.note ? t("reviewMemo", "判断メモ：$1", [record.review.note]) : ""].filter(Boolean).join(" "));
     setText(entry.parts.signatures, (record.signatures || []).join(" / "));
     setText(entry.parts.engine, record.engine || "");
     setText(entry.parts.scanPolicy, record.scanSettings ? policyDescription(record.scanSettings) : "");
@@ -692,9 +797,7 @@ $("retry-selected").addEventListener("click", () => {
   const keys = selection().filter(canRetry).map(record => record.key);
   void action(async () => {
     $("batch-report").replaceChildren(); $("batch-report").hidden = true;
-    const response = await request("retryMany", { keys });
-    for (const key of keys) selected.delete(key);
-    return t("mail147", "$1件の再検査を受け付けました。", [response.count]);
+    return await retryTargets(keys);
   });
 });
 $("delete-selected").addEventListener("click", () => {

@@ -3205,5 +3205,76 @@
   },
   "directWindowsDefinitions": {
     "message": "FreshClam による更新後、「接続を再確認」を押してください。定義は定期的に更新してください。3日より古い定義では検査できません。"
+  },
+  "locateFull": {
+    "message": "候補の検査結果を保存する空きがありません。不要な履歴を消去してください。"
+  },
+  "locateHeading": {
+    "message": "操作対象のメールを確認"
+  },
+  "locateSummary": {
+    "message": "$ARG1$通のうち$ARG2$通を特定できませんでした。",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "locateContinue": {
+    "message": "$ARG1$に進む（$ARG2$通）",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "locateFinish": {
+    "message": "閉じる"
+  },
+  "locateFinished": {
+    "message": "対象の確認を終了しました。"
+  },
+  "locateExclude": {
+    "message": "この操作から外す"
+  },
+  "locateExcluded": {
+    "message": "今回の対象から外しました。"
+  },
+  "locateSearch": {
+    "message": "対象メールを探し直す"
+  },
+  "locateSearching": {
+    "message": "候補を探しています。"
+  },
+  "locateVerified": {
+    "message": "内容が一致しました。現在のフォルダー：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "locateUnverified": {
+    "message": "元のメールと同じか確認できません。候補を新しい検査として受け付けます。"
+  },
+  "locateMissing": {
+    "message": "現在のメールを特定できません。"
+  },
+  "locateScan": {
+    "message": "$ARG1$ の候補を検査",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "locateQueued": {
+    "message": "候補の検査を受け付けました。結果は別の行に表示します。"
   }
 }

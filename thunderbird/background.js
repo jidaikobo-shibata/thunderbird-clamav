@@ -250,7 +250,7 @@ async function verified(record, expectedFingerprint = null, check = () => {}, re
   if (record.sha256) {
     const digest = await sha256(await read(message.id, MAX_TRANSFER_BYTES, check, beforeRead));
     check();
-    if (digest !== record.sha256) throw new Error(t("mail011", "対象メールが検査時と一致しません。再検査してください。"));
+    if (digest !== record.sha256) throw Object.assign(new Error(t("mail011", "対象メールが検査時と一致しません。再検査してください。")), { unscannedReason: "contentChanged" });
     fingerprint = "sha256:" + digest;
   } else {
     // Failed/oversized scans may have no scan digest. Establish a confirmation
@@ -452,7 +452,7 @@ function finishRetry(record) {
   if (!retryContext.entries.size) { batchProgress.active = false; retryContext = null; }
 }
 
-async function prepareBatch(keys, preparationId = crypto.randomUUID()) {
+async function prepareBatch(keys, preparationId = crypto.randomUUID(), recover = false) {
   if (typeof preparationId !== "string" || !/^[a-zA-Z0-9-]{1,100}$/.test(preparationId)) throw new Error(t("mail015", "一括操作は重複のない1〜1000件を選択してください。"));
   requestedKeys(keys);
   if (batchProgress?.active) throw new Error(t("mail016", "一括削除の処理中です。"));
@@ -469,14 +469,22 @@ async function prepareBatch(keys, preparationId = crypto.randomUUID()) {
     const allowed = await Promise.race([api.permissions.contains({ permissions: ["messagesDelete"] }), context.signal]);
     check();
     if (!allowed) throw new Error(t("mail017", "完全削除の権限がありません。"));
-    const tickets = [], targets = [], positions = new Set();
+    const tickets = [], targets = [], failures = [], positions = new Set();
     for (const key of keys) {
       if (progress.stopRequested) return { ok: true, cancelled: true, targets: [] };
       const record = deletable(key);
       if (deleting.has(key)) throw new Error(t("mail018", "削除処理中のメールがあります。"));
       const hash = record.sha256, identity = moveIdentity(record);
       const copy = structuredClone(record);
-      const proof = await Promise.race([verified(copy, null, check), context.signal]);
+      let proof;
+      try { proof = await Promise.race([verified(copy, null, check), context.signal]); }
+      catch (error) {
+        check();
+        if (!recover || !error.unscannedReason) throw error;
+        failures.push({ key, detail: error.message });
+        progress.completed++;
+        continue;
+      }
       check();
       const { message, fingerprint } = proof;
       if (deletable(key).sha256 !== hash || moveIdentity(record) !== identity) throw new Error(t("mail019", "検査結果が変わりました。選び直してください。"));
@@ -494,6 +502,7 @@ async function prepareBatch(keys, preparationId = crypto.randomUUID()) {
     for (const [token, batch] of batchTickets) {
       if (batch.expires < Date.now()) batchTickets.delete(token);
     }
+    if (failures.length) return { ok: true, failures };
     if (batchTickets.size >= 10) throw new Error(t("mail023", "未完了の確認が多いため、ほかの確認画面を閉じてやり直してください。"));
     if (progress.stopRequested) return { ok: true, cancelled: true, targets: [] };
     const token = crypto.randomUUID();
@@ -623,7 +632,7 @@ async function reserveRecords(targets, operation) {
   }
 }
 
-function retryRecord(key) {
+function retryRecord(key, checkedLocation = false) {
   const work = async () => {
     if (maintenanceActive() || helperRemoved) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
     if (batchProgress?.active) throw new Error(t("bulkBusy", "一括操作の処理中です。"));
@@ -633,6 +642,7 @@ function retryRecord(key) {
     await reserveRecords([record], async () => {
       try {
         rememberResult(record);
+        if (checkedLocation && record.source === "automatic") record.receiptGeneration ??= null;
         Object.assign(record, { status: "queued", source: "manual", attempts: 0, nextRetry: null, folderJobId: null });
         delete record.unscannedReason;
         await persistState();
@@ -648,7 +658,7 @@ function retryRecord(key) {
   return recordChanges;
 }
 
-function retryMany(keys) {
+function retryMany(keys, checkedLocation = false) {
   const work = async () => {
     if (maintenanceActive() || helperRemoved) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
     if (batchProgress?.active) throw new Error(t("bulkBusy", "一括操作の処理中です。"));
@@ -663,6 +673,7 @@ function retryMany(keys) {
       try {
         for (const record of targets) {
           rememberResult(record);
+          if (checkedLocation && record.source === "automatic") record.receiptGeneration ??= null;
           Object.assign(record, { bulkRetryId: progress.id, bulkRetryBefore: before.get(record), unscannedReason: null,
             status: "queued", source: "manual", attempts: 0, nextRetry: null, folderJobId: null });
         }
@@ -802,30 +813,80 @@ async function rawBytes(messageId, maxBytes = MAX_TRANSFER_BYTES, check = () => 
   return new Uint8Array(buffer);
 }
 
+async function envelopeCandidates(record, check = () => {}) {
+  const candidates = [];
+  if (!record.locator.headerMessageId) return candidates;
+  check();
+  const first = await api.messages.query({ headerMessageId: record.locator.headerMessageId });
+  check();
+  for await (const message of messagePages(api.messages, first, check)) {
+    if (sameEnvelope(message, record.locator)) candidates.push(message);
+    if (candidates.length > 20) throw Object.assign(new Error(t("mail035", "同じ識別情報のメールが多いため、対象を特定できません。")), {unscannedReason:"ambiguousMessage"});
+  }
+  return candidates;
+}
+
+async function locateHistory(key, messageId, expectedPosition) {
+  const record = deletable(key);
+  const stamp = moveIdentity(record), status = record.status;
+  const candidates = await envelopeCandidates(record);
+  const current = () => {
+    if (deletable(key) !== record || deleting.has(key) || record.status !== status || moveIdentity(record) !== stamp)
+      throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
+  };
+  current();
+  if (messageId !== undefined) {
+    const candidate = candidates.find(item => item.id === messageId && position(item) === expectedPosition);
+    if (!candidate) throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
+    await stageMessage(candidate, "manual", {record, current, position:expectedPosition});
+    void drain().catch(report);
+    return {ok:true};
+  }
+  if (record.sha256 && !record.ambiguousAfterRestart) {
+    const matching = [];
+    for (const candidate of candidates) {
+      if (await sha256(await rawBytes(candidate.id)) === record.sha256) matching.push(candidate);
+    }
+    if (matching.length === 1) {
+      const work = async () => {
+        current();
+        const message = await api.messages.get(matching[0].id);
+        current();
+        if (position(message) !== position(matching[0]) || !sameEnvelope(message, record.locator))
+          throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
+        await reserveRecords([record], async () => {
+          const copy = structuredClone(record);
+          refreshQuarantineLocation(copy, message); copy.session = session;
+          await persistState(records.map(item => item === record ? copy : item));
+          Object.assign(record, copy);
+        });
+        return {ok:true, verified:true, folder:message.folder};
+      };
+      recordChanges = recordChanges.catch(() => {}).then(work);
+      return recordChanges;
+    }
+  }
+  return {ok:true, session, candidates:candidates.map(message => ({id:message.id, position:position(message), folder:message.folder}))};
+}
+
 async function resolveRecord(record, check = () => {}, beforeRead, read = rawBytes) {
   // A persisted Thunderbird numeric ID must never be reused after restart.
   if (record.session === session && Number.isInteger(record.messageId)) {
     try {
       const message = await api.messages.get(record.messageId);
       check();
-      if (sameEnvelope(message, record.locator)) return message;
+      if (sameEnvelope(message, record.locator) && (!record.candidateScan || record.sha256 || record.locator.folder?.path === message.folder?.path)) return message;
     } catch { check(); /* Moved/deleted messages are resolved below. */ }
   }
   const unresolved = (reason, detail) => Object.assign(new Error(detail), { unscannedReason: reason });
+  if (record.candidateScan && !record.sha256) throw unresolved("unverifiedLocation", t("incomingTargetMoved", "候補のメールと受付時の位置が異なり、同じメールであることを確認できません。"));
   if (record.ambiguousAfterRestart || incomingQueue.entries.get(record.key)?.ambiguousAfterRestart) {
     throw unresolved("ambiguousMessage", t("incomingKnownCopies", "同じアカウントで同じ識別情報を持つメールを複数受け付けたため、再起動後に元のメールを区別できません。"));
   }
   if (!record.locator.headerMessageId) {
     throw unresolved("missingIdentifier", t("mail034", "対象を再特定できません。Thunderbirdで選択して再検査してください。"));
   }
-  const candidates = [];
-  check();
-  const first = await api.messages.query({ headerMessageId: record.locator.headerMessageId });
-  check();
-  for await (const message of messagePages(api.messages, first, check)) {
-    if (sameEnvelope(message, record.locator)) candidates.push(message);
-    if (candidates.length > 20) throw unresolved("ambiguousMessage", t("mail035", "同じ識別情報のメールが多いため、対象を特定できません。"));
-  }
+  const candidates = await envelopeCandidates(record, check);
   const matches = [];
   for (const candidate of candidates) {
     if (!record.sha256 || await sha256(await read(candidate.id, MAX_TRANSFER_BYTES, check, beforeRead)) === record.sha256) {
@@ -1063,8 +1124,14 @@ async function checkQuarantineReceipts() {
 
 // Admission shares the same commit gate as retries and history changes.
 // Overflow waits happen outside the gate so the scanner can free its slot.
-function stageMessage(message, source) {
+function stageMessage(message, source, recovery = null) {
   const work = async () => {
+    if (recovery) {
+      message = await api.messages.get(message.id);
+      recovery.current();
+      if (position(message) !== recovery.position || !sameEnvelope(message, recovery.record.locator))
+        throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
+    }
     let quarantineCheckPending = false;
     if (source === "automatic") {
       if (isDraftFolder(message.folder)) return {};
@@ -1079,7 +1146,7 @@ function stageMessage(message, source) {
     }
     const receipt = incomingQueue.find(session, message.id);
     if (source === "automatic" && receipt) return {};
-    const existing = [...records, ...(overflowPending ? [overflowPending] : []), ...automaticQuarantineTasks].find(record => record.session === session && record.messageId === message.id);
+    const existing = !recovery && [...records, ...(overflowPending ? [overflowPending] : []), ...automaticQuarantineTasks].find(record => record.session === session && record.messageId === message.id);
     if (existing && source === "automatic") return {};
     if (existing && (existing === overflowPending || deleting.has(existing.key) || ["deleted", "queued", "scanning"].includes(existing.status))) return {};
     if (source === "automatic") {
@@ -1102,20 +1169,26 @@ function stageMessage(message, source) {
       return {};
     }
     const evicted = !existing && records.length >= MAX_RECORDS ? records.find(record =>
-      ["clean", "deleted"].includes(record.status) && !deleting.has(record.key)) : null;
+      record !== recovery?.record && ["clean", "deleted"].includes(record.status) && !deleting.has(record.key)) : null;
     const overflow = !existing && records.length >= MAX_RECORDS && !evicted;
+    if (overflow && recovery) throw new Error(t("locateFull", "候補の検査結果を保存する空きがありません。不要な履歴を消去してください。"));
     if (overflow && (overflowPending || automaticReceipts || incomingQueue.entries.size && automaticIdle.canStart(settings))) return { retry: true, wait: new Promise(resolve => overflowWaiters.add(resolve)) };
-    const candidate = existing ? { ...existing } : { key: receipt?.key || crypto.randomUUID(), createdAt: receipt?.createdAt || new Date().toISOString() };
+    const candidate = existing ? { ...existing } : { key: (!recovery && receipt?.key) || crypto.randomUUID(), createdAt: receipt?.createdAt || new Date().toISOString() };
     rememberResult(candidate);
     Object.assign(candidate, { messageId: message.id, session, locator: locator(message), source,
       quarantineIntent: null, unscannedReason: null, status: "queued", detail: t("mail038", "検査を待っています。"), signatures: [],
       sha256: null, engine: null, attempts: 0, nextRetry: null, folderJobId: null, updatedAt: new Date().toISOString() });
     delete candidate.quarantineCheckPending;
     let wait;
-    await reserveRecords([existing, evicted].filter(Boolean), async () => {
+    await reserveRecords([existing, evicted, recovery?.record].filter(Boolean), async () => {
       const history = existing ? records.map(record => record === existing ? candidate : record) :
         overflow ? records : [...records.filter(record => record !== evicted), candidate];
-      await persistState(history, overflow ? candidate : overflowPending);
+      if (recovery) {
+        candidate.candidateScan = true;
+        const origin = {...recovery.record, candidateScanKey:candidate.key};
+        await persistState(history.map(item => item === recovery.record ? origin : item), overflowPending);
+        recovery.record.candidateScanKey = candidate.key;
+      } else await persistState(history, overflow ? candidate : overflowPending);
       if (existing) Object.assign(existing, candidate);
       else if (overflow) {
         overflowPending = candidate;
@@ -2320,10 +2393,28 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         if (request.jobId !== folderScan.job?.id) throw new Error(t("mail073", "検査の対象が変わりました。画面を更新してください。"));
         await folderScan.stop();
         return { ok: true };
+      case "locateHistory":
+        return await locateHistory(request.key);
+      case "scanHistoryCandidate":
+        if (request.session !== session || !Number.isInteger(request.messageId) || typeof request.position !== "string") throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
+        return await locateHistory(request.key, request.messageId, request.position);
+      case "checkRetryTargets": {
+        requestedKeys(request.keys);
+        const failures = [];
+        for (const key of request.keys) {
+          const record = deletable(key);
+          try { await resolveRecord(structuredClone(record)); }
+          catch (error) {
+            if (!error.unscannedReason) throw error;
+            failures.push({key, detail:error.message});
+          }
+        }
+        return {ok:true, failures};
+      }
       case "retry":
-        return await retryRecord(request.key);
+        return await retryRecord(request.key, request.checkedLocation === true);
       case "retryMany":
-        return await retryMany(request.keys);
+        return await retryMany(request.keys, request.checkedLocation === true);
       case "reviewMany": {
         requestedKeys(request.keys);
         if (typeof request.reviewed !== "boolean" || typeof request.note !== "string" || request.note.length > 1000) throw new Error(t("reviewInvalid", "確認状態の指定が不正です。"));
@@ -2417,7 +2508,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         return await forgetRecords(request.token);
       }
       case "prepareDeleteBatch":
-        return await prepareBatch(request.keys, request.preparationId);
+        return await prepareBatch(request.keys, request.preparationId, request.recover === true);
       case "cancelDeletePreparation": {
         if (typeof request.preparationId !== "string" || !/^[a-zA-Z0-9-]{1,100}$/.test(request.preparationId)) return { ok: true };
         if (deletionPreparation?.id === request.preparationId) deletionPreparation.cancel();
@@ -2482,10 +2573,11 @@ api.runtime.onMessage.addListener(async (request, sender) => {
       }
       case "open": {
         const record = records.find(item => item.key === request.key);
-        if (!record || record.status === "deleted" || deleting.has(record.key) || !record.sha256) throw new Error(t("mail078", "検査対象を照合できません。メール一覧から確認してください。"));
+        if (!record || record.status === "deleted" || deleting.has(record.key)) throw new Error(t("mail078", "検査対象を照合できません。メール一覧から確認してください。"));
+        if (!record.sha256) throw Object.assign(new Error(t("mail078", "検査対象を照合できません。メール一覧から確認してください。")), { unscannedReason: "unverifiedLocation" });
         const message = await resolveRecord(record);
         if (await sha256(await rawBytes(message.id)) !== record.sha256) {
-          throw new Error(t("mail079", "メール内容が検査時から変わっています。再検査してください。"));
+          throw Object.assign(new Error(t("mail079", "メール内容が検査時から変わっています。再検査してください。")), {unscannedReason:"contentChanged"});
         }
         refreshQuarantineLocation(record, message);
         await save();
@@ -2534,7 +2626,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         return { ok: true };
       default: throw new Error(t("mail082", "未対応の操作です。"));
     }
-  } catch (error) { return { ok: false, error: error.message || t("mail083", "操作に失敗しました。"), ...(error.setupRequired ? { setupRequired: true } : {}), ...(initializationError ? { startupFailed: true } : {}) }; }
+  } catch (error) { return { ok: false, error: error.message || t("mail083", "操作に失敗しました。"), ...(error.unscannedReason ? {lookupFailed:true} : {}), ...(error.setupRequired ? { setupRequired: true } : {}), ...(initializationError ? { startupFailed: true } : {}) }; }
 });
 
 // Timers are sufficient for a persistent MV2 background page. Restart recovery

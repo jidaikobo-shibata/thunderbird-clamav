@@ -302,6 +302,12 @@
     <div class="actions"><button id="message-close" value="close" autofocus data-i18n="messageClose">閉じる</button></div>
   </form>
 </dialog>
+<dialog id="locate-dialog" aria-labelledby="locate-title" aria-describedby="locate-summary">
+  <h2 id="locate-title" data-i18n="locateHeading">操作対象のメールを確認</h2>
+  <p id="locate-summary"></p>
+  <ul id="locate-rows" class="dialog-targets"></ul>
+  <form method="dialog" class="actions"><button value="cancel" autofocus data-i18n="mail348">キャンセル</button><button value="continue" id="locate-continue" disabled></button></form>
+</dialog>
 <dialog id="delete-dialog" aria-labelledby="delete-title" aria-describedby="delete-warning">
   <form method="dialog">
     <h2 id="delete-title"><span data-i18n="mail357">メールの完全削除</span></h2>

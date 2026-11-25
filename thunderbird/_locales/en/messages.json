@@ -3205,5 +3205,76 @@
   },
   "directWindowsDefinitions": {
     "message": "After FreshClam finishes, choose Check connection again. Update the definitions regularly. Definitions older than three days prevent scanning."
+  },
+  "locateFull": {
+    "message": "There is no room for a separate result. Remove unneeded history first."
+  },
+  "locateHeading": {
+    "message": "Identify messages for this operation"
+  },
+  "locateSummary": {
+    "message": "$ARG2$ of $ARG1$ messages could not be identified.",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "locateContinue": {
+    "message": "Continue to $ARG1$ ($ARG2$ messages)",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "locateFinish": {
+    "message": "Close"
+  },
+  "locateFinished": {
+    "message": "Finished checking the targets."
+  },
+  "locateExclude": {
+    "message": "Exclude from this operation"
+  },
+  "locateExcluded": {
+    "message": "Excluded from this operation."
+  },
+  "locateSearch": {
+    "message": "Find this message again"
+  },
+  "locateSearching": {
+    "message": "Searching for candidates…"
+  },
+  "locateVerified": {
+    "message": "Contents match. Current folder: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "locateUnverified": {
+    "message": "The original could not be verified. You can scan a candidate separately."
+  },
+  "locateMissing": {
+    "message": "The message could not be located."
+  },
+  "locateScan": {
+    "message": "Scan the candidate in $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "locateQueued": {
+    "message": "A candidate scan was requested. Its result appears in a separate row."
   }
 }
