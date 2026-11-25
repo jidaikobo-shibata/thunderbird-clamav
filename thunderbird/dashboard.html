@@ -116,9 +116,9 @@
       <fieldset id="windows-definitions" hidden><legend id="definition-source-label" data-i18n="definitionSourceHeading">ウイルス定義の参照先</legend>
         <select id="definition-source" aria-labelledby="definition-source-label">
           <option value="addon">%LOCALAPPDATA%\ClamAV\database</option>
-          <option value="gui">%LOCALAPPDATA%\clamav-gui\database</option>
+          <option value="gui" data-i18n="legacyDefinitionFolder">旧 GUI（移行完了後は共通フォルダー）</option>
         </select>
-        <p data-i18n="definitionSourceHelp">clamav-gui の定義を使う場合は、同じ Windows ユーザーで GUI の定義更新を完了してください。</p>
+        <p data-i18n="definitionSourceHelp">通常は共通の定義を使います。旧 GUI を選択済みの場合は、GUI の移行完了後に共通の定義を参照します。</p>
       </fieldset>
       <fieldset><legend data-i18n="scanSettingsHeading">ClamAVの検査設定</legend>
         <p class="hint" data-i18n="scanSettingsHint">このアドオンの検査にだけ適用します。通常のウイルス検査は有効のまま、追加の注意情報の判定と通知を選びます。変更後に開始する検査から有効です。注意情報だけでは自動隔離しません。ウイルスも検出した場合は従来の通知・隔離設定を適用します。</p>

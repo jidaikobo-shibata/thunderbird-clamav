@@ -50,18 +50,24 @@ Executable discovery uses fixed installation locations, validates symlink target
 
 Use Thunderbird 153.x or 160.x, the official x64 ClamAV MSI in its default Program Files location, and a per-user installation of 64-bit python.org CPython 3.13, 3.14 or 3.15. The extension checks the default Python install manager and classic installer directories under `%LOCALAPPDATA%` (`Python\pythoncore-3.XX-64` or `Programs\Python\Python3XX`). Reparse points are rejected. Keep the default installation directory permissions. [ClamAV downloads](https://www.clamav.net/downloads) and [Python for Windows](https://www.python.org/downloads/windows/).
 
-**To share definitions with clamav-gui**, complete a definition update in the GUI under the same Windows account. In the add-on’s Settings, select `%LOCALAPPDATA%\clamav-gui\database` under **Virus definition folder**. The connection check displays the version and date reported by ClamAV. Use the GUI’s definition update task for subsequent updates. If an update is in progress or definitions are missing or stale, check again and retry the scan after the update. If a manual GUI update reports an update in progress while mail is being scanned, retry after the scan.
+Under the same Windows account, both apps default to `%LOCALAPPDATA%\ClamAV\database`. Upgrade the add-on first, stop any scheduled tasks that invoke FreshClam directly, then enable updates in clamav-gui. Existing legacy GUI selections follow the shared folder after the GUI completes its first update and verifies the definitions. Retry mail scans interrupted by an update.
 
-An add-on upgrade preserves the previous selection. Select `%LOCALAPPDATA%\ClamAV\database` to switch back. Switching leaves both folders in place.
-
-**For the add-on’s own definitions**, run the following in an ordinary PowerShell session. Review an existing configuration before reusing it.
+Without the GUI, run the following in a regular PowerShell session. If a scan holds the lock, retry when the scan finishes.
 
 ~~~powershell
 $db = Join-Path $env:LOCALAPPDATA "ClamAV\database"
-New-Item -ItemType Directory -Force $db | Out-Null
-$conf = Join-Path $db "mail-freshclam.conf"
-if (!(Test-Path -LiteralPath $conf)) { "DatabaseMirror database.clamav.net" | Out-File -Encoding ascii -NoClobber $conf }
-& "$env:ProgramFiles\ClamAV\freshclam.exe" "--config-file=$conf" "--datadir=$db"
+New-Item -ItemType Directory -Force $db -ErrorAction Stop | Out-Null
+$path = Join-Path (Split-Path $db) "freshclam.lock"
+$lock = [IO.File]::Open($path, 'OpenOrCreate', 'ReadWrite', 'ReadWrite')
+try {
+    $lock.Lock(0, 1)
+    $conf = Join-Path $db "mail-freshclam.conf"
+    if (!(Test-Path -LiteralPath $conf)) { "DatabaseMirror database.clamav.net" | Out-File -Encoding ascii -NoClobber -ErrorAction Stop $conf }
+    & "$env:ProgramFiles\ClamAV\freshclam.exe" "--config-file=$conf" "--datadir=$db"
+    if ($LASTEXITCODE -ne 0) { throw "FreshClam exit $LASTEXITCODE" }
+} finally {
+    $lock.Dispose()
+}
 ~~~
 
 Repeat these commands to refresh definitions. Definitions older than three days prevent scanning. Install the XPI and check the connection in Settings. Windows starts clamscan for each message. Folder scans take longer because each process loads its own definitions. No daemon service or helper registration is required. The supported configuration uses the standard local installation directories and their default access controls. Windows ARM64, 32-bit Thunderbird and other Thunderbird major versions are outside this build’s scope.

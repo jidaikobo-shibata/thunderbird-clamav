@@ -33,9 +33,15 @@ class ScanOptionsTests(unittest.TestCase):
         try:
             session.handle({"op": "begin", "size": 1, "scanSettings": options})
             session.handle({"op": "chunk", "seq": 0, "data": base64.b64encode(b"a").decode()})
-            with patch.object(host, "scan", return_value={"status": "clean"}) as scan:
+            with tempfile.TemporaryDirectory() as tmp, \
+                 patch.object(host, "DATABASE", str(Path(tmp).resolve() / "database")), \
+                 patch.object(host, "health", return_value={"status": "ready", "engine": "test"}), \
+                 patch.object(host, "scan", return_value={"status": "clean"}) as scan:
                 session.handle({"op": "end", "sha256": hashlib.sha256(b"a").hexdigest()})
-                scan.assert_called_once_with(b"a", session.scanner, options)
+                if sys.platform == "win32":
+                    scan.assert_called_once_with(b"a", None, options, host.DATABASE)
+                else:
+                    scan.assert_called_once_with(b"a", session.scanner, options)
             self.assertIsNone(session.scan_settings)
         finally:
             session.close()

@@ -48,11 +48,19 @@ export async function configureDirectView() {
     replace("clamavInstallHeading", "directWindowsHeading", "ClamAV の導入方法（Windows）");
     replace("clamavInstallInstructions", "directWindowsInstall", "公式の64ビット版 ClamAV と Python を標準の場所に導入します。");
     $("clamav-install-guide").querySelector("pre code").textContent = [
-      '$db = Join-Path $env:LOCALAPPDATA "ClamAV\\database"',
-      'New-Item -ItemType Directory -Force $db | Out-Null',
-      '$conf = Join-Path $db "mail-freshclam.conf"',
-      'if (!(Test-Path -LiteralPath $conf)) { "DatabaseMirror database.clamav.net" | Out-File -Encoding ascii -NoClobber $conf }',
-      '& "$env:ProgramFiles\\ClamAV\\freshclam.exe" "--config-file=$conf" "--datadir=$db"'
+      "$db = Join-Path $env:LOCALAPPDATA \"ClamAV\\database\"",
+      "New-Item -ItemType Directory -Force $db -ErrorAction Stop | Out-Null",
+      "$path = Join-Path (Split-Path $db) \"freshclam.lock\"",
+      "$lock = [IO.File]::Open($path, 'OpenOrCreate', 'ReadWrite', 'ReadWrite')",
+      "try {",
+      "    $lock.Lock(0, 1)",
+      "    $conf = Join-Path $db \"mail-freshclam.conf\"",
+      "    if (!(Test-Path -LiteralPath $conf)) { \"DatabaseMirror database.clamav.net\" | Out-File -Encoding ascii -NoClobber -ErrorAction Stop $conf }",
+      "    & \"$env:ProgramFiles\\ClamAV\\freshclam.exe\" \"--config-file=$conf\" \"--datadir=$db\"",
+      "    if ($LASTEXITCODE -ne 0) { throw \"FreshClam exit $LASTEXITCODE\" }",
+      "} finally {",
+      "    $lock.Dispose()",
+      "}"
     ].join("\n");
     replace("clamavDefinitions", "directWindowsDefinitions", "FreshClam で定義を更新してから接続を再確認します。");
   } else if (platform?.os === "mac") {

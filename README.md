@@ -37,18 +37,24 @@ sudo apt install clamav clamav-daemon clamav-freshclam
 
 Thunderbird 153.x または 160.x、公式 Windows x64 版 ClamAV（MSI の標準配置）、python.org の 64 ビット版 CPython 3.13〜3.15 が必要です。Python はユーザー単位の標準配置を選びます。探索先は `%LOCALAPPDATA%` 配下の `Python\pythoncore-3.XX-64` と `Programs\Python\Python3XX` です（XX は 13、14、15）。再解析ポイントは拒否します。ClamAV は 64 ビットの Program Files 内の `ClamAV\clamscan.exe` を使用します。既定のアクセス権のまま使用してください。[ClamAV 公式配布](https://www.clamav.net/downloads)・[Python 公式配布](https://www.python.org/downloads/windows/)
 
-**clamav-gui を併用する場合**は、同じ Windows ユーザーで GUI の定義更新を一度完了し、アドオンの「設定」→「ウイルス定義の参照先」で `%LOCALAPPDATA%\clamav-gui\database` を選びます。選択すると接続を確認し、読み取れた定義の版・日付を表示します。その後の更新は GUI の定義更新タスクで管理できます。GUI の更新中や定義不足・期限切れのときは、更新完了後に再確認・再検査してください。手動更新が検査と重なって GUI に「更新中」と表示されたときは、検査終了後に再試行してください。
+同じ Windows ユーザーで clamav-gui を併用すると、両アプリは既定で `%LOCALAPPDATA%\ClamAV\database` の定義を共有します。先にアドオンを更新し、FreshClam を直接起動する既存タスクを停止してから、GUI の定義更新を有効にしてください。旧 GUI を選択済みの環境は、GUI の初回更新と読み込み検証が成功するまで旧定義を使用します。定義更新中に未検査となったメールは、更新後に再検査してください。
 
-上書き更新時は以前の参照先を維持します。従来の `%LOCALAPPDATA%\ClamAV\database` を選べば元に戻せます。切り替えによる定義の移動・削除はありません。
-
-**アドオン用の定義を使う場合**は、通常ユーザーの PowerShell で次を実行します。初回は公式定義をダウンロードします。設定ファイルが既にある場合はその内容を確認してください。
+GUI を使わない場合は、通常ユーザーの PowerShell で次を実行してください。検査中にロックを取得できなければ、検査後に再実行します。
 
 ~~~powershell
 $db = Join-Path $env:LOCALAPPDATA "ClamAV\database"
-New-Item -ItemType Directory -Force $db | Out-Null
-$conf = Join-Path $db "mail-freshclam.conf"
-if (!(Test-Path -LiteralPath $conf)) { "DatabaseMirror database.clamav.net" | Out-File -Encoding ascii -NoClobber $conf }
-& "$env:ProgramFiles\ClamAV\freshclam.exe" "--config-file=$conf" "--datadir=$db"
+New-Item -ItemType Directory -Force $db -ErrorAction Stop | Out-Null
+$path = Join-Path (Split-Path $db) "freshclam.lock"
+$lock = [IO.File]::Open($path, 'OpenOrCreate', 'ReadWrite', 'ReadWrite')
+try {
+    $lock.Lock(0, 1)
+    $conf = Join-Path $db "mail-freshclam.conf"
+    if (!(Test-Path -LiteralPath $conf)) { "DatabaseMirror database.clamav.net" | Out-File -Encoding ascii -NoClobber -ErrorAction Stop $conf }
+    & "$env:ProgramFiles\ClamAV\freshclam.exe" "--config-file=$conf" "--datadir=$db"
+    if ($LASTEXITCODE -ne 0) { throw "FreshClam exit $LASTEXITCODE" }
+} finally {
+    $lock.Dispose()
+}
 ~~~
 
 更新時も同じコマンドを実行します。3日より古い定義では検査できません。XPI をファイルから導入し、「設定」で接続を再確認してください。Windows 版は1通ごとに定義を読み込むため、連続検査には時間がかかります。サービスや別途登録する補助プログラムは不要です。

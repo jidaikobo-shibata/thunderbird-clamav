@@ -3000,14 +3000,15 @@
     "message": "定義が不足しているか古くなっています。FreshClamで更新してください。"
   },
   "definitionSourceHeading": { "message": "ウイルス定義の参照先" },
-  "definitionSourceHelp": { "message": "clamav-gui の定義を使う場合は、同じ Windows ユーザーで GUI の定義更新を完了してください。" },
+  "legacyDefinitionFolder": { "message": "旧 GUI（移行完了後は共通フォルダー）" },
+  "definitionSourceHelp": { "message": "通常は共通の定義を使います。旧 GUI を選択済みの場合は、GUI の移行完了後に共通の定義を参照します。" },
   "definitionSourceMismatch": { "message": "選択したウイルス定義の参照先を確認できません。" },
-  "guiDefinitionsUnavailable": { "message": "clamav-gui の定義を読み込めません。GUI で定義更新を完了してから再試行してください。" },
+  "guiDefinitionsUnavailable": { "message": "定義を読み込めません。更新完了後に再試行してください。" },
   "directWindowsHeading": {
     "message": "ClamAV の導入方法（Windows）"
   },
   "directWindowsInstall": {
-    "message": "公式の64ビット版 ClamAV を Program Files に、python.org 版 Python 3.13〜3.15（64ビット）を現在のユーザーの標準の場所に導入します。次の PowerShell コマンドで定義を準備してください。"
+    "message": "公式の64ビット版 ClamAV を Program Files に、python.org 版 Python 3.13〜3.15（64ビット）を現在のユーザーの標準の場所に導入します。併用時は clamav-gui で更新します。単独利用時は次の PowerShell コマンドで定義を更新してください。"
   },
   "directWindowsDefinitions": {
     "message": "FreshClam による更新後、「接続を再確認」を押してください。定義は定期的に更新してください。3日より古い定義では検査できません。"

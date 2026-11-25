@@ -122,13 +122,34 @@ exit 1
                 self.assertEqual(session.handle({"op": "health", **shared})["definitionSource"], "gui")
                 health.assert_called_once_with(str(root / "database"))
                 session.handle({"op": "begin", "size": 1, **shared})
-                session.handle({"op": "health"})  # Must not switch the in-flight message.
+                with patch.object(host, "DATABASE", str(root.parent / "ClamAV" / "database")):
+                    session.handle({"op": "health"})  # Must not switch the in-flight message.
                 session.handle({"op": "chunk", "seq": 0, "data": "YQ=="})
                 with patch.object(host, "scan", return_value={"status": "clean"}) as scan:
                     session.handle(end)
                     scan.assert_called_once_with(b"a", None, None, str(root / "database"))
                 with self.assertRaises(host.ProtocolError):
                     session.handle({"op": "health", "definitionSource": str(root)})
+
+    def test_default_and_migrated_sources_share_standalone_lock(self):
+        import msvcrt
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            database = root / "ClamAV" / "database"
+            with patch.dict(os.environ, LOCALAPPDATA=str(root)), patch.object(host, "DATABASE", str(database)):
+                with host.windows_definitions("addon") as first:
+                    self.assertEqual(first, str(database))
+                    (database.parent / "gui-definitions-ready").touch()
+                    with host.windows_definitions("gui") as second:
+                        self.assertEqual(first, second)
+                        with (database.parent / "freshclam.lock").open("a+b") as stream:
+                            with self.assertRaises(OSError):
+                                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                with (database.parent / "freshclam.lock").open("a+b") as stream:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                    for source in ("addon", "gui"):
+                        with self.assertRaises(OSError), host.windows_definitions(source):
+                            pass
 
     def test_partial_database_is_rejected_before_scanning(self):
         with tempfile.TemporaryDirectory(prefix="定義 test ") as directory:

@@ -44,9 +44,15 @@ class ProtocolTests(unittest.TestCase):
         for seq, start in enumerate(range(0, len(data), host.CHUNK_SIZE)):
             session.handle({"op": "chunk", "seq": seq,
                             "data": base64.b64encode(data[start:start + host.CHUNK_SIZE]).decode()})
-        with patch.object(host, "scan", return_value={"status": "clean"}) as scan:
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(host, "DATABASE", str(Path(tmp).resolve() / "database")), \
+             patch.object(host, "health", return_value={"status": "ready", "engine": "test"}), \
+             patch.object(host, "scan", return_value={"status": "clean"}) as scan:
             self.assertEqual(session.handle({"op": "end", "sha256": hashlib.sha256(data).hexdigest()})["status"], "clean")
-            scan.assert_called_once_with(data, session.scanner)
+            if sys.platform == "win32":
+                scan.assert_called_once_with(data, None, None, host.DATABASE)
+            else:
+                scan.assert_called_once_with(data, session.scanner)
         self.assertIsNone(session.buffer)
 
     def test_rejects_sequence_overflow_short_data_and_wrong_digest(self):

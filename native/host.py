@@ -142,10 +142,10 @@ _EN_MESSAGES.update({"MIME解析の上限に達したため、検査範囲を確
 _MESSAGE_KEYS.update({"MIME解析の上限に達したため、検査範囲を確認できない部分があります。": "mimeLimited", " MIME解析の上限に達した部分があります。脅威の検出結果は保持しています。": "mimeLimitedThreat"})
 
 _EN_MESSAGES["定義が不足しているか古くなっています。FreshClamで更新してください。"] = "Definitions are missing or outdated. Update them with FreshClam."
-_EN_MESSAGES["clamav-gui の定義を読み込めません。GUI で定義更新を完了してから再試行してください。"] = (
-    "Cannot read clamav-gui definitions. Complete a definition update in the GUI and try again.")
+_EN_MESSAGES["定義を読み込めません。更新完了後に再試行してください。"] = (
+    "Cannot read the definitions. Retry after the update finishes.")
 _MESSAGE_KEYS["定義が不足しているか古くなっています。FreshClamで更新してください。"] = "directMissingDefinitions"
-_MESSAGE_KEYS["clamav-gui の定義を読み込めません。GUI で定義更新を完了してから再試行してください。"] = "guiDefinitionsUnavailable"
+_MESSAGE_KEYS["定義を読み込めません。更新完了後に再試行してください。"] = "guiDefinitionsUnavailable"
 
 
 def tr(message):
@@ -675,7 +675,7 @@ class MailDaemon:
 
 
 @contextmanager
-def gui_definitions():
+def windows_definitions(source):
     """Hold a shared lock on the byte that clamav-gui locks exclusively for FreshClam."""
     import ctypes
     from ctypes import wintypes
@@ -685,12 +685,18 @@ def gui_definitions():
         _fields_ = [("internal", ctypes.c_size_t), ("high", ctypes.c_size_t),
                     ("offset", wintypes.DWORD), ("offset_high", wintypes.DWORD), ("event", wintypes.HANDLE)]
 
-    root = Path(os.environ["LOCALAPPDATA"]) / "clamav-gui"
-    directory = root / "database"
-    lock = root / "freshclam.lock"
+    local = Path(os.environ["LOCALAPPDATA"])
+    directory = Path(DATABASE)
+    legacy = source == "gui" and not (local / "ClamAV" / "gui-definitions-ready").is_file()
+    if legacy:
+        directory = local / "clamav-gui" / "database"
+    lock = directory.parent / "freshclam.lock"
     if directory.resolve() != directory or lock.resolve() != lock:
         raise OSError("Unexpected definition directory")
-    # The GUI creates this file on its first update. Closing the handle releases the lock.
+    if not legacy and not lock.exists():
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        with lock.open("ab"):
+            pass
     with lock.open("rb") as stream:
         acquire = ctypes.WinDLL("kernel32", use_last_error=True).LockFileEx
         acquire.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD,
@@ -715,7 +721,7 @@ def windows_definitions_present(database=None):
 
 def gui_definitions_error():
     return {"status": "error", "code": "definitions_unavailable", "signatures": [],
-            "detail": tr("clamav-gui の定義を読み込めません。GUI で定義更新を完了してから再試行してください。")}
+            "detail": tr("定義を読み込めません。更新完了後に再試行してください。")}
 
 
 def definitions_error():
@@ -879,10 +885,13 @@ class Session:
         if DIRECT_RUNTIME and operation not in {"health", "begin", "chunk", "end", "abort"}:
             raise ProtocolError("Unsupported direct scan operation")
         if operation == "health":
-            if source == "gui":
+            if sys.platform == "win32":
                 try:
-                    with gui_definitions() as database:
-                        return {**health(database), "definitionSource": "gui"}
+                    with windows_definitions(source) as database:
+                        result = health(database)
+                        if source == "gui":
+                            result["definitionSource"] = "gui"
+                        return result
                 except OSError:
                     return gui_definitions_error()
             return health()
@@ -953,9 +962,9 @@ class Session:
             source = self.definition_source
             self.reset()
             self.scan_settings = None
-            if source == "gui":
+            if sys.platform == "win32":
                 try:
-                    with gui_definitions() as database:
+                    with windows_definitions(source) as database:
                         # FreshClam may have replaced the definitions since the last health check.
                         current = health(database)
                         if current["status"] != "ready":
