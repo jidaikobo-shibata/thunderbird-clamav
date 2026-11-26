@@ -3422,5 +3422,37 @@
   },
   "candidateAmbiguous": {
     "message": "元のメールを区別できません"
+  },
+  "scanAccountTitle": {
+    "message": "検査するアカウント"
+  },
+  "scanRunningTitle": {
+    "message": "フォルダー検査の進捗"
+  },
+  "scanPreviousTitle": {
+    "message": "前回のフォルダー検査"
+  },
+  "scanInterruptedTitle": {
+    "message": "中断したフォルダー検査"
+  },
+  "scanRecordSummary": {
+    "message": "$ARG1$ ／ $ARG2$ ／ $ARG3$通",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      }
+    }
+  },
+  "scanViewResults": {
+    "message": "検査結果を見る"
+  },
+  "scanClearRecord": {
+    "message": "記録を消去"
   }
 }

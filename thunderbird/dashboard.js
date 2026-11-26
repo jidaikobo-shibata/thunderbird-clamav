@@ -112,7 +112,12 @@ function updateControls() {
   const folderActive = job && ["collecting", "running", "stopping"].includes(job.status);
   $("scan-folder").disabled = locked || latest?.helperRemoved || Boolean(folderActive) || foldersLoading || !selectedFolders.size;
   for (const id of ["scan-account", "folder-search", "reload-folders", "folder-select-visible", "folder-clear-selection"]) $(id).disabled = locked || foldersLoading;
+  $("reload-folders-retry").disabled = locked || foldersLoading;
+  $("folder-picker").hidden = !$("scan-account").value;
+  $("scan-folder").hidden = !$("scan-account").value;
   $("folder-picker").disabled = locked || foldersLoading || !$("scan-account").value;
+  $("folder-stop").hidden = !folderActive;
+  $("folder-delete").hidden = !job || Boolean(folderActive);
   $("folder-stop").disabled = locked || !folderActive || job.status === "stopping";
   $("folder-resume").hidden = !job || !["stopped", "interrupted", "blocked", "error"].includes(job.status);
   $("folder-resume").disabled = locked || Boolean(folderActive);
@@ -214,7 +219,11 @@ function renderFolder() {
     folderFilterId = null; $("folder-only").checked = false; selected.clear(); page = 0;
   }
   const account = latest.accounts.find(account => account.id === job.folder.accountId)?.name || job.folder.accountId;
-  setText($("folder-title"), t("mail108", "フォルダー検査：$1 ／ $2$3", [account, jobFolderLabel(job), job.includeSubfolders ? t("mail109", "（サブフォルダーを含む）") : ""]));
+  const active = ["collecting", "running", "stopping"].includes(job.status);
+  const completed = job.status === "completed";
+  setText($("folder-title"), active ? t("scanRunningTitle", "フォルダー検査の進捗") : completed ? t("scanPreviousTitle", "前回のフォルダー検査") : t("scanInterruptedTitle", "中断したフォルダー検査"));
+  setText($("folder-location"), [account, jobFolderLabel(job) + (job.includeSubfolders ? t("mail109", "（サブフォルダーを含む）") : "")].join(t("listSeparator", " ／ ")));
+  $("folder-bar").hidden = !active;
   const elapsed = Math.max(0, Math.floor(((job.finishedAt ? new Date(job.finishedAt).getTime() : Date.now()) - new Date(job.startedAt).getTime()) / 1000));
   const targets = job.folders || [job.folder];
   const labels = targets.map(folder => folderLabel(folder, folderNames));
@@ -226,17 +235,23 @@ function renderFolder() {
     for (const label of labels) { const item = document.createElement("li"); item.textContent = label; $("folder-job-target-list").append(item); }
   }
   const time = t("mail110", "経過$1分$2秒", [Math.floor(elapsed / 60), elapsed % 60]);
-  if (job.total === null) {
+  if (active && job.total === null) {
     if (["collecting", "stopping"].includes(job.status)) $("folder-bar").removeAttribute("value");
     else { $("folder-bar").max = 1; $("folder-bar").value = 0; }
     setText($("folder-status"), t("mail111", "$1 ／ 対象$2件を確認 ／ $3", [FOLDER_STATES[job.status], job.discovered, time]));
-  } else {
+  } else if (active) {
     $("folder-bar").max = Math.max(1, job.total);
     $("folder-bar").value = job.total === 0 && job.status === "completed" ? 1 : job.completed;
     const percent = job.total ? (100 * job.completed / job.total).toFixed(1) : "100.0";
     const waiting = Math.max(0, job.total - job.completed - job.scanning);
     setText($("folder-status"), t("mail112", "$1 ／ 処理済み$2 / $3件（$4%） ／ 検査中$5件・未処理$6件 ／ $7", [FOLDER_STATES[job.status], job.completed, job.total, percent, job.scanning, waiting, time]));
+  } else {
+    const date = new Date(job.finishedAt || job.startedAt);
+    const when = Number.isFinite(date.getTime()) ? date.toLocaleString(uiLanguage()) : "";
+    const count = job.total == null ? String(job.completed) : completed ? String(job.total) : job.completed + " / " + job.total;
+    setText($("folder-status"), t("scanRecordSummary", "$1 ／ $2 ／ $3通", [when, FOLDER_STATES[job.status], count]));
   }
+  $("folder-detail").hidden = completed && !job.skippedFolders;
   setText($("folder-counts"), (job.counts.advisory ? t("scanAdvisoryCount", "注意情報$1件 ／ ", [job.counts.advisory]) : "") + t("mail113", "未検出$1件 ／ 検出$2件 ／ 未検査$3件 ／ 失敗$4件", [job.counts.clean, job.counts.detected, job.counts.incomplete, job.counts.error]));
   const milestone = `${job.id}:${job.status}:${Math.floor(job.completed / 10)}`;
   if (milestone !== folderAnnouncement) {
@@ -244,8 +259,6 @@ function renderFolder() {
     setText($("folder-announcement"), t("mail114", "フォルダー検査 $1。処理済み$2件$3。", [FOLDER_STATES[job.status], job.completed, job.total === null ? "" : t("mail115", "、対象$1件", [job.total])]));
   }
   setText($("folder-detail"), job.detail + (job.resumeCount ? t("mail116", " 再開時は現在のフォルダーと照合します。総件数はこれまでの処理済み件数と、今回の未処理件数の合計です。") : "") + (job.skippedFolders ? t("mail117", " 対象外のフォルダー：$1件。", [job.skippedFolders]) : ""));
-  const retained = latest.records.filter(record => record.folderJobId === job.id).length;
-  setText($("folder-retained"), t("mail118", "この検査の履歴を$1件保持しています。履歴上限は1000件で、未検出・完全削除済みの古い履歴から入れ替えます。進捗の処理件数は別に保持します。検出・未検査・失敗の履歴で上限に達した場合は停止します。", [retained]));
 }
 
 function showFolderDialog(context) {
@@ -965,15 +978,16 @@ function renderFolderChoices() {
     });
     label.append(input, document.createTextNode(folderLabel(folder))); $("folder-options").append(label);
   }
-  $("folder-picker-empty").hidden = folders.length > 0;
-  setText($("folder-picker-empty"), $("scan-account").value ? t("folderNoMatches", "一致するフォルダーはありません。") : t("folderAccountFirst", "アカウントを選択してください。"));
+  $("folder-picker-empty").hidden = folders.length > 0 || !$("scan-account").value;
+  setText($("folder-picker-empty"), t("folderNoMatches", "一致するフォルダーはありません。"));
   renderTarget();
 }
 function renderTarget() {
   const shown = matchingFolders(), shownIds = new Set(shown.map(folder => folder.id));
   setText($("folder-selection-count"), t("folderSelectionCount", "選択$1フォルダー ／ 表示$2フォルダー（表示外の選択$3）", [selectedFolders.size, shown.length, [...selectedFolders].filter(id => !shownIds.has(id)).length]));
   const account = latest?.accounts.find(account => account.id === $("scan-account").value);
-  setText($("scan-target-label"), selectedFolders.size ? t("folderConfirmCount", "$1：$2フォルダーを検査します。", [account?.name || "", selectedFolders.size]) : t("mail161", "検査するアカウントとフォルダーを選択してください。"));
+  $("scan-target-label").hidden = !selectedFolders.size;
+  setText($("scan-target-label"), selectedFolders.size ? t("folderConfirmCount", "$1：$2フォルダーを検査します。", [account?.name || "", selectedFolders.size]) : "");
   updateControls();
 }
 $("folder-search").addEventListener("input", renderFolderChoices);
@@ -997,13 +1011,14 @@ async function loadFolders(interactive = false) {
     else if (latest.accounts.length === 1) $("scan-account").value = latest.accounts[0].id;
     renderFolderChoices();
     renderRecords();
+    $("reload-folders-retry").hidden = true;
     setText($("folder-load-status"), response.limited ? t("mail163", "フォルダー数の上限に達しました。一覧にない対象はThunderbirdの右クリックから指定してください。") :
       folderChoices.length ? "" : t("mail164", "検査できるフォルダーがありません。"));
-  } catch (error) { setText($("folder-load-status"), t("mail165", "一覧を取得できませんでした。「一覧を更新」で再試行してください。") + error.message); if (interactive) throw error; }
+  } catch (error) { $("reload-folders-retry").hidden = false; setText($("folder-load-status"), t("mail165", "一覧を取得できませんでした。「一覧を更新」で再試行してください。") + error.message); if (interactive) throw error; }
   finally { foldersLoading = false; updateControls(); }
 }
 $("scan-account").addEventListener("change", () => { selectedFolders.clear(); $("folder-search").value = ""; renderFolderChoices(); });
-$("reload-folders").addEventListener("click", () => { void action(() => loadFolders(true)); });
+for (const id of ["reload-folders", "reload-folders-retry"]) $(id).addEventListener("click", () => { void action(() => loadFolders(true)); });
 function changeReview(targets, reviewed) {
   if (!targets.length || blocked()) return;
   const stamps = Object.fromEntries(targets.map(record => [record.key, reviewStamp(record)]));

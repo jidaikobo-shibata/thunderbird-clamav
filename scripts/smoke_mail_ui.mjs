@@ -288,6 +288,18 @@ try {
       await until("document.querySelectorAll('#results tr').length === 50 && document.getElementById('panel-settings').contains(document.getElementById('connection-title'))");
       assert.equal(await evaluate("document.querySelectorAll('#results tr')[2].querySelector('.state').textContent"),language === "ja" ? "候補：未検出" : "Candidate: "+catalogs.en.mail086.message);
       assert.ok(await evaluate("document.querySelectorAll('#results tr')[2].querySelector('details .originProof').textContent.includes('/Receipt')"));
+      await until("document.getElementById('scan-account').options.length===3 && !document.getElementById('scan-account').disabled");
+      assert.equal(await evaluate("document.getElementById('folder-picker').hidden && document.getElementById('scan-folder').hidden"),true);
+      await change("scan-account","test");
+      assert.equal(await evaluate("!document.getElementById('folder-picker').hidden && !document.getElementById('scan-folder').hidden && document.getElementById('scan-folder').disabled"),true);
+      await change("scan-account","");
+      assert.equal(await evaluate("document.getElementById('folder-picker').hidden"),true);
+      await evaluate("testState.folderJob={id:'compact',status:'completed',folder:{accountId:'test',path:'/Inbox'},startedAt:'2026-11-25T00:00:00Z',finishedAt:'2026-11-25T00:05:00Z',total:10,completed:10,scanning:0,counts:{clean:10,detected:0,incomplete:0,error:0},detail:'Done'}");
+      await until("!document.getElementById('folder-progress').hidden");
+      assert.equal(await evaluate("document.getElementById('folder-bar').hidden && document.getElementById('folder-stop').hidden && document.getElementById('folder-resume').hidden && document.getElementById('folder-detail').hidden"),true);
+      assert.ok(await evaluate("document.getElementById('folder-status').textContent.includes('2026')"));
+      await evaluate("testState.folderJob=null");
+      await until("document.getElementById('folder-progress').hidden");
       await evaluate("sessionStorage.setItem('clam-open-settings','1')");
       await call("Page.navigate", {url:`http://127.0.0.1:${server.address().port}/options.html`});
       // The options page redirects: do not hold an evaluated promise in a
@@ -555,6 +567,7 @@ try {
       await evaluate("document.getElementById('delete-cancel').click()");
       await until("!document.querySelector('#results tr button.danger').disabled");
       assert.equal(await evaluate("testCalls.some(call => call.type === 'permission')"), false);
+      await change("scan-account","test");
       await evaluate("window.fixtureFolderOverride=[{id:'inbox',accountId:'test',path:'/Inbox',displayNames:['Indexed folder refresh']}];document.getElementById('tab-scan').click();document.getElementById('reload-folders').click()");
       await until("!document.getElementById('reload-folders').disabled");
       await evaluate("document.getElementById('tab-results').click();document.getElementById('search').value='Indexed folder refresh';document.getElementById('search').dispatchEvent(new Event('input',{bubbles:true}))");
@@ -819,7 +832,7 @@ try {
   await writeFile(path.join(root, "dist/ui-folder-progress.png"), Buffer.from(folderImage.data, "base64"));
   await evaluate("document.getElementById('tab-scan').click(); document.getElementById('folder-stop').click()");
   await until("document.getElementById('folder-status').textContent.includes('中止') && document.getElementById('folder-stop').disabled");
-  assert.match(await evaluate("document.getElementById('folder-status').textContent"), /未処理75件/);
+  assert.match(await evaluate("document.getElementById('folder-status').textContent"), /25 \/ 100/);
   await evaluate("testState.folderJob.status = 'interrupted'; document.getElementById('health').click()");
   await until("document.getElementById('folder-status').textContent.includes('中断')");
   assert.equal(await evaluate("document.getElementById('folder-resume').hidden"), false);

@@ -45,7 +45,7 @@ time, .sender, .subject, .engine, .signatures, .mail-location { display: block; 
 summary { cursor: pointer; }
 .pagination { justify-content: center; margin: 20px 0; }
 #panel-settings { max-width: 900px; }
-.folder-progress { padding: 16px; border: 1px solid GrayText; border-radius: 6px; margin-bottom: 20px; }
+.folder-progress { padding: 16px; border: 1px solid GrayText; border-radius: 6px; margin: 20px 0; }
 .folder-progress h3 { margin: 0; }
 .folder-progress p { margin: 8px 0; overflow-wrap: anywhere; }
 .folder-progress progress, #delete-preparation-bar { display: block; width: 100%; height: 20px; accent-color: Highlight; }
@@ -58,7 +58,7 @@ dialog .actions { margin-top: 20px; }
 @media (max-width: 850px) { .filters { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 500px) { main { padding: 12px; } .filters { grid-template-columns: 1fr; } dialog { padding: 12px; } }
 
-.scan-picker { display: grid; grid-template-columns: minmax(160px,1fr) minmax(220px,2fr) auto; gap: 12px; align-items: end; }
+.scan-picker { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 12px; align-items: end; }
 #panel-scan, #panel-help { max-width: 1000px; }
 .connection-status { border: 1px solid GrayText; border-radius: 6px; padding: 16px; margin: 24px 0; }
 .connection-status h3 { margin-top: 0; }

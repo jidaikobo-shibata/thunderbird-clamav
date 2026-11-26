@@ -31,32 +31,32 @@
   <p id="issue" role="alert" hidden></p>
 
   <section id="panel-scan" role="tabpanel" aria-labelledby="tab-scan" tabindex="0">
-    <h2><span data-i18n="mail254">検査</span></h2>
+    <h2 data-i18n="mail262">フォルダー検査</h2>
     <div class="scan-picker">
-      <label for="scan-account"><span data-i18n="mail257">アカウント</span><select id="scan-account"><option value="" data-i18n="mail159">選択してください</option></select></label>
-      <label for="folder-search"><span data-i18n="folderSearch">フォルダーを絞り込む</span><input id="folder-search" type="search" autocomplete="off"></label>
-      <button type="button" id="reload-folders"><span data-i18n="mail259">一覧を更新</span></button>
+      <label for="scan-account"><span data-i18n="scanAccountTitle">検査するアカウント</span><select id="scan-account"><option value="" data-i18n="mail159">選択してください</option></select></label>
     </div>
-    <fieldset id="folder-picker">
+    <fieldset id="folder-picker" hidden>
       <legend data-i18n="folderChoose">検査するフォルダー（複数選択可）</legend>
+      <div class="scan-picker">
+        <label for="folder-search"><span data-i18n="folderSearch">フォルダーを絞り込む</span><input id="folder-search" type="search" autocomplete="off"></label>
+        <button type="button" id="reload-folders"><span data-i18n="mail259">一覧を更新</span></button>
+      </div>
       <div class="actions"><button type="button" id="folder-select-visible" data-i18n="folderSelectVisible">表示中を選択</button><button type="button" id="folder-clear-selection" data-i18n="folderClearSelection">すべての選択を解除</button></div>
       <p id="folder-selection-count" role="status" aria-live="polite"></p>
       <div id="folder-options"></div>
       <p id="folder-picker-empty"></p>
-      <p class="hint" data-i18n="folderSelectionHint">絞り込みで隠れた選択も保持します。アカウントを変えると選択を解除します。</p>
     </fieldset>
-    <p id="scan-target-label"><span data-i18n="mail161">検査するアカウントとフォルダーを選択してください。</span></p>
+    <p id="scan-target-label" hidden></p>
     <p id="folder-load-status" role="status"></p>
-    <button type="button" id="scan-folder" disabled><span data-i18n="mail260">検査範囲を確認して開始</span></button>
-    <p class="hint"><span data-i18n="mail261">サブフォルダーを含めるかは次の確認画面で選べます。メール単位の検査はThunderbirdのメール一覧の右クリックから利用できます。</span></p>
+    <button type="button" id="reload-folders-retry" data-i18n="mail259" hidden>一覧を更新</button>
+    <button type="button" id="scan-folder" hidden disabled><span data-i18n="mail260">検査範囲を確認して開始</span></button>
     <section id="folder-progress" class="folder-progress" aria-labelledby="folder-title" hidden>
       <h3 id="folder-title"><span data-i18n="mail262">フォルダー検査</span></h3>
-      <p id="folder-status"></p><p id="folder-announcement" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></p>
+      <p id="folder-location"></p><p id="folder-status"></p><p id="folder-announcement" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></p>
       <progress id="folder-bar" max="1" aria-label="フォルダー検査の処理済み件数" data-i18n-aria-label="mail263"></progress>
       <details id="folder-job-targets" hidden><summary data-i18n="folderTargets">対象フォルダー</summary><ul id="folder-job-target-list"></ul></details>
       <p id="folder-counts"></p><p id="folder-detail"></p>
-      <div class="actions"><button type="button" id="folder-results"><span data-i18n="mail264">この検査の結果を表示</span></button><button type="button" id="folder-stop"><span data-i18n="mail177">中止</span></button><button type="button" id="folder-resume"><span data-i18n="mail265">再開</span></button><button type="button" id="folder-delete"><span data-i18n="mail266">検査記録を削除</span></button></div>
-      <p id="folder-retained" class="hint"></p>
+      <div class="actions"><button type="button" id="folder-results"><span data-i18n="scanViewResults">検査結果を見る</span></button><button type="button" id="folder-stop"><span data-i18n="mail177">中止</span></button><button type="button" id="folder-resume"><span data-i18n="mail265">再開</span></button><button type="button" id="folder-delete"><span data-i18n="scanClearRecord">記録を消去</span></button></div>
     </section>
   </section>
   <section id="panel-results" role="tabpanel" aria-labelledby="tab-results" tabindex="0" hidden>
@@ -295,7 +295,7 @@
     <h2 id="folder-delete-title"><span data-i18n="mail355">フォルダー検査の記録を削除</span></h2>
     <p id="folder-delete-target"></p>
     <p id="folder-delete-warning"><span data-i18n="mail356">進捗と再開用の記録を削除します。この検査は再開できなくなります。メール本体と各メールの検査結果は削除しません。</span></p>
-    <div class="actions"><button id="folder-delete-cancel" value="cancel" autofocus><span data-i18n="mail348">キャンセル</span></button><button id="folder-delete-confirm" value="delete"><span data-i18n="mail266">検査記録を削除</span></button></div>
+    <div class="actions"><button id="folder-delete-cancel" value="cancel" autofocus><span data-i18n="mail348">キャンセル</span></button><button id="folder-delete-confirm" value="delete"><span data-i18n="scanClearRecord">記録を消去</span></button></div>
   </form>
 </dialog>
 <dialog id="message-dialog" role="alertdialog" aria-labelledby="message-title" aria-describedby="message-operation message-detail message-guidance">
