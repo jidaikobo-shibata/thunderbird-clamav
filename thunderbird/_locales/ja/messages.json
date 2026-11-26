@@ -3505,5 +3505,22 @@
   },
   "bulkExecute": {
     "message": "実行"
+  },
+  "summaryIdleWaiting": {
+    "message": "履歴$ARG1$件 ／ 確認が必要$ARG2$件 ／ 検査待ち$ARG3$件（無操作時間待機中） ／ 絞り込み結果$ARG4$件",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      },
+      "arg3": {
+        "content": "$3"
+      },
+      "arg4": {
+        "content": "$4"
+      }
+    }
   }
 }

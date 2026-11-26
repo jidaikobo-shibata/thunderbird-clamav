@@ -338,7 +338,10 @@ try {
       await evaluate("failSettings=false;document.getElementById('idle-automatic').click();document.getElementById('settings-save').click()");
       await until("testState.settings.idleAutomatic===false && !document.getElementById('idle-automatic').disabled");
       await evaluate("testState.idleWaiting=true;testState.incomingCount=7;testState.waitingCount=8;testState.oldestIncoming='2026-11-25T01:00:00Z'");
-      await until("document.getElementById('summary').textContent.includes('8')");
+      const idleLabel = language === "ja" ? "検査待ち8件（無操作時間待機中）" : "Queued: 8 (waiting for idle time)";
+      await until("document.getElementById('summary').textContent.includes(" + JSON.stringify(idleLabel) + ")");
+      await evaluate("testState.idleWaiting=false");
+      await until("!document.getElementById('summary').textContent.includes(" + JSON.stringify(idleLabel) + ") && document.getElementById('summary').textContent.includes('8')");
       await evaluate("testState.idleWaiting=false;testState.incomingCount=0;delete testState.waitingCount");
       await evaluate("testState.receiptRecovery={token:'synthetic',folders:[{accountId:'test',path:'/Recovery'}]}");
       await until("!document.getElementById('receipt-recovery').hidden && document.getElementById('receipt-folders').textContent.includes('Recovery')");

@@ -719,7 +719,10 @@ function renderRecords() {
   setText($("tab-results"), attention ? t("mail140", "検査結果（$1）", [attention]) : t("mail141", "検査結果"));
   $("tab-results").setAttribute("aria-label", t("mail142", "検査結果、確認が必要$1件", [attention]));
   $("tab-results").title = t("mail143", "確認が必要$1件", [attention]);
-  setText($("summary"), t("mail144", "履歴$1件 ／ 確認が必要$2件 ／ 検査待ち$3件 ／ 絞り込み結果$4件", [latest.records.length, attention, waiting, filtered.length]));
+  const summaryValues = [latest.records.length, attention, waiting, filtered.length];
+  setText($("summary"), waiting > 0 && latest.idleWaiting
+    ? t("summaryIdleWaiting", "履歴$1件 ／ 確認が必要$2件 ／ 検査待ち$3件（無操作時間待機中） ／ 絞り込み結果$4件", summaryValues)
+    : t("mail144", "履歴$1件 ／ 確認が必要$2件 ／ 検査待ち$3件 ／ 絞り込み結果$4件", summaryValues));
   setText($("page-label"), t("mail145", "$1 / $2ページ（1ページ50件）", [page + 1, result.pages]));
   $("page-label").dataset.pages = String(result.pages);
   $("empty-results").hidden = visible.length > 0;
