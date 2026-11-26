@@ -64,33 +64,27 @@ function setText(element, text) {
 }
 function blocked() { return busy || Boolean(latest?.batch?.active) || Boolean(latest?.maintenance); }
 const installer = installationUI({ request, action, feedback, latest: () => latest, busy: () => blocked() });
+const bulkActions = new Map();
 function selection() { return (latest?.records || []).filter(record => selected.has(record.key)); }
 function updateControls() {
   const locked = blocked() || startupFailed || Boolean(latest?.helperRemoved), chosen = selection();
   const resultBusy = Boolean(latest?.resultActionsBusy || ["collecting", "running", "stopping"].includes(latest?.folderJob?.status) || latest?.records.some(record => record.status === "scanning"));
   $("result-action-wait").hidden = !resultBusy;
   setText($("result-action-wait"), resultBusy ? t("resultActionsWait", "検査・削除の処理が終わると、確認状態の変更と手動隔離を操作できます。") : "");
-  for (const id of ["review-selected", "unreview-selected", "quarantine-selected"]) {
-    if (resultBusy) $(id).setAttribute("aria-describedby", "result-action-wait");
-    else $(id).removeAttribute("aria-describedby");
-  }
-  const retryCount = chosen.filter(canRetry).length, deleteCount = chosen.filter(canDelete).length, historyCount = chosen.filter(canForget).length;
   const outside = chosen.filter(record => !visible.some(item => item.key === record.key)).length;
   setText($("selected-count"), t("selectionCount", "$1件を選択中（画面外$2件）", [chosen.length, outside]));
-  setText($("retry-selected"), t("retrySelectedCount", "再検査（$1通）", [retryCount]));
-  setText($("delete-selected"), t("deleteSelectedCount", "メールを完全削除（$1通）", [deleteCount]));
-  setText($("forget-selected"), t("forgetSelectedCount", "履歴だけ消去（$1件）", [historyCount]));
-  $("retry-selected").disabled = locked || !retryCount;
-  $("delete-selected").disabled = locked || !deleteCount;
-  $("forget-selected").disabled = locked || !historyCount;
-  const reviewCount = chosen.filter(canReview).length, unreviewCount = chosen.filter(canUnreview).length;
-  setText($("review-selected"), t("reviewCountAction", "確認済みにする（$1通）", [reviewCount]));
-  setText($("unreview-selected"), t("unreviewCountAction", "未確認に戻す（$1通）", [unreviewCount]));
-  $("review-selected").disabled = locked || resultBusy || !reviewCount;
-  $("unreview-selected").disabled = locked || resultBusy || !unreviewCount;
-  const quarantineCount = chosen.filter(canQuarantine).length;
-  setText($("quarantine-selected"), t("qSelectedCount", "隔離（$1通）", [quarantineCount]));
-  $("quarantine-selected").disabled = locked || resultBusy || !quarantineCount || foldersLoading || !folderChoices.length;
+  $("retry-selected").disabled = locked || !chosen.some(canRetry);
+  $("delete-selected").disabled = locked || !chosen.some(canDelete);
+  $("forget-selected").disabled = locked || !chosen.some(canForget);
+  $("review-selected").disabled = locked || resultBusy || !chosen.some(canReview);
+  $("unreview-selected").disabled = locked || resultBusy || !chosen.some(canUnreview);
+  $("quarantine-selected").disabled = locked || resultBusy || !chosen.some(canQuarantine) || foldersLoading || !folderChoices.length;
+  const bulk = $("bulk-action");
+  bulk.disabled = locked || !chosen.length;
+  if (resultBusy) bulk.setAttribute("aria-describedby", "result-action-wait");
+  else bulk.removeAttribute("aria-describedby");
+  if (!locked && bulk.selectedOptions[0]?.disabled) bulk.value = "";
+  $("bulk-execute").disabled = bulk.disabled || !bulk.value || bulk.selectedOptions[0]?.disabled;
   $("deselect").disabled = locked || !chosen.length;
   const candidates = visible.filter(selectable), selectedOnPage = candidates.filter(record => selected.has(record.key)).length;
   $("select-page").disabled = locked || !candidates.length;
@@ -551,7 +545,7 @@ async function deleteOne(key) {
 
 function makeRow(record) {
   const row = document.createElement("tr"), parts = {};
-  const cells = Array.from({ length: 5 }, () => row.appendChild(document.createElement("td")));
+  const cells = Array.from({ length: 4 }, () => row.appendChild(document.createElement("td")));
   cells[0].className = "select-cell";
   const checkbox = cells[0].appendChild(document.createElement("input"));
   checkbox.type = "checkbox";
@@ -572,7 +566,9 @@ function makeRow(record) {
     parts[key] = details.appendChild(document.createElement("span"));
     parts[key].className = key;
   }
-  const open = cells[4].appendChild(document.createElement("button"));
+  const actions = cells[2].appendChild(document.createElement("div"));
+  actions.className = "row-actions";
+  const open = actions.appendChild(document.createElement("button"));
   open.textContent = t("mail131", "開く");
   open.addEventListener("click", () => {
     if (blocked()) return;
@@ -590,20 +586,20 @@ function makeRow(record) {
       return t("mail133", "Thunderbirdで対象メールを開きました。");
     });
   });
-  const retry = cells[4].appendChild(document.createElement("button"));
+  const retry = actions.appendChild(document.createElement("button"));
   retry.textContent = t("mail134", "再検査");
   retry.addEventListener("click", () => { void action(() => retryTargets([record.key], true)); });
-  const review = cells[4].appendChild(document.createElement("button"));
+  const review = actions.appendChild(document.createElement("button"));
   review.className = "review-action";
   review.addEventListener("click", () => {
     const current = latest.records.find(item => item.key === record.key);
     if (["incomplete", "advisory"].includes(current?.status)) changeReview([current], !isReviewed(current));
   });
-  const forget = cells[4].appendChild(document.createElement("button"));
+  const forget = actions.appendChild(document.createElement("button"));
   forget.textContent = t("forgetTitle", "履歴だけ消去");
   forget.className = "forget-action";
   forget.addEventListener("click", () => { void action(() => forgetHistory([record.key])); });
-  const remove = cells[4].appendChild(document.createElement("button"));
+  const remove = actions.appendChild(document.createElement("button"));
   remove.textContent = t("mail136", "完全削除");
   remove.className = "danger";
   remove.addEventListener("click", () => { void action(() => deleteOne(record.key)); });
@@ -718,7 +714,7 @@ function renderRecords() {
     const at = $("results").children[index];
     if (at !== entry.row) $("results").insertBefore(entry.row, at || null);
   }
-  const waiting = latest.records.filter(record => record.status === "queued").length;
+  const waiting = latest.waitingCount ?? latest.records.filter(record => record.status === "queued").length;
   const attention = latest.records.filter(needsAttention).length + (latest.overflowReport?.recent || []).filter(needsAttention).length;
   setText($("tab-results"), attention ? t("mail140", "検査結果（$1）", [attention]) : t("mail141", "検査結果"));
   $("tab-results").setAttribute("aria-label", t("mail142", "検査結果、確認が必要$1件", [attention]));
@@ -783,13 +779,6 @@ async function refresh() {
         folderLabel(folder, folderNames)].join(" / "));
       setText($("receipt-folders"), t("incomingRecoveryFolders", "受付できなかった通知のフォルダー：$1", [names.join(t("listSeparator", " ／ "))]));
     }
-    $("incoming-summary").hidden = !latest.incomingCount;
-    if (latest.incomingCount) {
-      setText($("incoming-summary"), t("incomingSummary", "新着の検査待ち：$1通 ／ 最も古い受付：$2", [
-        String(latest.incomingCount), new Date(latest.oldestIncoming).toLocaleString(uiLanguage())
-      ]));
-    }
-    $("idle-waiting").hidden = !latest.idleWaiting;
     renderHelperNotice();
     if (sessionStorage.getItem("clam-open-settings") === "1") {
       sessionStorage.removeItem("clam-open-settings");
@@ -873,14 +862,14 @@ $("find-attention").addEventListener("click", () => {
     return keys.length ? t("findSelected", "一覧で$1件を選択しました。", [keys.length]) : t("locateFinished", "対象の確認を終了しました。");
   });
 });
-$("retry-selected").addEventListener("click", () => {
+bulkActions.set("retry-selected", () => {
   const keys = selection().filter(canRetry).map(record => record.key);
   void action(async () => {
     $("batch-report").replaceChildren(); $("batch-report").hidden = true;
     return await retryTargets(keys);
   });
 });
-$("delete-selected").addEventListener("click", () => {
+bulkActions.set("delete-selected", () => {
   const keys = selection().filter(canDelete).map(record => record.key);
   void action(async () => {
     $("batch-report").replaceChildren(); $("batch-report").hidden = true;
@@ -914,7 +903,7 @@ async function forgetHistory(keys) {
   for (const key of response.keys) selected.delete(key);
   return response.skipped ? t("forgetResult", "履歴$1件を消去しました。状態が変わった$2件は残しました。メール本体は削除していません。", [response.count, response.skipped]) : t("forgetSuccess", "履歴$1件を消去しました。メール本体は残っています。", [response.count]);
 }
-$("forget-selected").addEventListener("click", () => {
+bulkActions.set("forget-selected", () => {
   const keys = selection().filter(canForget).map(record => record.key);
   void action(() => forgetHistory(keys));
 });
@@ -1047,9 +1036,9 @@ function changeReview(targets, reviewed) {
   });
 }
 for (const [id, reviewed] of [["review-selected", true], ["unreview-selected", false]]) {
-  $(id).addEventListener("click", () => changeReview(selection().filter(reviewed ? canReview : canUnreview), reviewed));
+  bulkActions.set(id, () => changeReview(selection().filter(reviewed ? canReview : canUnreview), reviewed));
 }
-$("quarantine-selected").addEventListener("click", () => {
+bulkActions.set("quarantine-selected", () => {
   const targets = selection().filter(canQuarantine);
   if (!targets.length || blocked()) return;
   if (targets.some(record => !latest.settings.quarantine?.[record.locator.accountId])) {
@@ -1067,6 +1056,11 @@ $("quarantine-selected").addEventListener("click", () => {
     const result = await request("quarantineMany", { keys: targets.map(record => record.key), destinations, hashes });
     return { message: t("qCompleted", "隔離：$1通移動、$2通失敗。結果を確認してください。", [result.moved, result.failed]), warning: result.failed > 0, guidance: t("messageBatchGuidance", "成功した処理は実行済みです。検査結果と対象ごとのエラーを確認してください。") };
   });
+});
+$("bulk-action").addEventListener("change", updateControls);
+$("bulk-execute").addEventListener("click", () => {
+  if (blocked() || $("bulk-execute").disabled) return;
+  bulkActions.get($("bulk-action").value)?.();
 });
 function clearScanErrors() {
   setText($("settings-status"), "");

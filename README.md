@@ -1,14 +1,14 @@
 # ClamAV Mail Check / ClamAV メール検査
 
 Thunderbirdのメールを、コンピューターにインストールしたClamAVで検査する拡張機能です。
-このブランチは **0.20.0a54（試用版）** です。補助プログラムの別途インストールは不要です。
+このブランチは **0.20.0a55（試用版）** です。補助プログラムの別途インストールは不要です。
 公開済みの0.20.0a5はUbuntu向けです。このブランチのXPIは末尾のビルド手順で作成できます。GitHubにはまだ公開していません。
 
 [English installation guide](README.en.md)
 
 ## インストール
 
-1. Thunderbird 160 系の Windows 版には `dist/clam-mail-check-direct-0.20.0a54-tb160.xpi`、153 系には `dist/clam-mail-check-direct-0.20.0a54.xpi` を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
+1. Thunderbird 160 系の Windows 版には `dist/clam-mail-check-direct-0.20.0a55-tb160.xpi`、153 系には `dist/clam-mail-check-direct-0.20.0a55.xpi` を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
 2. Thunderbirdのアドオンマネージャーで、歯車メニューの「ファイルからアドオンをインストール」を選び、XPIを指定します。
 3. 表示される権限を確認してインストールします。Experiment APIを使用するため、Thunderbirdとコンピューターへの全面アクセス権限が必要です。
 4. ツールバーのアイコンから画面を開き、「設定」末尾の「ClamAVの状態」で「接続を再確認」を押します。ClamAVが未導入なら、表示される導入手順に従います。ウイルス定義の初回更新も完了させてください。
@@ -157,7 +157,7 @@ ClamAVが検出しないメールの安全性を保証するものではあり�
 
 ### 入力中の自動検査を待機させる（試用設定）
 
-「設定」の「PCを30秒間操作していないときに自動検査を開始する」を有効にすると、新着は検査待ちとして保存し、PC全体の無操作を検知してから検査します。初期状態はオフです。本文の取得前に入力が再開した場合は、そのメールも待機に戻します。すでに取得した本文は検査を続けます。選択メール・フォルダーの手動検査は待機しません。操作を続けている間は未検査のまま残ることがあり、検査結果に待機件数と最も古い受付時刻を表示します。設定をオフにすると待機分を再開します。
+「設定」の「PCを30秒間操作していないときに自動検査を開始する」を有効にすると、新着は検査待ちとして保存し、PC全体の無操作を検知してから検査します。初期状態はオフです。本文の取得前に入力が再開した場合は、そのメールも待機に戻します。すでに取得した本文は検査を続けます。選択メール・フォルダーの手動検査は待機しません。操作を続けている間は未検査のまま残ることがあり、検査結果の概要に、受付済みの新着を含む待機件数を表示します。設定をオフにすると待機分を再開します。
 
 標準の`idle`権限を追加しています。入力内容やキーを取得する機能ではありません。OSのアイドル検知が利用できない場合は、自動検査を待機させてエラーを表示します。この設定でThunderbird本体の受信・振り分け・索引更新を止めることはできず、Mozcの入力遅延が解消するかは実際の環境で比較が必要です。
 
@@ -196,7 +196,7 @@ python3 -B scripts/check_source.py
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-160 系用は `python scripts/build_direct_mail_check.py --thunderbird-major 160` でビルドします。既定の 153 系用の成果物は`dist/clam-mail-check-direct-0.20.0a54.xpi`です。同じXPIにUbuntu/macOS/Windows用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
+160 系用は `python scripts/build_direct_mail_check.py --thunderbird-major 160` でビルドします。既定の 153 系用の成果物は`dist/clam-mail-check-direct-0.20.0a55.xpi`です。同じXPIにUbuntu/macOS/Windows用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
 
 ```bash
 for test_file in tests/*.test.mjs; do

@@ -4682,6 +4682,7 @@ test("active input and full protected history retain every receipt over restart 
   for (const message of mails) first.events.newMail.listeners[0](message.folder, { messages: [message] });
   const accepted = await settle(first, state => state.incomingCount === mails.length);
   assert.equal(accepted.records.length, records.length);
+  assert.equal(accepted.waitingCount, mails.length);
   assert(Number.isFinite(Date.parse(accepted.oldestIncoming)));
   assert.deepEqual(first.rawReads, []);
   const idle = idleFixture();
@@ -4710,7 +4711,8 @@ test("activity during automatic header lookup postpones the first body read", as
   h.events.newMail.listeners[0](incoming.folder, { messages: [incoming] });
   await settle(h, state => state.incomingCount === 1);
   idle.change("idle");
-  await settle(h, state => state.idleWaiting && state.records[0]?.status === "queued");
+  const staged = await settle(h, state => state.idleWaiting && state.records[0]?.status === "queued");
+  assert.equal(staged.waitingCount, 1);
   assert.deepEqual(h.rawReads, []);
   idle.change("idle");
   const result = await settle(h, state => state.records[0]?.status === "clean");
@@ -4811,6 +4813,7 @@ test("old automatic scanner slots gain durable receipts without replacing previo
     saved: { records: [legacy], settings: { enabled: true, idleAutomatic: true, accountIds: ["one"], notifications: false } } });
   const pending = await h.send("state");
   assert.equal(pending.incomingCount, 1);
+  assert.equal(pending.waitingCount, 1);
   assert.equal(pending.oldestIncoming, legacy.createdAt);
   assert.deepEqual(pending.records[0].lastResult, previous);
   idle.change("idle");

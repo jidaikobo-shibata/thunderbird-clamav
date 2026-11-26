@@ -694,7 +694,7 @@ try {
     check((await messenger.storage.local.get('fixtureFocusRestored')).fixtureFocusRestored,"Synthetic timestamp restored");
     document.getElementById('tab-settings').click();
     const mailLimit=document.getElementById('scan-mailMiB');
-    mailLimit.value='4';mailLimit.dispatchEvent(new Event('change',{bubbles:true}));mailLimit.blur();await wait(2300);
+    mailLimit.value='4';mailLimit.dispatchEvent(new Event('change',{bubbles:true}));document.getElementById('settings-save').click();mailLimit.blur();await wait(2300);
     check(mailLimit.value==='4'&&mailLimit.getAttribute('aria-invalid')==='true',"Native invalid input survives refresh");
     check(document.getElementById(mailLimit.getAttribute('aria-describedby')).textContent.includes('100'),"Native input error identifies its range");
     mailLimit.value=String(state.settings.scanSettings.mailMiB);mailLimit.dispatchEvent(new Event('change',{bubbles:true}));
@@ -718,7 +718,7 @@ try {
       check(row,"Native deletion target row available");
       const box=row.querySelector('input');if(!box.checked)box.click();
     }
-    document.getElementById('delete-selected').click();
+    document.getElementById('bulk-action').value='delete-selected';document.getElementById('bulk-action').dispatchEvent(new Event('change'));document.getElementById('bulk-execute').click();
     check(document.getElementById('delete-dialog').open,"Deletion modal opens synchronously");
     check(document.getElementById('delete-ack').disabled&&document.getElementById('delete-confirm').disabled,"Deletion remains unavailable during verification");
     for(let attempt=0;attempt<200;attempt++) {
@@ -741,7 +741,7 @@ try {
     }
     check((await messenger.storage.local.get('fixtureDeleteReturned')).fixtureDeleteReturned,"Expired body reply actually returned");
     check(JSON.stringify((await request('state')).batch)===cancelledPreparation&&!document.getElementById('delete-dialog').open,"Late verification cannot reopen or update the cancelled preparation");
-    document.getElementById('delete-selected').click();
+    document.getElementById('bulk-action').value='delete-selected';document.getElementById('bulk-action').dispatchEvent(new Event('change'));document.getElementById('bulk-execute').click();
     const sameDeletionDialog=document.getElementById('delete-dialog');
     for(let attempt=0;attempt<100;attempt++) {
       if(!document.getElementById('delete-ack').disabled) break;
@@ -755,8 +755,8 @@ try {
     }
     report.deletionPreparationDialog=true;
     await messenger.storage.local.set({fixtureDeleteMismatchId:deletionHeldRecord.messageId});
-    document.getElementById('delete-selected').focus();
-    document.getElementById('delete-selected').click();
+    document.getElementById('bulk-execute').focus();
+    document.getElementById('bulk-action').value='delete-selected';document.getElementById('bulk-action').dispatchEvent(new Event('change'));document.getElementById('bulk-execute').click();
     const recoveryDialog = document.getElementById('locate-dialog');
     for (let attempt=0; attempt<100 && !recoveryDialog.open; attempt++) await wait(100);
     check(recoveryDialog.open && recoveryDialog.contains(document.activeElement), "Content mismatch focuses target recovery");

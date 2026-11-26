@@ -3499,5 +3499,11 @@
         "content": "$1"
       }
     }
+  },
+  "bulkActionLabel": {
+    "message": "Bulk action"
+  },
+  "bulkExecute": {
+    "message": "Apply"
   }
 }

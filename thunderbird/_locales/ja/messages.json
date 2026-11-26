@@ -3499,5 +3499,11 @@
         "content": "$1"
       }
     }
+  },
+  "bulkActionLabel": {
+    "message": "一括操作"
+  },
+  "bulkExecute": {
+    "message": "実行"
   }
 }

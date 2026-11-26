@@ -2356,13 +2356,19 @@ api.runtime.onMessage.addListener(async (request, sender) => {
     }
     if (batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation) && !["state", "cancelBatch", "helperInfo", "health"].includes(request.type)) throw new Error(t("qBusy", "このメールは処理中です。"));
     switch (request.type) {
-      case "state":
-        return { ok: true, directMigrationBackup, settings, records, incomingCount: incomingQueue.entries.size, oldestIncoming: incomingQueue.entries.values().next().value?.createdAt || null, overflowPending, overflowReport, issue, receiptRecovery, lastHealth, lastScan, resultsRequest, resultsFilter, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
+      case "state": {
+        const waiting = new Set(incomingQueue.entries.keys());
+        for (const record of overflowPending ? [...records, overflowPending] : records) {
+          if (record.status === "queued" || legacyCandidatePending(record)) waiting.add(record.key);
+          else waiting.delete(record.key);
+        }
+        return { ok: true, directMigrationBackup, settings, records, waitingCount: waiting.size, incomingCount: incomingQueue.entries.size, oldestIncoming: incomingQueue.entries.values().next().value?.createdAt || null, overflowPending, overflowReport, issue, receiptRecovery, lastHealth, lastScan, resultsRequest, resultsFilter, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
           idleWaiting: !automaticIdle.canStart(settings) && (incomingQueue.entries.size > 0 || records.some(legacyCandidatePending) || [...records, ...(overflowPending ? [overflowPending] : [])].some(record => record.source === "automatic" && record.status === "queued" && settings.accountIds.includes(record.locator.accountId))),
           resultActionsBusy: Boolean(running || folderScan.active || deleting.size),
           folderJob: folderScan.snapshot(), accounts: (await api.accounts.list())
           .filter(account => ["imap", "pop3", "none"].includes(account.type))
           .map(account => ({ id: account.id, name: account.name, type: account.type })) };
+      }
       case "acknowledgeReceiptRecovery": {
         if (!receiptRecovery || request.token !== receiptRecovery.token) throw new Error(t("receiptRecoveryChanged", "新しい未受付があります。案内を確認してください。"));
         const work = async () => {
