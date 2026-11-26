@@ -317,16 +317,22 @@ try {
       }
       assert.equal(await evaluate("!document.getElementById('panel-settings').hidden"), true);
       assert.equal(await evaluate("location.pathname"), "/dashboard.html");
+      assert.equal(await evaluate("document.getElementById('settings-save').disabled"),true);
       await evaluate("document.getElementById('idle-automatic').click()");
-      await until("testState.settings.idleAutomatic===true && !document.getElementById('idle-automatic').disabled");
-      assert.equal(await evaluate("document.getElementById('settings-status').textContent==='' && !document.querySelector('.operation-status') && !document.getElementById('operation-toast').hidden"), true);
-      assert.equal(await evaluate("document.getElementById('action-status').textContent"), language === "ja" ? "設定を保存しました。" : catalogs.en.mail170.message);
-      await evaluate("failSettings=true;document.getElementById('idle-automatic').click()");
-      await dismissMessage();
-      await until("!document.getElementById('idle-automatic').disabled");
-      assert.equal(await evaluate("document.getElementById('operation-toast').hidden && document.getElementById('settings-status').textContent===''"), true);
-      assert.equal(await evaluate("document.getElementById('idle-automatic').checked"), true);
-      await evaluate("failSettings=false;document.getElementById('idle-automatic').click()");
+      assert.equal(await evaluate("!testState.settings.idleAutomatic && !document.getElementById('settings-save').disabled"),true);
+      await evaluate("document.getElementById('tab-scan').click();new Promise(resolve=>setTimeout(resolve,2200))");
+      await evaluate("document.getElementById('tab-settings').click()");
+      assert.equal(await evaluate("document.getElementById('idle-automatic').checked && !testState.settings.idleAutomatic"),true);
+      await evaluate("document.getElementById('settings-save').click()");
+      await until("testState.settings.idleAutomatic===true && document.getElementById('settings-save').disabled");
+      assert.equal(await evaluate("document.getElementById('settings-status').textContent"), language === "ja" ? "設定を保存しました。" : catalogs.en.mail170.message);
+      assert.equal(await evaluate("document.getElementById('operation-toast').hidden"),true);
+      await evaluate("failSettings=true;document.getElementById('idle-automatic').click();document.getElementById('settings-save').click()");
+      await until("document.getElementById('settings-status').dataset.error==='true' && !document.getElementById('settings-save').disabled");
+      assert.equal(await evaluate("!document.getElementById('idle-automatic').checked && testState.settings.idleAutomatic"),true);
+      await evaluate("document.getElementById('settings-discard').click()");
+      assert.equal(await evaluate("document.getElementById('idle-automatic').checked && document.getElementById('settings-save').disabled"),true);
+      await evaluate("failSettings=false;document.getElementById('idle-automatic').click();document.getElementById('settings-save').click()");
       await until("testState.settings.idleAutomatic===false && !document.getElementById('idle-automatic').disabled");
       await evaluate("testState.idleWaiting=true;testState.incomingCount=7;testState.oldestIncoming='2026-11-25T01:00:00Z'");
       await until("!document.getElementById('idle-waiting').hidden");
@@ -371,7 +377,7 @@ try {
       assert.equal(await evaluate("document.activeElement===auditFocus"), true);
       await evaluate("testState.records.find(r=>r.key==='r1').updatedAt=auditOldTime");
       await until("auditFocus.closest('tr')===document.querySelectorAll('#results tr')[1]");
-      await evaluate("document.getElementById('tab-settings').click();document.getElementById('scan-mailMiB').value='4';document.getElementById('scan-mailMiB').dispatchEvent(new Event('change',{bubbles:true}))");
+      await evaluate("document.getElementById('tab-settings').click();document.getElementById('scan-mailMiB').value='4';document.getElementById('scan-mailMiB').dispatchEvent(new Event('change',{bubbles:true}));document.getElementById('settings-save').click()");
       assert.equal(await evaluate("document.getElementById('scan-mailMiB').getAttribute('aria-invalid')"), 'true');
       await evaluate("document.getElementById('scan-mailMiB').blur();new Promise(resolve=>setTimeout(resolve,2200))");
       assert.equal(await evaluate("document.getElementById('scan-mailMiB').value"), '4');
@@ -455,11 +461,10 @@ try {
       await dismissMessage();
       await until("!document.getElementById('delete-selected').disabled");
       await evaluate("failRetry=false");
-      await evaluate("failPrepareDelete=false;document.getElementById('tab-settings').click();failSettings=true;document.getElementById('notifications').click()");
-      await dismissMessage();
-      await until("!document.getElementById('notifications').disabled");
-      assert.equal(await evaluate("!document.querySelector('#panel-settings .operation-error').hidden && document.querySelector('#panel-settings .operation-error').textContent.includes('synthetic storage failure')"),true);
-      await evaluate("failSettings=false;failRefresh=true");
+      await evaluate("failPrepareDelete=false;document.getElementById('tab-settings').click();failSettings=true;document.getElementById('notifications').click();document.getElementById('settings-save').click()");
+      await until("document.getElementById('settings-status').dataset.error==='true' && !document.getElementById('settings-save').disabled");
+      assert.equal(await evaluate("document.getElementById('settings-status').textContent.includes('synthetic storage failure')"),true);
+      await evaluate("document.getElementById('settings-discard').click();failSettings=false;failRefresh=true");
       await until("!document.getElementById('background-error').hidden");
       assert.equal(await evaluate("!document.getElementById('message-dialog').open"),true);
       await evaluate("failRefresh=false;document.getElementById('background-retry').click()");
@@ -468,7 +473,7 @@ try {
       await evaluate(`(() => {
         const button=document.createElement('button');button.id='fixture-bottom-control';
         button.textContent='Focus target';
-        button.style.cssText='position:fixed;bottom:32px;left:50%;transform:translateX(-50%)';
+        button.style.cssText='position:fixed;bottom:32px;left:50%;transform:translateX(-50%);z-index:6';
         document.body.append(button);button.focus();
       })()`);
       assert.equal(await evaluate(`(() => {
@@ -683,27 +688,19 @@ try {
   await evaluate("document.getElementById('tab-setup').click(); document.getElementById('health').click()");
   await until("document.getElementById('health-result').textContent.includes('ClamAV test') && !document.getElementById('health').disabled");
   await evaluate("document.getElementById('tab-settings').click()");
-  assert.equal(await evaluate("document.querySelector('#settings-form button[type=submit]')"), null);
+  assert.equal(await evaluate("document.getElementById('settings-save').disabled"), true);
   assert.equal(await evaluate("document.getElementById('enabled')"), null);
   assert.equal(await evaluate("document.getElementById('automatic-status')"), null);
-  assert.equal(await evaluate("document.querySelector('[data-i18n=autoAccountsHint], [data-i18n=mail297], [data-i18n=mail298]')"), null);
-
   assert.equal(await evaluate("document.getElementById('cancel-paused-queue')"), null);
   assert.equal(await evaluate("document.getElementById('clear')"), null);
   assert.equal(await evaluate("document.getElementById('forget-selected').closest('[role=tabpanel]').id"), "panel-results");
-  await evaluate("document.querySelector('#accounts input').click()");
-  await until("testState.settings.enabled && testState.settings.accountIds.length === 1 && document.getElementById('action-status').textContent.includes('設定を保存しました') && document.getElementById('settings-status').textContent==='' && !document.getElementById('notifications').disabled");
-  await evaluate("failSettings = true; document.querySelector('#accounts input').click()");
-  await dismissMessage();
-  await until("document.querySelector('#panel-settings .operation-error').textContent.includes('保存できません') && document.getElementById('settings-status').textContent==='' && !document.getElementById('notifications').disabled");
-  assert.equal(await evaluate("document.querySelector('#accounts input').checked"), true);
-  await evaluate("failSettings = true; document.getElementById('notifications').click()");
-  await dismissMessage();
-  await until("document.querySelector('#panel-settings .operation-error').textContent.includes('保存できません') && document.getElementById('settings-status').textContent==='' && !document.getElementById('notifications').disabled");
-  assert.equal(await evaluate("document.getElementById('notifications').checked"), true);
-  assert.equal(await evaluate("document.querySelector('#accounts input').checked"), true);
-  await evaluate("failSettings = false; document.querySelector('#accounts input').click()");
-  await until("!testState.settings.enabled && testState.settings.accountIds.length === 0 && !document.getElementById('notifications').disabled");
+  await evaluate("document.querySelector('#accounts input').click();document.getElementById('settings-save').click()");
+  await until("testState.settings.enabled && testState.settings.accountIds.length===1 && document.getElementById('settings-save').disabled");
+  await evaluate("failSettings=true;document.querySelector('#accounts input').click();document.getElementById('settings-save').click()");
+  await until("document.getElementById('settings-status').dataset.error==='true' && !document.getElementById('settings-save').disabled");
+  assert.equal(await evaluate("!document.querySelector('#accounts input').checked && testState.settings.enabled"),true);
+  await evaluate("document.getElementById('settings-discard').click();failSettings=false;document.querySelector('#accounts input').click();document.getElementById('settings-save').click()");
+  await until("!testState.settings.enabled && testState.settings.accountIds.length===0 && !document.getElementById('notifications').disabled");
   assert.equal(await evaluate("document.getElementById('enabled')"), null);
   assert.match(await evaluate("document.getElementById('health-result').textContent"), /最終接続確認.*応答あり/);
   await evaluate("testState.lastScan = { checkedAt: new Date().toISOString(), engine: 'ClamAV actual (clamd)', status: 'clean' }; document.getElementById('tab-setup').click(); document.getElementById('health').click()");
@@ -1010,14 +1007,14 @@ try {
   await evaluate("document.getElementById('tab-settings').click()");
   assert.equal(await evaluate("document.getElementById('automatic-status')"), null);
   assert.match(await evaluate("document.getElementById('settings-form').textContent"), /Accounts to scan new messages automatically/);
-  await evaluate("document.querySelector('#accounts input').click()");
+  await evaluate("document.querySelector('#accounts input').click();document.getElementById('settings-save').click()");
   await until("testState.settings.enabled && !document.getElementById('notifications').disabled");
   await evaluate("window.scrollTo(0, 0)");
   const englishAccounts = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
   await writeFile(path.join(root, "dist/ui-en-accounts.png"), Buffer.from(englishAccounts.data, "base64"));
-  assert.equal(await evaluate("document.querySelectorAll('#panel-settings fieldset').length"), 4);
+  assert.equal(await evaluate("document.querySelectorAll('#panel-settings fieldset:not([hidden])').length"), 4);
   assert.equal(await evaluate("document.getElementById('panel-settings').contains(document.getElementById('forget-selected'))"), false);
-  await evaluate("testState.records.push({ ...makeRecord('excluded-ui', 'queued'), source: 'automatic', attempts: 0, sha256: null }); document.querySelector('#accounts input').click()");
+  await evaluate("testState.records.push({ ...makeRecord('excluded-ui', 'queued'), source: 'automatic', attempts: 0, sha256: null }); document.querySelector('#accounts input').click();document.getElementById('settings-save').click()");
   await until("testState.records.some(record => record.key === 'excluded-ui' && record.unscannedReason === 'automaticExcluded') && !document.getElementById('notifications').disabled");
   await evaluate("document.getElementById('tab-results').click()");
   await change("filter", "automatic-excluded");
@@ -1095,13 +1092,14 @@ try {
     await until("document.querySelectorAll('#quarantine-settings select').length === 2 && document.querySelector('#quarantine-settings select').options.length > 1");
     await evaluate("document.getElementById('tab-settings').click()");
     assert.equal(await evaluate("document.querySelector('#quarantine-settings input').checked"), false);
-    await evaluate("const input = document.querySelector('#quarantine-settings select'); input.value = 'spam'; input.dispatchEvent(new Event('change', {bubbles:true}))");
+    await evaluate("const input = document.querySelector('#quarantine-settings select'); input.value = 'spam'; input.dispatchEvent(new Event('change', {bubbles:true}));document.getElementById('settings-save').click()");
     await until("testState.settings.quarantine?.test?.folderId === 'spam' && !document.querySelector('#quarantine-settings input').disabled");
-    await evaluate("permissionGranted = false; document.querySelector('#quarantine-settings input').click()");
-  await dismissMessage();
+    await evaluate("permissionGranted = false; document.querySelector('#quarantine-settings input').click();document.getElementById('settings-save').click()");
+    await until("document.getElementById('settings-status').dataset.error==='true' && !document.getElementById('settings-save').disabled");
+    await evaluate("document.getElementById('settings-discard').click()");
     await until("!document.querySelector('#quarantine-settings input').disabled && !document.querySelector('#quarantine-settings input').checked");
     assert.equal(await evaluate("testState.settings.quarantine.test.auto"), false);
-    await evaluate("permissionGranted = true; document.querySelector('#quarantine-settings input').click()");
+    await evaluate("permissionGranted = true; document.querySelector('#quarantine-settings input').click();document.getElementById('settings-save').click()");
     await until("testState.settings.quarantine.test.auto === true && !document.querySelector('#quarantine-settings input').disabled");
     assert.equal(await evaluate("testCalls.some(call => call.type === 'permission' && call.permissions.includes('messagesMove'))"), true);
     if (language === "ja") {
@@ -1128,11 +1126,11 @@ try {
     await evaluate("testState.settings.quarantine = { test: { folderId: 'gone', path: '/Gone', auto: true }, other: { folderId: 'gone-two', path: '/GoneTwo', auto: true } }; permissionGranted = false; document.getElementById('tab-settings').click()");
     await until("[...document.querySelectorAll('#quarantine-settings select')].every(input => input.value.startsWith('gone'))");
     const permissionCount = await evaluate("testCalls.filter(call => call.type === 'permission').length");
-    await evaluate("document.getElementById('notifications').click()");
+    await evaluate("document.getElementById('notifications').click();document.getElementById('settings-save').click()");
     await until("testState.settings.notifications === false && !document.getElementById('notifications').disabled");
-    await evaluate("document.querySelector('#quarantine-settings input').click()");
+    await evaluate("document.querySelector('#quarantine-settings input').click();document.getElementById('settings-save').click()");
     await until("testState.settings.quarantine.test.auto === false && !document.getElementById('notifications').disabled");
-    await evaluate("document.querySelectorAll('#quarantine-settings input')[1].click()");
+    await evaluate("document.querySelectorAll('#quarantine-settings input')[1].click();document.getElementById('settings-save').click()");
     await until("testState.settings.quarantine.other.auto === false && !document.getElementById('notifications').disabled");
     assert.equal(await evaluate("testCalls.filter(call => call.type === 'permission').length"), permissionCount);
   }
@@ -1226,6 +1224,7 @@ try {
     assert.equal(await evaluate("document.getElementById('scan-mailMiB').value"), "25");
     for (const [id, value, key] of [["scan-phishing","display","phishing"],["scan-macros","notify","macros"],["scan-pua","display","pua"],["scan-mailMiB","50","mailMiB"],["scan-expandedMiB","200","expandedMiB"],["scan-seconds","90","seconds"]]) {
       await change(id, value);
+      await evaluate("document.getElementById('settings-save').click()");
       try {
       await until("testState.settings.scanSettings?." + key + " === " + JSON.stringify(Number.isFinite(Number(value)) ? Number(value) : value) + " && !document.getElementById('" + id + "').disabled");
       } catch (error) { throw new Error(id + ": " + await evaluate("JSON.stringify({settings:testState.settings, status:document.getElementById('settings-status').textContent, action:document.getElementById('action-status').textContent, inputs:[...document.querySelectorAll('#settings-form input[type=number]')].map(input=>[input.id,input.value,input.disabled])})")); }
@@ -1240,9 +1239,11 @@ try {
     await change("scan-expandedMiB", "200");
     await until("!document.getElementById('scan-expandedMiB').disabled");
     await evaluate("failSettings = true"); await change("scan-seconds", "100");
-  await dismissMessage();
-    await until("document.getElementById('scan-seconds').value === '90' && !document.getElementById('scan-seconds').disabled");
-    await evaluate("failSettings = false; document.getElementById('scan-mailMiB').focus(); document.getElementById('scan-mailMiB').value = '75'");
+    await evaluate("document.getElementById('settings-save').click()");
+    await until("document.getElementById('settings-status').dataset.error==='true' && !document.getElementById('settings-save').disabled");
+    assert.equal(await evaluate("document.getElementById('scan-seconds').value"), "100");
+    await evaluate("document.getElementById('settings-discard').click()");
+    await evaluate("failSettings = false; document.getElementById('scan-mailMiB').focus(); document.getElementById('scan-mailMiB').value = '75';document.getElementById('scan-mailMiB').dispatchEvent(new Event('input',{bubbles:true}))");
     await evaluate("new Promise(resolve => setTimeout(resolve, 1200))");
     assert.equal(await evaluate("document.getElementById('scan-mailMiB').value"), "75");
     assert.equal(await evaluate("testState.settings.scanSettings.mailMiB"), 50);
@@ -1270,7 +1271,7 @@ try {
     await evaluate("document.getElementById('overflow-clear').click()");
     await until("document.getElementById('overflow-report').hidden");
   }
-  console.log("UI smoke: passed (Japanese/English, six tabs, help/setup/uninstall navigation, folder picker, autosave/rollback, connection history, filters, bulk actions, folder start/cancel/subfolders, progress counters, run filter, stop/interruption/resume/delete, desktop/mobile)");
+  console.log("UI smoke: passed (Japanese/English, six tabs, help/setup/uninstall navigation, folder picker, explicit save/discard, connection history, filters, bulk actions, folder start/cancel/subfolders, progress counters, run filter, stop/interruption/resume/delete, desktop/mobile)");
   }
 } finally {
   for (const waiter of pending.values()) clearTimeout(waiter.timer);

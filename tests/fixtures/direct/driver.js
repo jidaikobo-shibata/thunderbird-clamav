@@ -195,6 +195,7 @@ try {
       check(document.querySelector("#accounts input:checked") && !select.disabled, "Settings are ready");
       select.value = "gui";
       select.dispatchEvent(new Event("change", { bubbles: true }));
+      document.getElementById("settings-save").click();
     }
     state = await settled(value => value.settings.definitionSource === "gui" &&
       (value.lastHealth?.definitionSource === "gui" || value.lastHealth?.status === "error"), 30);
@@ -806,6 +807,7 @@ try {
       for (let i = 0; i < 100 && (select.value !== "gui" || select.disabled); i++) await wait(100);
       select.value = "addon";
       select.dispatchEvent(new Event("change", { bubbles: true }));
+      document.getElementById("settings-save").click();
       state = await settled(value => !value.settings.definitionSource && value.lastHealth?.status === "ready" &&
         !value.lastHealth.definitionSource, 30);
       check(!state.settings.enabled, "Switching back preserves automatic scanning off");

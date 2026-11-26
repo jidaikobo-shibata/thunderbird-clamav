@@ -29,7 +29,8 @@ let folderAnnouncement = null, seenResultsRequest = null;
 const TABS = DIRECT ? ["scan", "results", "settings", "help"] : ["scan", "results", "settings", "setup", "uninstall", "help"];
 let userNavigated = false, seenSetupRequest = null;
 const selectedFolders = new Set();
-let folderChoices = [], foldersLoading = false, settingsSaving = false, scanSettingsDirty = false;
+let folderChoices = [], foldersLoading = false, settingsSaving = false, settingsDirty = false;
+let savedSettingsStamp = "", settingsMessageTimer = null;
 let folderNames = createFolderIndex(folderChoices);
 
 async function request(type, values = {}) {
@@ -125,6 +126,8 @@ function updateControls() {
   $("folder-results").disabled = locked || !job;
   $("folder-only").disabled = locked || !job;
   for (const input of $("settings-form").querySelectorAll("input, button, select")) input.disabled = locked || latest?.helperRemoved;
+  $("settings-save").disabled = locked || latest?.helperRemoved || foldersLoading || !settingsDirty;
+  $("settings-discard").disabled = locked || latest?.helperRemoved || !settingsDirty;
   for (const row of $("quarantine-settings").children) row.querySelector("input").disabled = locked || latest?.helperRemoved || !row.querySelector("select").value;
   for (const record of visible) {
     const entry = rows.get(record.key);
@@ -746,7 +749,7 @@ async function refresh() {
   refreshing = true;
   try {
     latest = await request("state");
-    if (!settingsSaving) syncSettings(latest.settings);
+    if (!settingsSaving && !settingsDirty) syncSettings(latest.settings);
     renderConnection();
     if (!initialized) {
       initialized = true;
@@ -916,12 +919,12 @@ $("forget-selected").addEventListener("click", () => {
   void action(() => forgetHistory(keys));
 });
 
-function syncSettings(settings, forceScan = false) {
+function syncSettings(settings) {
   settings = normalizeAutomaticSettings(settings);
   $("notifications").checked = settings.notifications;
   $("definition-source").value = settings.definitionSource || "addon";
   $("idle-automatic").checked = settings.idleAutomatic === true;
-  if (forceScan || !scanSettingsDirty) syncScanPolicy(settings.scanSettings, forceScan);
+  syncScanPolicy(settings.scanSettings, true);
   syncQuarantineSettings(settings, latest.accounts, folderChoices);
   const current = new Map([...$("accounts").querySelectorAll("input")].map(input => [input.value, input]));
   const ids = new Set(latest.accounts.map(account => account.id));
@@ -938,6 +941,7 @@ function syncSettings(settings, forceScan = false) {
     checkbox.checked = settings.accountIds.includes(account.id);
   }
   if (!latest.accounts.length) setText($("accounts"), t("mail152", "対象アカウントがありません。"));
+  savedSettingsStamp = settingsStamp();
 }
 
 function renderConnection() {
@@ -1002,7 +1006,7 @@ async function loadFolders(interactive = false) {
     const response = await request("folderChoices");
     folderChoices = response.folders;
     folderNames = createFolderIndex(folderChoices);
-    if (!settingsSaving) syncSettings(latest.settings);
+    if (!settingsSaving && !settingsDirty) syncSettings(latest.settings);
     const availableIds = new Set(folderChoices.filter(folder => folder.accountId === $("scan-account").value).map(folder => folder.id));
     for (const id of selectedFolders) if (!availableIds.has(id)) selectedFolders.delete(id);
     const previous = $("scan-account").value;
@@ -1088,47 +1092,87 @@ function showScanErrors(error) {
     input.focus();
   }
 }
-$("settings-form").addEventListener("input", event => {
-  if (event.target.id.startsWith("scan-")) scanSettingsDirty = true;
+function settingsStamp() {
+  return JSON.stringify([...$("settings-form").querySelectorAll("input, select")].map(input =>
+    input.type === "checkbox" ? [input.value, input.checked] : input.value));
+}
+
+function settingsMessage(message, error = false, temporary = false) {
+  clearTimeout(settingsMessageTimer);
+  $("settings-status").dataset.error = String(error);
+  setText($("settings-status"), message);
+  if (temporary) settingsMessageTimer = setTimeout(() => {
+    if (!settingsDirty && !settingsSaving) setText($("settings-status"), "");
+  }, 5000);
+}
+
+function settingsChanged() {
+  for (const row of $("quarantine-settings").children) {
+    if (!row.querySelector("select").value) row.querySelector("input").checked = false;
+  }
+  settingsDirty = settingsStamp() !== savedSettingsStamp;
+  clearScanErrors();
+  settingsMessage(settingsDirty ? t("settingsUnsaved", "未保存の変更があります。") : "");
+  updateControls();
+}
+for (const event of ["input", "change"]) $("settings-form").addEventListener(event, settingsChanged);
+
+$("settings-discard").addEventListener("click", () => {
+  if (blocked() || !settingsDirty) return;
+  settingsDirty = false;
+  clearScanErrors();
+  syncSettings(latest.settings);
+  settingsMessage("");
+  updateControls();
 });
-$("settings-form").addEventListener("submit", event => event.preventDefault());
-$("settings-form").addEventListener("change", event => {
-  if (event.target.id.startsWith("scan-")) scanSettingsDirty = true;
+
+$("settings-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  if (blocked() || !settingsDirty || foldersLoading || latest?.helperRemoved) return;
   const accountIds = [...$("accounts").querySelectorAll("input:checked")].map(input => input.value);
-  const wasEnabled = latest.settings.enabled;
   const quarantine = readQuarantineSettings(latest.settings.quarantine, folderChoices);
   let scanSettings;
   try { scanSettings = readScanPolicy(); }
-  catch (error) { syncSettings(latest.settings); showScanErrors(error); return; }
+  catch (error) {
+    showScanErrors(error);
+    settingsMessage(t("settingsInvalidFields", "入力内容を確認してください。"), true);
+    return;
+  }
   clearScanErrors();
   const settings = { enabled: accountIds.length > 0, notifications: $("notifications").checked,
     idleAutomatic: $("idle-automatic").checked, accountIds, quarantine, scanSettings };
   if (!$("windows-definitions").hidden && $("definition-source").value === "gui") settings.definitionSource = "gui";
   const changedSource = latest.settings.definitionSource !== settings.definitionSource;
-  const permission = quarantineNeedsPermission(latest.settings.quarantine, quarantine) ? requireMovePermission() : Promise.resolve();
   settingsSaving = true;
-  void action(async () => {
-    try {
-      await permission;
-      await request("settings", { settings });
-      latest.settings = settings;
-      scanSettingsDirty = false;
-      syncSettings(settings, true);
-    } catch (error) {
-      scanSettingsDirty = false;
-      syncSettings(latest.settings, true);
-      error.guidance = t("mail169", "保存できませんでした。変更前の設定に戻しました。");
-      throw error;
-    } finally { settingsSaving = false; }
+  busy = true;
+  settingsMessage(t("settingsSaving", "保存しています。"));
+  updateControls();
+  try {
+    if (quarantineNeedsPermission(latest.settings.quarantine, quarantine)) await requireMovePermission();
+    await request("settings", { settings });
+    latest.settings = settings;
+    settingsDirty = false;
+    syncSettings(settings);
+    settingsMessage(t("mail170", "設定を保存しました。"), false, true);
     if (changedSource) {
       latest.lastHealth = null;
       renderConnection();
-      latest.lastHealth = (await request("health")).health;
-      renderConnection();
-      if (latest.lastHealth?.status === "error") throw new Error(latest.lastHealth.detail);
+      try {
+        latest.lastHealth = (await request("health")).health;
+        renderConnection();
+        if (latest.lastHealth?.status === "error") throw new Error(latest.lastHealth.detail);
+      } catch (error) {
+        settingsMessage(t("settingsSavedHealthFailed", "設定は保存しました。接続確認に失敗しました：$1", [error.message]), true);
+      }
     }
-    return !accountIds.length && wasEnabled ? t("mail167", "対象アカウントがなくなったため、自動検査を停止して保存しました。") : t("mail170", "設定を保存しました。");
-  });
+  } catch (error) {
+    settingsMessage(t("settingsSaveFailed", "保存できませんでした：$1", [error.message]), true);
+  } finally {
+    settingsSaving = false;
+    busy = false;
+    updateControls();
+    await refresh().catch(reportRefreshError);
+  }
 });
 $("health").addEventListener("click", () => {
   void action(async () => {

@@ -1,6 +1,6 @@
 # ClamAV Mail Check
 
-This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a53**, a prerelease of the integrated Ubuntu/macOS/Windows scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a53 has not been published.
+This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a54**, a prerelease of the integrated Ubuntu/macOS/Windows scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a54 has not been published.
 
 ## Requirements
 
@@ -82,7 +82,7 @@ No additional Python or npm packages are needed:
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-For Thunderbird 160 on Windows, build with `python scripts/build_direct_mail_check.py --thunderbird-major 160`. Install `dist/clam-mail-check-direct-0.20.0a53-tb160.xpi` for 160.x or `dist/clam-mail-check-direct-0.20.0a53.xpi` for 153.x through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
+For Thunderbird 160 on Windows, build with `python scripts/build_direct_mail_check.py --thunderbird-major 160`. Install `dist/clam-mail-check-direct-0.20.0a54-tb160.xpi` for 160.x or `dist/clam-mail-check-direct-0.20.0a54.xpi` for 153.x through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
 
 Open Settings and choose Check connection again. Start with a small manual folder scan. Automatic scanning is disabled for a new installation; select accounts only after checking results.
 
@@ -100,11 +100,11 @@ Remove the extension through Thunderbird's Add-ons Manager. Normal extension set
 
 Encrypted content, scan limits, missing software and communication failures are reported as incomplete or failed, never as a clean scan. A previous malware detection is retained when a rescan fails. A clean result does not guarantee safety.
 
-Review changes and manual quarantine are disabled while scanning or deletion is in progress, with an explanation in the results view. Automatic row reordering preserves keyboard focus; if the target disappears, focus moves to the results summary. Invalid scan settings remain in the form with field-specific correction messages. Unsaved values are not applied to scanning.
+Review changes and manual quarantine are disabled while scanning or deletion is in progress, with an explanation in the results view. Automatic row reordering preserves keyboard focus; if the target disappears, focus moves to the results summary. Invalid scan settings remain in the form with field-specific correction messages. Unsaved values are not applied to scanning. Apply settings with Save at the bottom of Settings, or use Discard changes. Draft values are retained when switching tabs.
 
 For bulk permanent deletion, the dialog opens immediately and shows how many messages have been verified. You can cancel during verification; no messages are deleted at this stage. Once verification finishes, the same dialog displays the targets for final confirmation.
 
-When an operation cannot be completed, a dialog explains the reason and the next step. After closing it, you can review the notice in the originating tab until the page is closed. Partial batch failures explicitly state that successful operations have already taken effect. Routine progress and completion messages use one shared notice, normally at the bottom, moving to the top if it would cover keyboard focus. The settings form and tab heading do not repeat completion messages. Field validation remains beside the field; ongoing scan progress, connection state, and saved file locations stay in their functional sections. Errors are not duplicated in floating notices. Refresh failures show a reload notice. Automatic scan results do not open unexpected dialogs.
+When an operation cannot be completed, a dialog explains the reason and the next step. After closing it, you can review the notice in the originating tab until the page is closed. Partial batch failures explicitly state that successful operations have already taken effect. Routine progress and completion messages use one shared notice, normally at the bottom, moving to the top if it would cover keyboard focus. Settings save feedback appears in the save bar at the bottom of Settings. Field validation remains beside the field; ongoing scan progress, connection state, and saved file locations stay in their functional sections. Errors are not duplicated in floating notices. Refresh failures show a reload notice. Automatic scan results do not open unexpected dialogs.
 
 Toolbar rendering is independent of mail admission, scanning and storage. A hidden main window does not make those operations wait for a paint. Each toolbar property has at most one pending update, and subsequent changes are coalesced to the latest value.
 

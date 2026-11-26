@@ -136,3 +136,11 @@ body { padding-bottom: 24px; }
 body:has(dialog[open]) .operation-toast { visibility: hidden; }
 /* The originating tab exposes the error after the message dialog closes. */
 body:has(#message-dialog[open]) .operation-error { visibility: hidden; }
+
+#settings-save-bar { position: sticky; bottom: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 0; border-top: 1px solid GrayText; background: Canvas; }
+#settings-status { flex: 1 1 220px; margin: 0; overflow-wrap: anywhere; }
+#settings-save-bar button { min-height: 34px; }
+#settings-save-bar #settings-save:not(:disabled) { background: Highlight; color: HighlightText; border-color: Highlight; font-weight: bold; }
+#settings-status[data-error="true"] { font-weight: bold; }
+
+html:has(#panel-settings:not([hidden])) { scroll-padding-bottom: 100px; }

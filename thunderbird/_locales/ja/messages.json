@@ -3468,5 +3468,36 @@
   },
   "folderClearSelectionShort": {
     "message": "選択解除"
+  },
+  "settingsSave": {
+    "message": "保存"
+  },
+  "settingsDiscard": {
+    "message": "取り消す"
+  },
+  "settingsUnsaved": {
+    "message": "未保存の変更があります。"
+  },
+  "settingsSaving": {
+    "message": "保存しています。"
+  },
+  "settingsInvalidFields": {
+    "message": "入力内容を確認してください。"
+  },
+  "settingsSaveFailed": {
+    "message": "保存できませんでした：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "settingsSavedHealthFailed": {
+    "message": "設定は保存しました。接続確認に失敗しました：$ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
   }
 }

@@ -124,7 +124,7 @@
 
   <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" tabindex="0" hidden>
     <h2><span data-i18n="mail255">設定</span></h2>
-    <form id="settings-form">
+    <form id="settings-form" novalidate>
       <fieldset><legend data-i18n="autoAccountsHeading">新着メールを自動検査するアカウント</legend><div id="accounts"></div>
         <label><input id="idle-automatic" type="checkbox"> <span data-i18n="idleAutomaticLabel">PCを30秒間操作していないときに自動検査を開始する</span></label>
         <p class="hint" data-i18n="idleAutomaticHint">操作中は検査待ちとして保存します。開始済みの検査は完了させ、次のメールから待機します。手動検査は待機しません。</p>
@@ -154,8 +154,12 @@
           <p class="hint" data-i18n="scanLimitsHint">暗号化・上限超過の警告と添付形式の検査は有効のままです。内部時間制限の適用範囲はClamAVによります。補助処理全体にも別の待ち時間制限があります。設定変更後の初回は定義を読み直す場合があります。</p>
         </details>
       </fieldset>
-      <p id="settings-status" role="status" aria-live="polite"></p>
     </form>
+    <div id="settings-save-bar">
+      <p id="settings-status" role="status" aria-live="polite"></p>
+      <button type="button" id="settings-discard" data-i18n="settingsDiscard" disabled>取り消す</button>
+      <button type="submit" form="settings-form" id="settings-save" class="primary-action" data-i18n="settingsSave" disabled>保存</button>
+    </div>
 
   </section>
   <section id="panel-setup" role="tabpanel" aria-labelledby="tab-setup" tabindex="0" hidden>

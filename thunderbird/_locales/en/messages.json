@@ -3468,5 +3468,36 @@
   },
   "folderClearSelectionShort": {
     "message": "Clear selection"
+  },
+  "settingsSave": {
+    "message": "Save"
+  },
+  "settingsDiscard": {
+    "message": "Discard changes"
+  },
+  "settingsUnsaved": {
+    "message": "You have unsaved changes."
+  },
+  "settingsSaving": {
+    "message": "Saving settings…"
+  },
+  "settingsInvalidFields": {
+    "message": "Check the entered values."
+  },
+  "settingsSaveFailed": {
+    "message": "Could not save settings: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "settingsSavedHealthFailed": {
+    "message": "Settings saved. Connection check failed: $ARG1$",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
   }
 }
