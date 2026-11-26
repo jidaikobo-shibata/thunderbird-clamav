@@ -292,6 +292,9 @@ try {
       assert.equal(await evaluate("document.getElementById('folder-picker').hidden && document.getElementById('scan-folder').hidden"),true);
       await change("scan-account","test");
       assert.equal(await evaluate("!document.getElementById('folder-picker').hidden && !document.getElementById('scan-folder').hidden && document.getElementById('scan-folder').disabled"),true);
+      assert.equal(await evaluate("document.getElementById('scan-account').getBoundingClientRect().top < document.querySelector('label[for=scan-account]').getBoundingClientRect().bottom"),true);
+      assert.ok(await evaluate("document.querySelector('#folder-options label').getBoundingClientRect().height <= 34"));
+      assert.equal(await evaluate("document.getElementById('folder-selection-count').parentElement === document.getElementById('folder-select-visible').parentElement"),true);
       await change("scan-account","");
       assert.equal(await evaluate("document.getElementById('folder-picker').hidden"),true);
       await evaluate("testState.folderJob={id:'compact',status:'completed',folder:{accountId:'test',path:'/Inbox'},startedAt:'2026-11-25T00:00:00Z',finishedAt:'2026-11-25T00:05:00Z',total:10,completed:10,scanning:0,counts:{clean:10,detected:0,incomplete:0,error:0},detail:'Done'}");

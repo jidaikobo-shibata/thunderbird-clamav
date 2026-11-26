@@ -3454,5 +3454,19 @@
   },
   "scanClearRecord": {
     "message": "Clear record"
+  },
+  "folderSelectionCompact": {
+    "message": "Selected $ARG1$ / $ARG2$ folders shown",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      },
+      "arg2": {
+        "content": "$2"
+      }
+    }
+  },
+  "folderClearSelectionShort": {
+    "message": "Clear selection"
   }
 }

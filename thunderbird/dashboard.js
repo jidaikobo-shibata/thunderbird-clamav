@@ -984,7 +984,8 @@ function renderFolderChoices() {
 }
 function renderTarget() {
   const shown = matchingFolders(), shownIds = new Set(shown.map(folder => folder.id));
-  setText($("folder-selection-count"), t("folderSelectionCount", "選択$1フォルダー ／ 表示$2フォルダー（表示外の選択$3）", [selectedFolders.size, shown.length, [...selectedFolders].filter(id => !shownIds.has(id)).length]));
+  const hiddenCount = [...selectedFolders].filter(id => !shownIds.has(id)).length;
+  setText($("folder-selection-count"), hiddenCount ? t("folderSelectionCount", "選択$1フォルダー ／ 表示$2フォルダー（表示外の選択$3）", [selectedFolders.size, shown.length, hiddenCount]) : t("folderSelectionCompact", "選択$1 ／ 表示$2フォルダー", [selectedFolders.size, shown.length]));
   const account = latest?.accounts.find(account => account.id === $("scan-account").value);
   $("scan-target-label").hidden = !selectedFolders.size;
   setText($("scan-target-label"), selectedFolders.size ? t("folderConfirmCount", "$1：$2フォルダーを検査します。", [account?.name || "", selectedFolders.size]) : "");
