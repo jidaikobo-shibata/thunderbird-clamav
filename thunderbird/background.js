@@ -574,11 +574,13 @@ function persistState(history = records, overflow = overflowPending, recovery = 
   return writes;
 }
 
-function changeSettings(input) {
+function changeSettings(input, expectedSettings) {
   const requested = structuredClone(input);
   const work = async () => {
     const ids = (await api.accounts.list()).map(account => account.id);
     const previous = settings;
+    if (expectedSettings !== undefined && expectedSettings !== JSON.stringify(previous))
+      throw new Error(t("settingsConflict", "別の画面で設定が変更されました。取り消して最新の設定を読み直してください。"));
     const candidate = validateSettings(requested, ids);
     const quarantine = await validateQuarantine(api, requested.quarantine, ids, previous.quarantine);
     for (const [accountId, config] of Object.entries(quarantine || {})) {
@@ -595,6 +597,7 @@ function changeSettings(input) {
       if (batchProgress?.active && ["quarantine", "review"].includes(batchProgress.operation)) throw new Error(t("qBusy", "このメールは処理中です。"));
       // Publish only after persistence succeeds; failed saves have no runtime
       // effects. On startup, queued exclusions are derived from these settings.
+      if (settings !== previous) throw new Error(t("settingsConflict", "別の画面で設定が変更されました。取り消して最新の設定を読み直してください。"));
       const changedSource = previous.definitionSource !== next.definitionSource;
       await api.storage.local.set({ settings: next, ...(changedSource ? { lastHealth: null } : {}) });
       if (changedSource) {
@@ -610,7 +613,7 @@ function changeSettings(input) {
     void automaticIdle.refresh(settings.idleAutomatic).catch(report);
     void updateBadge().catch(report);
     void drain().catch(report);
-    return { ok: true };
+    return { ok: true, settings: next };
   };
   settingsChanges = settingsChanges.catch(() => {}).then(work);
   return settingsChanges;
@@ -2358,12 +2361,17 @@ api.runtime.onMessage.addListener(async (request, sender) => {
     switch (request.type) {
       case "state": {
         const waiting = new Set(incomingQueue.entries.keys());
-        for (const record of overflowPending ? [...records, overflowPending] : records) {
+        const slots = overflowPending ? [...records, overflowPending] : records;
+        for (const record of slots) {
           if (record.status === "queued" || legacyCandidatePending(record)) waiting.add(record.key);
           else waiting.delete(record.key);
         }
         return { ok: true, directMigrationBackup, settings, records, waitingCount: waiting.size, incomingCount: incomingQueue.entries.size, oldestIncoming: incomingQueue.entries.values().next().value?.createdAt || null, overflowPending, overflowReport, issue, receiptRecovery, lastHealth, lastScan, resultsRequest, resultsFilter, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
-          idleWaiting: !automaticIdle.canStart(settings) && (incomingQueue.entries.size > 0 || records.some(legacyCandidatePending) || [...records, ...(overflowPending ? [overflowPending] : [])].some(record => record.source === "automatic" && record.status === "queued" && settings.accountIds.includes(record.locator.accountId))),
+          idleState: automaticIdle.state,
+          idleWaiting: !automaticIdle.canStart(settings) && settings.enabled &&
+            ([...incomingQueue.entries.values()].some(entry => waiting.has(entry.key) && settings.accountIds.includes(entry.locator.accountId) &&
+              (entry.receiptGeneration || null) === (settings.receiptGenerations?.[entry.locator.accountId] || null)) ||
+              slots.some(record => legacyCandidatePending(record) || record.source === "automatic" && record.status === "queued" && settings.accountIds.includes(record.locator.accountId))),
           resultActionsBusy: Boolean(running || folderScan.active || deleting.size),
           folderJob: folderScan.snapshot(), accounts: (await api.accounts.list())
           .filter(account => ["imap", "pop3", "none"].includes(account.type))
@@ -2452,7 +2460,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         await save();
         return { ok: true };
       case "settings":
-        return await changeSettings(request.settings);
+        return await changeSettings(request.settings, request.expectedSettings);
       case "health": {
         if (maintenanceActive()) throw new Error(t("mail005", "補助プログラムの管理が完了してから操作してください。"));
         await helperInfo();

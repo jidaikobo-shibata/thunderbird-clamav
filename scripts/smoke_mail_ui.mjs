@@ -1,7 +1,7 @@
 // Dependency-free UI smoke test using a separate headless Chrome profile/CDP.
 // It serves only extension assets and uses synthetic mail, never a real profile.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,6 +12,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const catalogs = Object.fromEntries(await Promise.all(["ja", "en"].map(async language =>
   [language, JSON.parse(await readFile(path.join(root, "thunderbird/_locales", language, "messages.json"), "utf8"))])));
 const profile = await mkdtemp(path.join(tmpdir(), "clam-mail-ui-"));
+const output = path.join(root, ".codex-private", "test-output", "ui");
+await mkdir(output, { recursive: true });
+const installer = process.argv.includes("--direct") ? null : execFileSync("python3", ["-c",
+  "from pathlib import Path; from scripts.build_mail_check import installer_bytes; import sys; sys.stdout.buffer.write(installer_bytes(Path.cwd()))"], {cwd:root});
 const server = createServer(async (request, response) => {
   const name = new URL(request.url, "http://localhost").pathname.slice(1);
   if (!["find-attention.mjs", "automatic-idle.mjs", "options.html", "options.mjs", "feedback.mjs", "state-storage.mjs", "scan-history.mjs", "direct-transport.mjs", "direct-view.mjs", "dashboard.html", "dashboard.css", "dashboard.js", "review.mjs", "scan-policy.mjs", "quarantine.mjs", "quarantine-ui.mjs", "core.mjs", "results.mjs", "folder-scan.mjs", "folder-labels.mjs", "installation.mjs", "i18n.mjs", "installer.pyz", "icon.svg"].includes(name)) {
@@ -19,7 +23,10 @@ const server = createServer(async (request, response) => {
   }
   const types = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript", ".svg": "image/svg+xml", ".pyz": "application/octet-stream" };
   response.setHeader("Content-Type", types[path.extname(name)]);
-  response.end(await readFile(name === "installer.pyz" ? path.join(root, "dist", "clam-mail-check-installer-0.19.2.pyz") : path.join(root, "thunderbird", name)));
+  if (name === "installer.pyz") {
+    if (!installer) { response.writeHead(404).end(); return; }
+    response.end(installer);
+  } else response.end(await readFile(path.join(root, "thunderbird", name)));
 });
 await new Promise((resolve, reject) => {
   server.once("error", reject);
@@ -144,13 +151,15 @@ try {
 
       if (request.type === "settings") {
         if (failSettings) return { ok: false, error: "synthetic storage failure" };
+        if (request.expectedSettings !== undefined && request.expectedSettings !== JSON.stringify(testState.settings))
+          return { ok:false, error:getMessage("settingsConflict") };
         testState.settings = structuredClone(request.settings);
         for (const record of testState.records) {
           if (record.status === "queued" && record.source === "automatic" && (!request.settings.enabled || !request.settings.accountIds.includes(record.locator.accountId))) {
             record.status = "incomplete"; record.unscannedReason = "automaticExcluded"; record.detail = getMessage("automaticExcludedDetail");
           }
         }
-        return { ok: true };
+        return { ok: true, settings: structuredClone(testState.settings) };
       }
       const fixtureFolders = [
         { id: "inbox", accountId: "test", path: "/Inbox", name: "受信トレイ" },
@@ -323,6 +332,7 @@ try {
       assert.equal(await evaluate("document.getElementById('settings-save').disabled"),true);
       await evaluate("document.getElementById('idle-automatic').click()");
       assert.equal(await evaluate("!testState.settings.idleAutomatic && !document.getElementById('settings-save').disabled"),true);
+      assert.equal(await evaluate("!window.dispatchEvent(new Event('beforeunload',{cancelable:true}))"),true);
       await evaluate("document.getElementById('tab-scan').click();new Promise(resolve=>setTimeout(resolve,2200))");
       await evaluate("document.getElementById('tab-settings').click()");
       assert.equal(await evaluate("document.getElementById('idle-automatic').checked && !testState.settings.idleAutomatic"),true);
@@ -330,6 +340,16 @@ try {
       await until("testState.settings.idleAutomatic===true && document.getElementById('settings-save').disabled");
       assert.equal(await evaluate("document.getElementById('settings-status').textContent"), language === "ja" ? "設定を保存しました。" : catalogs.en.mail170.message);
       assert.equal(await evaluate("document.getElementById('operation-toast').hidden"),true);
+      assert.equal(await evaluate("window.dispatchEvent(new Event('beforeunload',{cancelable:true}))"),true);
+      await evaluate("document.getElementById('idle-automatic').click();testState.settings.notifications=false");
+      await evaluate("new Promise(resolve=>setTimeout(resolve,2200))");
+      await evaluate("document.getElementById('settings-save').click()");
+      await until("document.getElementById('settings-status').dataset.error==='true' && !document.getElementById('settings-save').disabled");
+      assert.equal(await evaluate("testState.settings.idleAutomatic && !testState.settings.notifications && !document.getElementById('idle-automatic').checked"),true);
+      await evaluate("document.getElementById('settings-discard').click()");
+      assert.equal(await evaluate("document.getElementById('idle-automatic').checked && !document.getElementById('notifications').checked"),true);
+      await evaluate("document.getElementById('notifications').click();document.getElementById('settings-save').click()");
+      await until("testState.settings.notifications && document.getElementById('settings-save').disabled");
       await evaluate("failSettings=true;document.getElementById('idle-automatic').click();document.getElementById('settings-save').click()");
       await until("document.getElementById('settings-status').dataset.error==='true' && !document.getElementById('settings-save').disabled");
       assert.equal(await evaluate("!document.getElementById('idle-automatic').checked && testState.settings.idleAutomatic"),true);
@@ -340,7 +360,10 @@ try {
       await evaluate("testState.idleWaiting=true;testState.incomingCount=7;testState.waitingCount=8;testState.oldestIncoming='2026-11-25T01:00:00Z'");
       const idleLabel = language === "ja" ? "検査待ち8件（無操作時間待機中）" : "Queued: 8 (waiting for idle time)";
       await until("document.getElementById('summary').textContent.includes(" + JSON.stringify(idleLabel) + ")");
-      await evaluate("testState.idleWaiting=false");
+      await evaluate("testState.idleState='unknown'");
+      const unknownLabel = language === "ja" ? "無操作状態の確認待ち" : "checking idle state";
+      await until("document.getElementById('summary').textContent.includes(" + JSON.stringify(unknownLabel) + ")");
+      await evaluate("testState.idleWaiting=false;testState.idleState='idle'");
       await until("!document.getElementById('summary').textContent.includes(" + JSON.stringify(idleLabel) + ") && document.getElementById('summary').textContent.includes('8')");
       await evaluate("testState.idleWaiting=false;testState.incomingCount=0;delete testState.waitingCount");
       await evaluate("testState.receiptRecovery={token:'synthetic',folders:[{accountId:'test',path:'/Recovery'}]}");
@@ -397,7 +420,7 @@ try {
       await evaluate("testState.batch.completed=2");
       await until("document.getElementById('delete-preparation-bar').value===2");
       const preparationImage=await call('Page.captureScreenshot',{format:'png'});
-      await writeFile(path.join(root,'dist/ui-delete-preparation-'+language+'.png'),Buffer.from(preparationImage.data,'base64'));
+      await writeFile(path.join(output, 'ui-delete-preparation-'+language+'.png'),Buffer.from(preparationImage.data,'base64'));
       assert.equal(await evaluate("testCalls.some(call=>call.type==='deleteBatch')"),false);
       await evaluate("document.getElementById('delete-cancel').click()");
       await until("!document.getElementById('delete-selected').disabled");
@@ -436,9 +459,9 @@ try {
       assert.equal(await evaluate("getComputedStyle(document.querySelector('#panel-results .operation-error')).visibility"), "hidden");
       assert.equal(await evaluate("document.getElementById('message-detail').textContent.includes('synthetic content mismatch') && !document.querySelector('#message-dialog img') && !window.bad"),true);
       assert.equal(await evaluate("document.getElementById('message-guidance').textContent.includes("+JSON.stringify(language==='ja'?'削除していません':'No messages have been deleted')+")"),true);
-      await mkdir(path.join(root,'dist'),{recursive:true});
+
       const errorImage=await call('Page.captureScreenshot',{format:'png'});
-      await writeFile(path.join(root,'dist/ui-operation-error-'+language+'.png'),Buffer.from(errorImage.data,'base64'));
+      await writeFile(path.join(output, 'ui-operation-error-'+language+'.png'),Buffer.from(errorImage.data,'base64'));
       await call('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
       await call('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
       await until("!document.getElementById('message-dialog').open && !document.getElementById('delete-selected').disabled");
@@ -552,7 +575,7 @@ try {
       for (const [width, height, label] of [[1280,1000,'desktop'],[390,844,'mobile']]) {
         await call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
         const picture = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
-        await writeFile(path.join(root, 'dist/ui-direct-' + language + '-' + label + '.png'), Buffer.from(picture.data, "base64"));
+        await writeFile(path.join(output, 'ui-direct-' + language + '-' + label + '.png'), Buffer.from(picture.data, "base64"));
       }
       await evaluate(`
         const record = testState.records.find(record => record.status === 'detected');
@@ -710,9 +733,9 @@ try {
   assert.match(await evaluate("document.getElementById('health-result').textContent"), /最終接続確認.*応答あり/);
   await evaluate("testState.lastScan = { checkedAt: new Date().toISOString(), engine: 'ClamAV actual (clamd)', status: 'clean' }; document.getElementById('tab-setup').click(); document.getElementById('health').click()");
   await until("document.getElementById('last-scan-result').textContent.includes('clamd') && !document.getElementById('health').disabled");
-  await mkdir(path.join(root, "dist"), { recursive: true });
+
   const settingsImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
-  await writeFile(path.join(root, "dist/ui-settings.png"), Buffer.from(settingsImage.data, "base64"));
+  await writeFile(path.join(output, "ui-settings.png"), Buffer.from(settingsImage.data, "base64"));
   assert.equal(await evaluate("document.getElementById('allow-delete')"), null);
   await evaluate("document.getElementById('tab-results').click(); document.getElementById('select-page').click(); permissionGranted = false; document.getElementById('bulk-action').value='delete-selected';document.getElementById('bulk-action').dispatchEvent(new Event('change'));document.getElementById('bulk-execute').click()");
   await dismissMessage();
@@ -730,9 +753,9 @@ try {
   await evaluate("document.getElementById('delete-cancel').click()");
   await until("testCalls.some(call => call.type === 'cancelDeleteBatch') && !document.getElementById('delete-selected').disabled");
   assert.equal(await evaluate("testCalls.some(call => call.type === 'deleteBatch')"), false);
-  await mkdir(path.join(root, "dist"), { recursive: true });
+
   const desktop = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
-  await writeFile(path.join(root, "dist/ui-desktop.png"), Buffer.from(desktop.data, "base64"));
+  await writeFile(path.join(output, "ui-desktop.png"), Buffer.from(desktop.data, "base64"));
   await evaluate("document.getElementById('bulk-action').value='delete-selected';document.getElementById('bulk-action').dispatchEvent(new Event('change'));document.getElementById('bulk-execute').click()");
   await until("document.getElementById('delete-dialog').open && !document.getElementById('delete-ack').disabled");
   await evaluate("document.getElementById('delete-ack').click(); document.getElementById('delete-confirm').click()");
@@ -773,7 +796,7 @@ try {
   await call("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   assert.equal(await evaluate("document.documentElement.scrollWidth <= window.innerWidth"), true);
   const mobile = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
-  await writeFile(path.join(root, "dist/ui-mobile.png"), Buffer.from(mobile.data, "base64"));
+  await writeFile(path.join(output, "ui-mobile.png"), Buffer.from(mobile.data, "base64"));
   await evaluate("document.getElementById('tab-results').click(); document.getElementById('reset-filters').click(); document.getElementById('select-page').click(); if (!document.getElementById('select-filtered').hidden) document.getElementById('select-filtered').click(); document.getElementById('bulk-action').value='forget-selected';document.getElementById('bulk-action').dispatchEvent(new Event('change'));document.getElementById('bulk-execute').click()");
   await until("document.getElementById('delete-dialog').open && !document.getElementById('delete-ack').disabled");
   assert.match(await evaluate("document.getElementById('delete-warning').textContent"), /メール本体は残ります/);
@@ -828,13 +851,13 @@ try {
   await evaluate("document.getElementById('folder-select-visible').click(); document.getElementById('folder-clear-selection').click()");
   assert.equal(await evaluate("document.querySelectorAll('#folder-options input:checked').length"), 0);
   const scanImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
-  await writeFile(path.join(root, "dist/ui-scan.png"), Buffer.from(scanImage.data, "base64"));
+  await writeFile(path.join(output, "ui-scan.png"), Buffer.from(scanImage.data, "base64"));
   await evaluate("document.getElementById('folder-results').click()");
   assert.equal(await evaluate("document.querySelectorAll('#results tr').length"), 1);
   assert.match(await evaluate("document.getElementById('results').textContent"), /フォルダー検査結果/);
   await call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false });
   const folderImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
-  await writeFile(path.join(root, "dist/ui-folder-progress.png"), Buffer.from(folderImage.data, "base64"));
+  await writeFile(path.join(output, "ui-folder-progress.png"), Buffer.from(folderImage.data, "base64"));
   await evaluate("document.getElementById('tab-scan').click(); document.getElementById('folder-stop').click()");
   await until("document.getElementById('folder-status').textContent.includes('中止') && document.getElementById('folder-stop').disabled");
   assert.match(await evaluate("document.getElementById('folder-status').textContent"), /25 \/ 100/);
@@ -886,10 +909,10 @@ try {
     if (downloaded) break;
     await new Promise(resolve => setTimeout(resolve, 25));
   }
-  assert.deepEqual(downloaded, await readFile(path.join(root, "dist/clam-mail-check-installer-0.19.2.pyz")));
+  assert.deepEqual(downloaded, installer);
   await evaluate("document.getElementById('installation-title').scrollIntoView()");
   const installationImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
-  await writeFile(path.join(root, "dist/ui-installation.png"), Buffer.from(installationImage.data, "base64"));
+  await writeFile(path.join(output, "ui-installation.png"), Buffer.from(installationImage.data, "base64"));
 
   assert.equal(await evaluate("document.getElementById('helper-task').classList.contains('needs-action')"), false);
   assert.equal(await evaluate("document.getElementById('helper-update').hidden"), true);
@@ -899,7 +922,7 @@ try {
   assert.equal(await evaluate("document.getElementById('helper-update').textContent"), "補助プログラムを修復");
   await evaluate("document.getElementById('installation-title').scrollIntoView({block:'start'})");
   const taskImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
-  await writeFile(path.join(root, "dist/ui-setup-action.png"), Buffer.from(taskImage.data, "base64"));
+  await writeFile(path.join(output, "ui-setup-action.png"), Buffer.from(taskImage.data, "base64"));
   assert.equal(await evaluate("document.getElementById('helper-task').classList.contains('needs-action')"), true);
   assert.equal(await evaluate("document.getElementById('helper-install-steps').open"), false);
   assert.equal(await evaluate("document.getElementById('helper-task').compareDocumentPosition(document.getElementById('connection-title')) & Node.DOCUMENT_POSITION_FOLLOWING"), 4);
@@ -930,7 +953,7 @@ try {
   assert.equal(await evaluate("document.getElementById('helper-confirm').textContent"), "補助プログラムを更新");
   assert.equal(await evaluate("document.activeElement.id"), "helper-cancel");
   const helperDialogImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
-  await writeFile(path.join(root, "dist/ui-helper-update-dialog.png"), Buffer.from(helperDialogImage.data, "base64"));
+  await writeFile(path.join(output, "ui-helper-update-dialog.png"), Buffer.from(helperDialogImage.data, "base64"));
   await evaluate("document.getElementById('helper-confirm').click()");
   await until("document.getElementById('action-status').textContent.includes('更新しました') && document.getElementById('helper-update').hidden");
   assert.equal(await evaluate("testCalls.some(call => call.type === 'uninstallSelf')"), false);
@@ -1001,14 +1024,14 @@ try {
   await evaluate("document.getElementById('tab-scan').click(); window.scrollTo(0, 0)");
   await new Promise(resolve => setTimeout(resolve, 100));
   const englishDesktop = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
-  await writeFile(path.join(root, "dist/ui-en-desktop.png"), Buffer.from(englishDesktop.data, "base64"));
+  await writeFile(path.join(output, "ui-en-desktop.png"), Buffer.from(englishDesktop.data, "base64"));
   assert.equal(await evaluate("document.documentElement.scrollWidth <= window.innerWidth"), true);
   await call("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await evaluate("document.getElementById('tab-setup').click(); window.scrollTo(0, 0)");
   await new Promise(resolve => setTimeout(resolve, 100));
   assert.equal(await evaluate("document.documentElement.scrollWidth <= window.innerWidth"), true);
   const englishMobile = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
-  await writeFile(path.join(root, "dist/ui-en-mobile.png"), Buffer.from(englishMobile.data, "base64"));
+  await writeFile(path.join(output, "ui-en-mobile.png"), Buffer.from(englishMobile.data, "base64"));
   await evaluate("document.getElementById('tab-settings').click()");
   assert.equal(await evaluate("document.getElementById('automatic-status')"), null);
   assert.match(await evaluate("document.getElementById('settings-form').textContent"), /Accounts to scan new messages automatically/);
@@ -1016,7 +1039,7 @@ try {
   await until("testState.settings.enabled && !document.getElementById('notifications').disabled");
   await evaluate("window.scrollTo(0, 0)");
   const englishAccounts = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
-  await writeFile(path.join(root, "dist/ui-en-accounts.png"), Buffer.from(englishAccounts.data, "base64"));
+  await writeFile(path.join(output, "ui-en-accounts.png"), Buffer.from(englishAccounts.data, "base64"));
   assert.equal(await evaluate("document.querySelectorAll('#panel-settings fieldset:not([hidden])').length"), 4);
   assert.equal(await evaluate("document.getElementById('panel-settings').contains(document.getElementById('forget-selected'))"), false);
   await evaluate("testState.records.push({ ...makeRecord('excluded-ui', 'queued'), source: 'automatic', attempts: 0, sha256: null }); document.querySelector('#accounts input').click();document.getElementById('settings-save').click()");
@@ -1044,7 +1067,7 @@ try {
   assert.equal(await evaluate("document.getElementById('retry-selected').disabled"),false);
   await evaluate("window.scrollTo(0, 0)");
   const selectionImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
-  await writeFile(path.join(root, "dist/ui-selection-desktop.png"), Buffer.from(selectionImage.data, "base64"));
+  await writeFile(path.join(output, "ui-selection-desktop.png"), Buffer.from(selectionImage.data, "base64"));
   await evaluate("document.getElementById('bulk-action').value='forget-selected';document.getElementById('bulk-action').dispatchEvent(new Event('change'));document.getElementById('bulk-execute').click()");
   await until("document.getElementById('delete-dialog').open && !document.getElementById('delete-ack').disabled");
   assert.equal(await evaluate("document.querySelectorAll('#delete-targets li').length"), 1000);
@@ -1077,7 +1100,7 @@ try {
     if (language === "ja") {
       await evaluate("window.scrollTo(0, 0)");
       const image = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
-      await writeFile(path.join(root, "dist/ui-clamav-missing.png"), Buffer.from(image.data, "base64"));
+      await writeFile(path.join(output, "ui-clamav-missing.png"), Buffer.from(image.data, "base64"));
     }
     await evaluate("sessionStorage.setItem('fixture-health', 'clamav_unusable'); document.getElementById('health').click()");
     await dismissMessage();
@@ -1110,7 +1133,7 @@ try {
     if (language === "ja") {
       await evaluate("window.scrollTo(0,0)");
       const image = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
-      await writeFile(path.join(root, "dist/ui-quarantine-settings.png"), Buffer.from(image.data, "base64"));
+      await writeFile(path.join(output, "ui-quarantine-settings.png"), Buffer.from(image.data, "base64"));
     }
     await evaluate("document.getElementById('tab-results').click(); document.querySelector('#results input').click(); document.getElementById('bulk-action').value='quarantine-selected';document.getElementById('bulk-action').dispatchEvent(new Event('change'));document.getElementById('bulk-execute').click()");
     await until("document.getElementById('quarantine-dialog').open");
@@ -1171,7 +1194,7 @@ try {
     if (language === "ja") {
       await evaluate("window.scrollTo(0,0)");
       const image = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
-      await writeFile(path.join(root, "dist/ui-reviewed-results.png"), Buffer.from(image.data, "base64"));
+      await writeFile(path.join(output, "ui-reviewed-results.png"), Buffer.from(image.data, "base64"));
     }
     await evaluate("document.getElementById('select-page').click(); document.getElementById('bulk-action').value='unreview-selected';document.getElementById('bulk-action').dispatchEvent(new Event('change'));document.getElementById('bulk-execute').click()");
     await until("document.getElementById('review-dialog').open");
@@ -1187,7 +1210,7 @@ try {
     if (language === "ja") {
       await evaluate("window.scrollTo(0,0)");
       const image = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
-      await writeFile(path.join(root, "dist/ui-individual-review.png"), Buffer.from(image.data, "base64"));
+      await writeFile(path.join(output, "ui-individual-review.png"), Buffer.from(image.data, "base64"));
     }
     await evaluate("document.querySelector('#results .review-action').click()");
     await until("document.getElementById('review-dialog').open");
@@ -1217,7 +1240,7 @@ try {
     assert.equal(await evaluate("getComputedStyle(document.querySelector('#results tr')).outlineStyle"), "solid");
     await evaluate("document.querySelector('#results input').click(); window.scrollTo(0,0)");
     const image = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
-    await writeFile(path.join(root, 'dist/ui-attention-' + scheme + '.png'), Buffer.from(image.data, "base64"));
+    await writeFile(path.join(output, 'ui-attention-' + scheme + '.png'), Buffer.from(image.data, "base64"));
   }
 
   await call("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "light" }] });
@@ -1257,7 +1280,7 @@ try {
     await until("!document.getElementById('scan-mailMiB').disabled");
     await evaluate("document.getElementById('scan-expandedMiB').closest('details').open = true; window.scrollTo(0,0)");
     const image = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
-    await writeFile(path.join(root, 'dist/ui-scan-settings-' + language + '.png'), Buffer.from(image.data, "base64"));
+    await writeFile(path.join(output, 'ui-scan-settings-' + language + '.png'), Buffer.from(image.data, "base64"));
     await evaluate("testState.records[0].status = 'advisory'; testState.records[0].advisories = [{kind:'phishing',signatures:['Heuristics.Phishing.Email.SpoofedDomain']}]; testState.records[0].scanSettings = structuredClone(testState.settings.scanSettings); document.getElementById('tab-results').click()");
     await change("filter", "advisory");
     await until("document.querySelector('#results tr')?.dataset.status === 'advisory'");
@@ -1272,7 +1295,7 @@ try {
     assert.equal(await evaluate("document.querySelectorAll('#overflow-recent img').length"), 0);
     assert.match(await evaluate("document.getElementById('overflow-summary').textContent"), /22.*21.*0/);
     const overflowImage = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
-    await writeFile(path.join(root, 'dist/ui-overflow-' + language + '.png'), Buffer.from(overflowImage.data, "base64"));
+    await writeFile(path.join(output, 'ui-overflow-' + language + '.png'), Buffer.from(overflowImage.data, "base64"));
     await evaluate("document.getElementById('overflow-clear').click()");
     await until("document.getElementById('overflow-report').hidden");
   }

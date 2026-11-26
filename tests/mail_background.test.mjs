@@ -5028,3 +5028,17 @@ test("a candidate that moves during body retrieval cannot acquire a verdict or a
   assert.equal((await h.send("prepareDelete",{key:row.key})).ok,false);
   assert.deepEqual(h.deleted,[]);
 });
+
+
+test("settings save rejects a stale draft inside the serialized write queue", async () => {
+  const h = await harness();
+  const original = (await h.send("state")).settings;
+  const expectedSettings = JSON.stringify(original);
+  const first = h.send("settings", {settings:{...original,notifications:false},expectedSettings});
+  const second = h.send("settings", {settings:{...original,enabled:true,accountIds:["one"]},expectedSettings});
+  assert.equal((await first).ok,true);
+  assert.equal((await second).ok,false);
+  const state = await h.send("state");
+  assert.equal(state.settings.notifications,false);
+  assert.equal(state.settings.enabled,false);
+});

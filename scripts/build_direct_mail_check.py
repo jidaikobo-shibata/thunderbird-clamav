@@ -6,7 +6,7 @@ from pathlib import Path
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.20.0a56"
+VERSION = "0.20.0a57"
 
 
 def build(major=153, *, output_dir=None):

@@ -1,14 +1,14 @@
 # ClamAV Mail Check / ClamAV メール検査
 
 Thunderbirdのメールを、コンピューターにインストールしたClamAVで検査する拡張機能です。
-このブランチは **0.20.0a56（試用版）** です。補助プログラムの別途インストールは不要です。
+このブランチは **0.20.0a57（試用版）** です。補助プログラムの別途インストールは不要です。
 公開済みの0.20.0a5はUbuntu向けです。このブランチのXPIは末尾のビルド手順で作成できます。GitHubにはまだ公開していません。
 
 [English installation guide](README.en.md)
 
 ## インストール
 
-1. Thunderbird 160 系の Windows 版には `dist/clam-mail-check-direct-0.20.0a56-tb160.xpi`、153 系には `dist/clam-mail-check-direct-0.20.0a56.xpi` を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
+1. Thunderbird 160 系の Windows 版には `dist/clam-mail-check-direct-0.20.0a57-tb160.xpi`、153 系には `dist/clam-mail-check-direct-0.20.0a57.xpi` を用意します。公開済みのUbuntu向け試用版は[Releases](https://github.com/jidaikobo-shibata/thunderbird-clamav/releases)にあります。「Source code」のZIPではありません。
 2. Thunderbirdのアドオンマネージャーで、歯車メニューの「ファイルからアドオンをインストール」を選び、XPIを指定します。
 3. 表示される権限を確認してインストールします。Experiment APIを使用するため、Thunderbirdとコンピューターへの全面アクセス権限が必要です。
 4. ツールバーのアイコンから画面を開き、「設定」末尾の「ClamAVの状態」で「接続を再確認」を押します。ClamAVが未導入なら、表示される導入手順に従います。ウイルス定義の初回更新も完了させてください。
@@ -196,7 +196,7 @@ python3 -B scripts/check_source.py
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-160 系用は `python scripts/build_direct_mail_check.py --thunderbird-major 160` でビルドします。既定の 153 系用の成果物は`dist/clam-mail-check-direct-0.20.0a56.xpi`です。同じXPIにUbuntu/macOS/Windows用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
+160 系用は `python scripts/build_direct_mail_check.py --thunderbird-major 160` でビルドします。既定の 153 系用の成果物は`dist/clam-mail-check-direct-0.20.0a57.xpi`です。同じXPIにUbuntu/macOS/Windows用の処理を含みます。JavaScriptのテストにはNode.js 22以降を使います。
 
 ```bash
 for test_file in tests/*.test.mjs; do

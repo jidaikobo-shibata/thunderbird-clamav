@@ -28,10 +28,10 @@ def installer_bytes(root):
     return stream.getvalue()
 
 
-def build(root):
+def build(root, *, output_dir=None):
     source = root / "thunderbird"
     manifest = json.loads((source / "manifest.json").read_text())
-    output = root / "dist"
+    output = root / "dist" if output_dir is None else Path(output_dir)
     native = output / "native"
     native.mkdir(parents=True, exist_ok=True)
     host = native / "host.py"

@@ -30,7 +30,7 @@ const TABS = DIRECT ? ["scan", "results", "settings", "help"] : ["scan", "result
 let userNavigated = false, seenSetupRequest = null;
 const selectedFolders = new Set();
 let folderChoices = [], foldersLoading = false, settingsSaving = false, settingsDirty = false;
-let savedSettingsStamp = "", settingsMessageTimer = null;
+let savedSettingsStamp = "", savedSettingsVersion = "", settingsMessageTimer = null;
 let folderNames = createFolderIndex(folderChoices);
 
 async function request(type, values = {}) {
@@ -721,7 +721,9 @@ function renderRecords() {
   $("tab-results").title = t("mail143", "確認が必要$1件", [attention]);
   const summaryValues = [latest.records.length, attention, waiting, filtered.length];
   setText($("summary"), waiting > 0 && latest.idleWaiting
-    ? t("summaryIdleWaiting", "履歴$1件 ／ 確認が必要$2件 ／ 検査待ち$3件（無操作時間待機中） ／ 絞り込み結果$4件", summaryValues)
+    ? latest.idleState === "unknown"
+      ? t("summaryIdleUnknown", "履歴$1件 ／ 確認が必要$2件 ／ 検査待ち$3件（無操作状態の確認待ち） ／ 絞り込み結果$4件", summaryValues)
+      : t("summaryIdleWaiting", "履歴$1件 ／ 確認が必要$2件 ／ 検査待ち$3件（無操作時間待機中） ／ 絞り込み結果$4件", summaryValues)
     : t("mail144", "履歴$1件 ／ 確認が必要$2件 ／ 検査待ち$3件 ／ 絞り込み結果$4件", summaryValues));
   setText($("page-label"), t("mail145", "$1 / $2ページ（1ページ50件）", [page + 1, result.pages]));
   $("page-label").dataset.pages = String(result.pages);
@@ -912,6 +914,7 @@ bulkActions.set("forget-selected", () => {
 });
 
 function syncSettings(settings) {
+  savedSettingsVersion = JSON.stringify(settings);
   settings = normalizeAutomaticSettings(settings);
   $("notifications").checked = settings.notifications;
   $("definition-source").value = settings.definitionSource || "addon";
@@ -1108,15 +1111,25 @@ function settingsChanged() {
     if (!row.querySelector("select").value) row.querySelector("input").checked = false;
   }
   settingsDirty = settingsStamp() !== savedSettingsStamp;
+  syncUnsavedWarning();
   clearScanErrors();
   settingsMessage(settingsDirty ? t("settingsUnsaved", "未保存の変更があります。") : "");
   updateControls();
 }
 for (const event of ["input", "change"]) $("settings-form").addEventListener(event, settingsChanged);
+function warnUnsavedSettings(event) {
+  event.preventDefault();
+  event.returnValue = "";
+}
+function syncUnsavedWarning() {
+  if (settingsDirty || settingsSaving) window.addEventListener("beforeunload", warnUnsavedSettings);
+  else window.removeEventListener("beforeunload", warnUnsavedSettings);
+}
 
 $("settings-discard").addEventListener("click", () => {
   if (blocked() || !settingsDirty) return;
   settingsDirty = false;
+  syncUnsavedWarning();
   clearScanErrors();
   syncSettings(latest.settings);
   settingsMessage("");
@@ -1126,6 +1139,10 @@ $("settings-discard").addEventListener("click", () => {
 $("settings-form").addEventListener("submit", async event => {
   event.preventDefault();
   if (blocked() || !settingsDirty || foldersLoading || latest?.helperRemoved) return;
+  if (JSON.stringify(latest.settings) !== savedSettingsVersion) {
+    settingsMessage(t("settingsConflict", "別の画面で設定が変更されました。取り消して最新の設定を読み直してください。"), true);
+    return;
+  }
   const accountIds = [...$("accounts").querySelectorAll("input:checked")].map(input => input.value);
   const quarantine = readQuarantineSettings(latest.settings.quarantine, folderChoices);
   let scanSettings;
@@ -1146,10 +1163,10 @@ $("settings-form").addEventListener("submit", async event => {
   updateControls();
   try {
     if (quarantineNeedsPermission(latest.settings.quarantine, quarantine)) await requireMovePermission();
-    await request("settings", { settings });
-    latest.settings = settings;
+    const response = await request("settings", { settings, expectedSettings: savedSettingsVersion });
+    latest.settings = response.settings;
     settingsDirty = false;
-    syncSettings(settings);
+    syncSettings(latest.settings);
     settingsMessage(t("mail170", "設定を保存しました。"), false, true);
     if (changedSource) {
       latest.lastHealth = null;
@@ -1166,6 +1183,7 @@ $("settings-form").addEventListener("submit", async event => {
     settingsMessage(t("settingsSaveFailed", "保存できませんでした：$1", [error.message]), true);
   } finally {
     settingsSaving = false;
+    syncUnsavedWarning();
     busy = false;
     updateControls();
     await refresh().catch(reportRefreshError);

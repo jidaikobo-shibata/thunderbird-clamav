@@ -29,7 +29,7 @@ def package(target, version):
 
 
 def main():
-    output = ROOT / "dist/direct-clamav-probe"
+    output = ROOT / ".codex-private/test-output/direct-clamav-probe"
     output.mkdir(parents=True, exist_ok=True)
     (output / "result.json").write_text(json.dumps({"status": "running"}) + "\n")
     package(output / "direct-clam-probe-0.1.0.xpi", "0.1.0")
@@ -164,7 +164,7 @@ def main():
                     if "ERROR\tLoading extension 'direct-clam-probe" in diagnostic or "ClamAV probe:" in diagnostic:
                         raise RuntimeError("Experiment API load failed; see thunderbird.log")
                     time.sleep(0.25)
-                raise RuntimeError("Probe timed out; see dist/direct-clamav-probe/thunderbird.log")
+                raise RuntimeError("Probe timed out; see .codex-private/test-output/direct-clamav-probe/thunderbird.log")
             finally:
                 for process in reversed(processes):
                     try:

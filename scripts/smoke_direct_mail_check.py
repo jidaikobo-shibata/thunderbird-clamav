@@ -567,8 +567,7 @@ def main():
             parser.error("Thunderbird 153.x or 160.x required")
     if options.scenario in ("guardian", "worker", "no-python") and sys.platform != "win32":
         parser.error("This lifecycle fixture requires the Windows guardian")
-    xpi = options.comparison_xpi or build(major)
-    output = ROOT / ("dist/direct-mail-integration" + ("-tb160" if major == 160 else "") + ("-" + options.scenario if options.scenario != "full" else ""))
+    output = ROOT / (".codex-private/test-output/direct-mail-integration" + ("-tb160" if major == 160 else "") + ("-" + options.scenario if options.scenario != "full" else ""))
     if options.shared_definitions:
         output = output.with_name(output.name + "-shared")
     if options.comparison_xpi:
@@ -577,6 +576,7 @@ def main():
     (output / "result.json").write_text('{"status":"running"}\n')
     with DisposableProfile(prefix="clam-direct-mail-") as temporary:
         directory = Path(temporary)
+        xpi = options.comparison_xpi or build(major, output_dir=directory)
         runtime = directory / "runtime"; runtime.mkdir(mode=0o700)
         profile = directory / "profile"; (profile / "extensions").mkdir(parents=True)
         shared_root = directory / "shared" if options.shared_definitions else None

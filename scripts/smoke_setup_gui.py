@@ -80,8 +80,8 @@ def session():
                 paintable.snapshot(snapshot, window.get_width(), window.get_height())
                 node = snapshot.to_node()
                 texture = window.get_renderer().render_texture(node, None)
-                (ROOT / "dist").mkdir(exist_ok=True)
-                assert texture.save_to_png(str(ROOT / "dist/setup-gui.png"))
+                (ROOT / ".codex-private/test-output").mkdir(parents=True, exist_ok=True)
+                assert texture.save_to_png(str(ROOT / ".codex-private/test-output/setup-gui.png"))
                 desktop = GioUnix.DesktopAppInfo.new_from_filename(str(window.manager.layout.desktop))
                 assert desktop is not None
                 assert "/usr/bin/python3" in desktop.get_commandline()

@@ -75,8 +75,7 @@ class LocalizationTests(unittest.TestCase):
     @unittest.skipIf(sys.platform == "win32", "Legacy POSIX installer")
     def test_translation_catalogs_are_packaged_and_installer_file_set_is_unchanged(self):
         with tempfile.TemporaryDirectory() as temp:
-            # Build only writes dist; existing build tests use the same workspace artifacts.
-            target, _ = build(ROOT)
+            target, _ = build(ROOT, output_dir=temp)
             with ZipFile(target) as archive:
                 self.assertIn("_locales/en/messages.json", archive.namelist())
                 self.assertIn("_locales/ja/messages.json", archive.namelist())
