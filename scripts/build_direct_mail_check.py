@@ -6,12 +6,13 @@ from pathlib import Path
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+SUPPORTED_MAJORS = (153, 160, 161)
 VERSION = "0.20.0a45"
 
 
 def build(major=153):
-    if major not in (153, 160):
-        raise ValueError("Supported Thunderbird majors: 153, 160")
+    if major not in SUPPORTED_MAJORS:
+        raise ValueError(f"Supported Thunderbird majors: {SUPPORTED_MAJORS}")
     source = ROOT / "thunderbird"
     manifest = json.loads((source / "manifest.json").read_text())
     manifest["version"] = VERSION
@@ -22,7 +23,7 @@ def build(major=153):
     manifest["browser_specific_settings"]["gecko"].update(strict_min_version=f"{major}.0", strict_max_version=f"{major}.*")
     manifest["experiment_apis"] = {"clamDirect": {"schema": "direct/schema.json", "parent": {
         "scopes": ["addon_parent"], "paths": [["clamDirect"]], "script": "direct/api.js"}}}
-    suffix = "-tb160" if major == 160 else ""
+    suffix = f"-tb{major}" if major != 153 else ""
     output = ROOT / "dist" / f"clam-mail-check-direct-{VERSION}{suffix}.xpi"
     output.parent.mkdir(exist_ok=True)
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -39,5 +40,5 @@ def build(major=153):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--thunderbird-major", type=int, choices=(153, 160), default=153)
+    parser.add_argument("--thunderbird-major", type=int, choices=SUPPORTED_MAJORS, default=153)
     print(build(parser.parse_args().thunderbird_major))

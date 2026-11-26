@@ -7,17 +7,19 @@ from scripts.build_direct_mail_check import build
 
 
 class DirectPackageTests(unittest.TestCase):
-    def test_160_package_only_changes_compatibility(self):
-        with zipfile.ZipFile(build()) as esr, zipfile.ZipFile(build(160)) as release:
-            self.assertEqual(esr.namelist(), release.namelist())
-            for name in esr.namelist():
-                if name == "manifest.json":
-                    manifest = json.loads(esr.read(name))
-                    manifest["browser_specific_settings"]["gecko"].update(
-                        strict_min_version="160.0", strict_max_version="160.*")
-                    self.assertEqual(manifest, json.loads(release.read(name)))
-                else:
-                    self.assertEqual(esr.read(name), release.read(name), name)
+    def test_release_packages_only_change_compatibility(self):
+        for major in (160, 161):
+            with self.subTest(major=major):
+                with zipfile.ZipFile(build()) as esr, zipfile.ZipFile(build(major)) as release:
+                    self.assertEqual(esr.namelist(), release.namelist())
+                    for name in esr.namelist():
+                        if name == "manifest.json":
+                            manifest = json.loads(esr.read(name))
+                            manifest["browser_specific_settings"]["gecko"].update(
+                                strict_min_version=f"{major}.0", strict_max_version=f"{major}.*")
+                            self.assertEqual(manifest, json.loads(release.read(name)))
+                        else:
+                            self.assertEqual(esr.read(name), release.read(name), name)
 
     def test_real_mail_experiment_keeps_id_and_does_not_ship_installers_or_test_apis(self):
         root = Path(__file__).resolve().parents[1]

@@ -15,7 +15,7 @@ import tempfile
 import time
 import zipfile
 
-from build_direct_mail_check import build
+from build_direct_mail_check import SUPPORTED_MAJORS, build
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests/fixtures/direct"
@@ -245,7 +245,7 @@ class DisposableProfile(tempfile.TemporaryDirectory):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--windows-thunderbird", type=Path, help="Thunderbird 153 or 160 executable")
+    parser.add_argument("--windows-thunderbird", type=Path, help="Thunderbird executable for the integration test")
     parser.add_argument("--windows-database", type=Path, help="FreshClam database for the disposable fixture only")
     parser.add_argument("--scenario", choices=["full", "missing", "no-python", "quit", "uninstall", "disable", "guardian", "worker", "recovery"], default="full")
     parser.add_argument("--shared-definitions", action="store_true", help="Exercise the Windows GUI definition selector with a disposable copy")
@@ -257,13 +257,13 @@ def main():
         if not options.windows_thunderbird or not options.windows_database:
             parser.error("Windows requires explicit disposable executable and database paths")
         ini = options.windows_thunderbird.with_name("application.ini").read_text(encoding="utf-8")
-        major = next((v for v in (153, 160) if any(line.startswith(f"Version={v}.") for line in ini.splitlines())), None)
+        major = next((v for v in SUPPORTED_MAJORS if any(line.startswith(f"Version={v}.") for line in ini.splitlines())), None)
         if major is None:
-            parser.error("Thunderbird 153.x or 160.x required")
+            parser.error(f"Supported Thunderbird majors: {SUPPORTED_MAJORS}")
     if options.scenario in ("guardian", "worker", "no-python") and sys.platform != "win32":
         parser.error("This lifecycle fixture requires the Windows guardian")
     xpi = build(major)
-    output = ROOT / ("dist/direct-mail-integration" + ("-tb160" if major == 160 else "") + ("-" + options.scenario if options.scenario != "full" else ""))
+    output = ROOT / ("dist/direct-mail-integration" + (f"-tb{major}" if major != 153 else "") + ("-" + options.scenario if options.scenario != "full" else ""))
     if options.shared_definitions:
         output = output.with_name(output.name + "-shared")
     output.mkdir(parents=True, exist_ok=True)

@@ -42,7 +42,7 @@ var testFixture = (() => {
           const message = context.extension.messageManager.get(id);
           if (!message || message.folder.URI !== folder("DirectSource").URI) throw new Error("Synthetic folder only");
           // messageManager may return a CachedMsgHeader rather than nsIMsgDBHdr.
-          const header = message.folder.GetMessageHeader(message.messageKey);
+          const header = message.folder.msgDatabase.getMsgHdrForKey(message.messageKey);
           header.flags |= Ci.nsMsgMessageFlags.New;
           MailServices.mfn.notifyMsgAdded(header);
         },
