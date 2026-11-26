@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 VERSION = "0.20.0a56"
 
 
-def build(major=153):
+def build(major=153, *, output_dir=None):
     if major not in (153, 160):
         raise ValueError("Supported Thunderbird majors: 153, 160")
     source = ROOT / "thunderbird"
@@ -23,7 +23,8 @@ def build(major=153):
     manifest["experiment_apis"] = {"clamDirect": {"schema": "direct/schema.json", "parent": {
         "scopes": ["addon_parent"], "paths": [["clamDirect"]], "script": "direct/api.js"}}}
     suffix = "-tb160" if major == 160 else ""
-    output = ROOT / "dist" / f"clam-mail-check-direct-{VERSION}{suffix}.xpi"
+    directory = ROOT / "dist" if output_dir is None else Path(output_dir)
+    output = directory / f"clam-mail-check-direct-{VERSION}{suffix}.xpi"
     output.parent.mkdir(exist_ok=True)
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(source.rglob("*")):

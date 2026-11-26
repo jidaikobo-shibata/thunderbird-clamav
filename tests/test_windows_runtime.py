@@ -17,7 +17,7 @@ from scripts.build_direct_mail_check import build
 @unittest.skipUnless(sys.platform == "win32", "Windows scanner runtime")
 class WindowsRuntimeTests(unittest.TestCase):
     def test_packaged_guardian_on_unicode_path_rejects_oversize_and_administration(self):
-        with tempfile.TemporaryDirectory(prefix="検査 profile ") as temp, zipfile.ZipFile(build()) as archive:
+        with tempfile.TemporaryDirectory(prefix="検査 profile ") as temp, zipfile.ZipFile(build(output_dir=temp)) as archive:
             session = Path(temp) / "clam-mail-direct-0123456789abcdef"
             session.mkdir()
             for name in ("host.py", "windows.py"):
@@ -44,7 +44,7 @@ class WindowsRuntimeTests(unittest.TestCase):
     def test_real_engine_crash_does_not_report_clean_or_leave_temporary_files(self):
         # Exercise the unmodified packaged worker with an isolated LocalAppData.
         database = Path(os.environ["CLAM_MAIL_TEST_DATABASE"]).resolve(strict=True)
-        with tempfile.TemporaryDirectory(dir=database.parent, prefix="検査 mail ") as temp, zipfile.ZipFile(build()) as archive:
+        with tempfile.TemporaryDirectory(dir=database.parent, prefix="検査 mail ") as temp, zipfile.ZipFile(build(output_dir=temp)) as archive:
             directory = Path(temp)
             private_db = directory / "ClamAV/database"
             private_db.mkdir(parents=True)

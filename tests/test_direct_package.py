@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import tempfile
 import unittest
 import zipfile
 
@@ -7,8 +8,11 @@ from scripts.build_direct_mail_check import build
 
 
 class DirectPackageTests(unittest.TestCase):
+    def setUp(self):
+        self.output_dir = Path(self.enterContext(tempfile.TemporaryDirectory()))
+
     def test_160_package_only_changes_compatibility(self):
-        with zipfile.ZipFile(build()) as esr, zipfile.ZipFile(build(160)) as release:
+        with zipfile.ZipFile(build(output_dir=self.output_dir)) as esr, zipfile.ZipFile(build(160, output_dir=self.output_dir)) as release:
             self.assertEqual(esr.namelist(), release.namelist())
             for name in esr.namelist():
                 if name == "manifest.json":
@@ -22,7 +26,7 @@ class DirectPackageTests(unittest.TestCase):
     def test_real_mail_experiment_keeps_id_and_does_not_ship_installers_or_test_apis(self):
         root = Path(__file__).resolve().parents[1]
         stable = json.loads((root / 'thunderbird/manifest.json').read_text())
-        with zipfile.ZipFile(build()) as archive:
+        with zipfile.ZipFile(build(output_dir=self.output_dir)) as archive:
             manifest = json.loads(archive.read('manifest.json'))
             self.assertEqual(manifest['browser_specific_settings']['gecko']['id'], stable['browser_specific_settings']['gecko']['id'])
             self.assertEqual(manifest['browser_specific_settings']['gecko']['strict_max_version'], '153.*')
