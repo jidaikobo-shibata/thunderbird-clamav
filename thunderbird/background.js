@@ -13,7 +13,7 @@ import { validateQuarantine, moveToQuarantine, inQuarantine, quarantineCandidate
 import { t } from "./i18n.mjs";
 import { toolbarNotice } from "./installation.mjs";
 import {
-  MAX_BYTES, MAX_TRANSFER_BYTES, SCAN_INPUT_TIMEOUT_MS, REVIEW_FINGERPRINT_TIMEOUT_MS, DEFAULTS, LABELS, NativeClient, accountOf, locator, sameEnvelope,
+  MAX_TRANSFER_BYTES, SCAN_INPUT_TIMEOUT_MS, REVIEW_FINGERPRINT_TIMEOUT_MS, DEFAULTS, LABELS, NativeClient, accountOf, locator, sameEnvelope,
   validateSettings, messagePages, sha256, needsAttention, pausedAutomatic, normalizeAutomaticSettings
 } from "./core.mjs";
 import { canDelete, canForget, canRetry } from "./results.mjs";
@@ -809,8 +809,13 @@ async function rawBytes(messageId, maxBytes = MAX_TRANSFER_BYTES, check = () => 
   if (!raw || typeof raw.arrayBuffer !== "function") {
     throw new Error(t("mail032", "メールデータをFile形式で取得できませんでした。"));
   }
-  if (!raw.size || raw.size > maxBytes) {
-    const error = new Error(maxBytes === MAX_BYTES ? t("mail033", "メールが空か、検査上限の25MiBを超えています。") : t("scanSizeExceeded", "メールが空か、検査上限の$1MiBを超えています。", [maxBytes / 1024 / 1024]));
+  if (raw.size === 0) {
+    throw Object.assign(new Error(t("scanEmptyRead", "メールの内容を取得できませんでした。")), {
+      incomplete: true, unscannedReason: "emptyRead"
+    });
+  }
+  if (raw.size > maxBytes) {
+    const error = new Error(t("scanSizeExceeded", "検査上限の$1MiBを超えています。", [maxBytes / 1024 / 1024]));
     error.incomplete = true;
     throw error;
   }
@@ -908,9 +913,9 @@ function candidateLocation(record, message) {
     record.messageId === message.id : record.locator.folder?.path === message.folder?.path);
 }
 
-async function resolveRecord(record, check = () => {}, beforeRead, read = rawBytes) {
+async function resolveRecord(record, check = () => {}, beforeRead, read = rawBytes, searchAgain = false) {
   // A persisted Thunderbird numeric ID must never be reused after restart.
-  if (record.session === session && Number.isInteger(record.messageId)) {
+  if (!(searchAgain && record.locator.headerMessageId) && record.session === session && Number.isInteger(record.messageId)) {
     try {
       const message = await api.messages.get(record.messageId);
       check();
@@ -1042,7 +1047,7 @@ async function readScanInput(record, maxBytes, check, beforeRead) {
     try {
       // resolveRecord may reconstruct IDs after restart. Its late completion
       // must never modify the live history belonging to another attempt.
-      const message = await resolveRecord(lookup, check, beforeRead);
+      const message = await resolveRecord(lookup, check, beforeRead, rawBytes, Boolean(record.nextRetry));
       check();
       if (before === moveLocationStamp(record) && revision === (moveRevisions.get(record) || 0)) {
         record.messageId = lookup.messageId; record.session = lookup.session; record.locator = lookup.locator;
@@ -1528,7 +1533,7 @@ async function drain() {
       const idle = automaticIdle.canStart(settings);
       if (idle && settings.enabled) {
         for (const item of overflowPending ? [...records, overflowPending] : records) {
-          if (item.status !== "queued" || item.source !== "automatic" || item.quarantineCheckPending ||
+          if (item.status !== "queued" || item.source !== "automatic" || item.quarantineCheckPending || item.nextRetry > Date.now() ||
               deleting.has(item.key) || !settings.accountIds.includes(item.locator.accountId)) continue;
           const order = incomingQueue.entries.get(item.key)?.sequence ?? 0;
           if (order < earliest) { record = item; earliest = order; }
@@ -1644,12 +1649,19 @@ async function drain() {
         const finalLookupFailure = error.unscannedReason && record.source === "automatic" &&
           (record.attempts >= 2 || record === overflowPending);
         record.status = error.incomplete || finalLookupFailure ? "incomplete" : "error";
+        record.nextRetry = null;
+        if (error.unscannedReason === "emptyRead" && record.source === "automatic" &&
+            record.attempts === 1 && !record.lastResult && !record.bulkRetryId) {
+          record.status = "queued";
+          record.nextRetry = Date.now() + 60000;
+          record.detail = t("scanEmptyRetry", "メールの内容を取得できなかったため、対象を探し直して再試行します。");
+        }
         if (finalLookupFailure) {
           record.unscannedReason = error.unscannedReason;
           if (error.unscannedReason === "unverifiedLocation") record.retryLegacyCandidate = true;
         }
         delete record.detailMessages;
-        record.detail = error.message || t("mail045", "検査に失敗しました。");
+        if (record.status !== "queued") record.detail = error.message || t("mail045", "検査に失敗しました。");
       }
       finishScanAttempt(record, currentDigest);
       let reviewFingerprint = record.sha256 ? "sha256:" + record.sha256 : null;
@@ -1703,7 +1715,7 @@ async function drain() {
       await save();
       if (incomingKey) await incomingQueue.finish(incomingKey);
       if (!fromFolder) notify(record, coalescedMove);
-      if (record === overflowPending) await finishOverflow(record);
+      if (record === overflowPending && record.status !== "queued") await finishOverflow(record);
       await updateBadge();
     }
     completed = true;

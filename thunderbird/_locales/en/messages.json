@@ -2852,8 +2852,14 @@
   "scanHelperUpdate": {
     "message": "These scan settings require a helper update. Update it in Setup."
   },
+  "scanEmptyRead": {
+    "message": "Could not retrieve the message contents."
+  },
+  "scanEmptyRetry": {
+    "message": "The message contents could not be retrieved. The message will be located again before retrying."
+  },
   "scanSizeExceeded": {
-    "message": "The message is empty or exceeds the $ARG1$ MiB scan limit.",
+    "message": "The message exceeds the $ARG1$ MiB scan limit.",
     "placeholders": {
       "arg1": {
         "content": "$1"

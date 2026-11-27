@@ -2856,8 +2856,14 @@
   "scanPolicyMismatch": {
     "message": "指定した検査条件の適用を確認できません。補助プログラムを更新して再検査してください。"
   },
+  "scanEmptyRead": {
+    "message": "メールの内容を取得できませんでした。"
+  },
+  "scanEmptyRetry": {
+    "message": "メールの内容を取得できなかったため、対象を探し直して再試行します。"
+  },
   "scanSizeExceeded": {
-    "message": "メールが空か、検査上限の$ARG1$MiBを超えています。",
+    "message": "検査上限の$ARG1$MiBを超えています。",
     "placeholders": {
       "arg1": {
         "content": "$1"

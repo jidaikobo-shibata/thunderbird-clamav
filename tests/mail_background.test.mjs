@@ -5042,3 +5042,39 @@ test("settings save rejects a stale draft inside the serialized write queue", as
   assert.equal(state.settings.notifications,false);
   assert.equal(state.settings.enabled,false);
 });
+
+for (const outcome of ["moved", "empty", "ambiguous"]) test("zero-byte automatic read retries once: " + outcome, async () => {
+  const origin = mail(19700), mails = [origin];
+  const idle = idleFixture();
+  const h = await harness({ mails, configureIdle: idle.api,
+    saved: { settings: { enabled: true, idleAutomatic: true, accountIds: ["one"] } } });
+  h.api.messages.getRaw = async () => new File([], "empty.eml");
+  await h.events.newMail.listeners[0](origin.folder, { messages: [origin] });
+  idle.change("idle");
+  const first = await settle(h, state => state.records[0]?.nextRetry && state.records[0].status === "queued");
+  const row = first.records[0];
+  assert.equal(row.attempts, 1);
+  idle.change("active");
+  row.nextRetry = 1;
+  if (outcome !== "empty") {
+    const moved = { ...origin, id: 19701, folder: { accountId: "one", path: "/Filed" } };
+    mails.splice(0, outcome === "moved" ? 1 : 0, moved);
+    const get = h.api.messages.get;
+    h.api.messages.get = async id => id === moved.id ? moved : get(id);
+    h.api.messages.getRaw = async () => new File(["Subject: example\r\n\r\nbody"], "mail.eml");
+  }
+  h.timers[0]();
+  assert.equal(row.attempts, 1);
+  idle.change("idle");
+  const final = await settle(h, state => ["clean", "incomplete"].includes(state.records[0]?.status));
+  assert.equal(final.records.length, 1);
+  assert.equal(row.key, final.records[0].key);
+  assert.equal(row.attempts, 2);
+  assert.equal(row.nextRetry, null);
+  if (outcome === "moved") {
+    assert.equal(row.status, "clean");
+    assert.equal(row.locator.folder.path, "/Filed");
+  } else {
+    assert.equal(row.unscannedReason, outcome === "empty" ? "emptyRead" : "ambiguousMessage");
+  }
+});
