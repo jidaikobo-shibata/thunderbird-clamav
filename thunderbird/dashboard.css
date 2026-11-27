@@ -26,7 +26,8 @@ html { scroll-padding-block-start: 9rem; }
 .selection-bar { border: 1px solid GrayText; border-radius: 6px; padding: 12px; }
 .danger { font-weight: bold; }
 .hint, .engine, .mail-location, time { font-size: .85rem; }
-#action-status { min-height: 1.65em; margin: 12px 0; overflow-wrap: anywhere; }
+#action-status:empty { margin: 0; }
+#action-status { margin: 12px 0; overflow-wrap: anywhere; }
 #issue, #batch-report { border: 2px solid GrayText; padding: 12px 24px; }
 .table-scroll { overflow-x: auto; margin-top: 16px; }
 table { width: 100%; border-collapse: collapse; }
@@ -136,15 +137,11 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid GrayText
 .field-error { display: block; color: light-dark(#a40000, #ffb4ab); margin-block: .25rem .75rem; }
 [aria-invalid="true"] { border: 2px solid light-dark(#a40000, #ffb4ab); }
 
-.operation-toast { position: fixed; bottom: 16px; inset-inline: 16px; margin: auto; width: fit-content; max-width: min(850px, calc(100% - 32px)); max-height: 35vh; overflow: auto; box-sizing: border-box; z-index: 10; background: Canvas; color: CanvasText; border: 2px solid GrayText; border-radius: 8px; padding: 8px 16px; box-shadow: 0 3px 12px rgb(0 0 0 / 25%); }
-.operation-toast.operation-toast-top { top: 16px; bottom: auto; }
-.operation-toast p { margin: 4px 0 8px; }
 .operation-error, .background-error { border: 2px solid GrayText; border-inline-start-width: 6px; padding: 12px; margin: 12px 0; overflow-wrap: anywhere; }
 .operation-error p, #message-detail, #message-guidance { white-space: pre-wrap; overflow-wrap: anywhere; }
 .background-error { max-height: 25vh; overflow: auto; }
 body { padding-bottom: 24px; }
 
-body:has(dialog[open]) .operation-toast { visibility: hidden; }
 /* The originating tab exposes the error after the message dialog closes. */
 body:has(#message-dialog[open]) .operation-error { visibility: hidden; }
 

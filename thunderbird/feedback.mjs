@@ -2,7 +2,11 @@
 export function operationFeedback({ document, t }) {
   const $ = id => document.getElementById(id);
   const dialog = $("message-dialog");
-  let current, toastContext, queue = Promise.resolve();
+  let current, clearTimer, queue = Promise.resolve();
+  const notice = document.createElement("p");
+  notice.id = "action-status";
+  notice.setAttribute("role", "status");
+  notice.setAttribute("aria-atomic", "true");
   const panels = new Map();
   for (const panel of document.querySelectorAll('[role="tabpanel"]')) {
     const host = document.createElement("div"); host.className = "operation-feedback";
@@ -15,7 +19,7 @@ export function operationFeedback({ document, t }) {
     dismiss.textContent = t("messageClear", "この案内を消す");
     dismiss.addEventListener("click", () => { error.hidden = true; panel.focus(); });
     panel.querySelector("h2").after(host);
-    panels.set(panel, { error, detail, button });
+    panels.set(panel, { host, error, detail, button });
   }
   function capture(origin = document.activeElement) {
     const source = origin?.closest('[role="tabpanel"]');
@@ -24,10 +28,11 @@ export function operationFeedback({ document, t }) {
     return { panel, origin, label };
   }
   function status(message, context = current) {
-    toastContext = context;
-    $("action-status").textContent = message;
-    $("operation-toast").hidden = !message;
-    protectFocus();
+    clearTimeout(clearTimer);
+    const host = panels.get(context?.panel)?.host;
+    if (host && notice.parentElement !== host) host.prepend(notice);
+    notice.textContent = message;
+    if (message) clearTimer = setTimeout(() => { notice.textContent = ""; }, 5000);
   }
   function restore(context) {
     const target = context?.origin;
@@ -70,23 +75,6 @@ export function operationFeedback({ document, t }) {
     status("", context);
     return modal ? open(item) : Promise.resolve();
   }
-  // Keep the sole status visible without covering keyboard focus.
-  // Prefer the bottom edge and move above only when needed.
-  function protectFocus() {
-    const toast = $("operation-toast"), target = document.activeElement;
-    if (toast.hidden || toast.contains(target) || document.querySelector("dialog[open]")) return;
-    if (!target?.matches("button,input,select,textarea,a[href],summary")) return;
-    toast.classList.remove("operation-toast-top");
-    const control = target.getBoundingClientRect(), notice = toast.getBoundingClientRect();
-    if (control.top < notice.bottom && control.bottom > notice.top &&
-        control.left < notice.right && control.right > notice.left) toast.classList.add("operation-toast-top");
-  }
-  document.addEventListener("focusin", protectFocus);
-  document.addEventListener("scroll", protectFocus, true);
-  document.defaultView.addEventListener("resize", protectFocus);
-  $("message-dismiss").addEventListener("click", () => {
-    $("operation-toast").hidden = true;
-    restore(toastContext || current);
-  });
+  document.querySelector('[role="tabpanel"] .operation-feedback').prepend(notice);
   return { capture, status, error, restore, begin(context) { current = context; status(t("mail104", "処理しています。"), context); } };
 }

@@ -275,9 +275,9 @@ try {
       }
     }, permissions: { contains: async () => permissionGranted, request: async value => { testCalls.push({ type: "permission", ...value }); return permissionGranted; } } };
   ` });
-  const until = expression => evaluate(`new Promise((resolve, reject) => {
+  const until = (expression, timeout = 5000) => evaluate(`new Promise((resolve, reject) => {
     const timer = setInterval(() => { if (${expression}) { clearInterval(timer); clearTimeout(deadline); resolve(true); } }, 20);
-    const deadline = setTimeout(() => { clearInterval(timer); reject(new Error('UI condition timed out')); }, 5000);
+    const deadline = setTimeout(() => { clearInterval(timer); reject(new Error('UI condition timed out')); }, ${timeout});
   })`);
   const dismissMessage = async () => {
     await until("document.getElementById('message-dialog').open");
@@ -339,7 +339,7 @@ try {
       await evaluate("document.getElementById('settings-save').click()");
       await until("testState.settings.idleAutomatic===true && document.getElementById('settings-save').disabled");
       assert.equal(await evaluate("document.getElementById('settings-status').textContent"), language === "ja" ? "設定を保存しました。" : catalogs.en.mail170.message);
-      assert.equal(await evaluate("document.getElementById('operation-toast').hidden"),true);
+      assert.equal(await evaluate("!document.getElementById('operation-toast')"),true);
       assert.equal(await evaluate("window.dispatchEvent(new Event('beforeunload',{cancelable:true}))"),true);
       await evaluate("document.getElementById('idle-automatic').click();testState.settings.notifications=false");
       await evaluate("new Promise(resolve=>setTimeout(resolve,2200))");
@@ -497,20 +497,8 @@ try {
       assert.equal(await evaluate("!document.getElementById('message-dialog').open"),true);
       await evaluate("failRefresh=false;document.getElementById('background-retry').click()");
       await until("document.getElementById('background-error').hidden && !document.getElementById('background-retry').disabled");
-      assert.equal(await evaluate("!document.getElementById('operation-toast').hidden && !document.querySelector('.operation-status')"),true);
-      await evaluate(`(() => {
-        const button=document.createElement('button');button.id='fixture-bottom-control';
-        button.textContent='Focus target';
-        button.style.cssText='position:fixed;bottom:32px;left:50%;transform:translateX(-50%);z-index:6';
-        document.body.append(button);button.focus();
-      })()`);
-      assert.equal(await evaluate(`(() => {
-        const b=document.getElementById('fixture-bottom-control'),r=b.getBoundingClientRect();
-        return !document.getElementById('operation-toast').hidden && b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));
-      })()`),true);
-      await evaluate("document.getElementById('fixture-bottom-control').remove()");
-      await evaluate("document.getElementById('message-dismiss').click()");
-      assert.equal(await evaluate("document.getElementById('operation-toast').hidden"),true);
+      assert.equal(await evaluate("!document.getElementById('operation-toast') && !document.getElementById('message-dialog').open"),true);
+      await until("!document.getElementById('action-status').textContent", 6500);
       await evaluate("holdDeletePreparation=false;releaseDeletePreparation=true;testState.batch=null;document.getElementById('deselect').click();document.getElementById('tab-scan').click()");
       assert.deepEqual(await evaluate(`(async () => {
         const {syncQuarantineSettings} = await import('./quarantine-ui.mjs');
