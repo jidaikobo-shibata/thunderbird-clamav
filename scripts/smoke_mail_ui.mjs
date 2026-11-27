@@ -330,14 +330,14 @@ try {
       assert.equal(await evaluate("!document.getElementById('panel-settings').hidden"), true);
       assert.equal(await evaluate("location.pathname"), "/dashboard.html");
       assert.equal(await evaluate("document.getElementById('settings-save').disabled"),true);
-      await evaluate("document.getElementById('idle-automatic').click()");
+      await evaluate("document.getElementById('quiet-encrypted-zip').click();document.getElementById('idle-automatic').click()");
       assert.equal(await evaluate("!testState.settings.idleAutomatic && !document.getElementById('settings-save').disabled"),true);
       assert.equal(await evaluate("!window.dispatchEvent(new Event('beforeunload',{cancelable:true}))"),true);
       await evaluate("document.getElementById('tab-scan').click();new Promise(resolve=>setTimeout(resolve,2200))");
       await evaluate("document.getElementById('tab-settings').click()");
       assert.equal(await evaluate("document.getElementById('idle-automatic').checked && !testState.settings.idleAutomatic"),true);
       await evaluate("document.getElementById('settings-save').click()");
-      await until("testState.settings.idleAutomatic===true && document.getElementById('settings-save').disabled");
+      await until("testState.settings.quietEncryptedZip===true && testState.settings.idleAutomatic===true && document.getElementById('settings-save').disabled");
       assert.equal(await evaluate("document.getElementById('settings-status').textContent"), language === "ja" ? "設定を保存しました。" : catalogs.en.mail170.message);
       assert.equal(await evaluate("!document.getElementById('operation-toast')"),true);
       assert.equal(await evaluate("window.dispatchEvent(new Event('beforeunload',{cancelable:true}))"),true);

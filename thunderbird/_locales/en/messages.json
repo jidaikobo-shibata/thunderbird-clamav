@@ -1,4 +1,23 @@
 {
+  "quietZip": {
+    "message": "Exclude messages from attention counts and notifications when only encrypted ZIP contents were unscanned"
+  },
+  "zipUnscanned": {
+    "message": "Encrypted ZIP contents were not scanned."
+  },
+  "findRowCandidates": {
+    "message": "Find candidates to scan"
+  },
+  "scanAllCandidates": {
+    "message": "Scan all candidates"
+  },
+  "candidateChecks": {
+    "message": "Scan of current candidates"
+  },
+  "ambiguousOrigin": {
+    "message": "The original receipt could not be matched to a specific copy."
+  },
+
   "deleteReady": {
     "message": "Verification is complete. Review the target list. No messages have been deleted."
   },

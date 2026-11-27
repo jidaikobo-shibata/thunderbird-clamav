@@ -10,13 +10,13 @@ export const canDelete = canRetry;
 export const canForget = record => canRetry(record) || record.status === "deleted";
 export const selectable = canForget;
 
-export function filterRecords(records, { status = "all", account = "all", search = "", folderJobId = null, folders = [] } = {}) {
+export function filterRecords(records, { settings, status = "all", account = "all", search = "", folderJobId = null, folders = [] } = {}) {
   const query = search.trim().toLocaleLowerCase();
   const folderNames = query && !(folders instanceof Map) ? createFolderIndex(folders) : folders;
   return records.filter(record => {
     if (folderJobId && record.folderJobId !== folderJobId) return false;
     if (status === "reviewed" && !isReviewed(record)) return false;
-    if (status === "attention" && !needsAttention(record)) return false;
+    if (status === "attention" && !needsAttention(record, settings)) return false;
     if (status === "automatic-excluded" && !(record.status === "incomplete" && record.unscannedReason === "automaticExcluded")) return false;
     if (status === "pending" && !["queued", "scanning"].includes(record.status)) return false;
     if (!["all", "attention", "pending", "automatic-excluded", "reviewed"].includes(status) && record.status !== status && !(status === "error" && scanFailed(record))) return false;

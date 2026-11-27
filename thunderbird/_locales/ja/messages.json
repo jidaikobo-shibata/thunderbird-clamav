@@ -1,4 +1,23 @@
 {
+  "quietZip": {
+    "message": "暗号化ZIPだけが未検査の場合は、要確認件数と通知から除く"
+  },
+  "zipUnscanned": {
+    "message": "暗号化ZIPの中身は未検査です。"
+  },
+  "findRowCandidates": {
+    "message": "候補を探して検査"
+  },
+  "scanAllCandidates": {
+    "message": "候補をすべて検査"
+  },
+  "candidateChecks": {
+    "message": "現存する候補の検査"
+  },
+  "ambiguousOrigin": {
+    "message": "受付時の原本との一致は未確認です。"
+  },
+
   "deleteReady": {
     "message": "照合が完了しました。対象一覧を確認してください。まだ削除していません。"
   },

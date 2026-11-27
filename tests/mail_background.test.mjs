@@ -5066,8 +5066,10 @@ for (const outcome of ["moved", "empty", "ambiguous"]) test("zero-byte automatic
   h.timers[0]();
   assert.equal(row.attempts, 1);
   idle.change("idle");
-  const final = await settle(h, state => ["clean", "incomplete"].includes(state.records[0]?.status));
-  assert.equal(final.records.length, 1);
+  const final = await settle(h, state => outcome === "ambiguous" ?
+    state.records[0]?.candidateChecks?.length === 2 && state.records[0].candidateChecks.every(item => item.scanned) :
+    ["clean", "incomplete"].includes(state.records[0]?.status));
+  assert.equal(final.records.length, outcome === "ambiguous" ? 3 : 1);
   assert.equal(row.key, final.records[0].key);
   assert.equal(row.attempts, 2);
   assert.equal(row.nextRetry, null);
@@ -5077,4 +5079,61 @@ for (const outcome of ["moved", "empty", "ambiguous"]) test("zero-byte automatic
   } else {
     assert.equal(row.unscannedReason, outcome === "empty" ? "emptyRead" : "ambiguousMessage");
   }
+});
+
+test("old ambiguous receipts scan each present candidate and keep verdicts separate", async () => {
+  const first = mail(19800), second = {...first,id:19801,folder:{accountId:"one",path:"/Filed"}};
+  const parent = {key:"ambiguous",source:"automatic",status:"incomplete",unscannedReason:"ambiguousMessage",
+    ambiguousAfterRestart:true,locator:locator(first)};
+  const idle = idleFixture();
+  const h = await harness({mails:[first,second],configureIdle:idle.api,saved:{
+    settings:{enabled:true,accountIds:["one"],idleAutomatic:true},records:[parent]}});
+  assert.deepEqual(h.rawReads,[]);
+  idle.change("idle");
+  const result = await settle(h,s=>s.records[0].candidateChecks?.every(item=>item.scanned));
+  assert.equal(result.records[0].candidateChecks.length,2);
+  assert.equal(result.records[0].sha256,undefined);
+  assert.deepEqual(h.rawReads.sort(),[19800,19801]);
+  assert.ok(result.records.slice(1).every(item=>item.status==="clean" && item.sha256 && item.candidateScan));
+});
+
+test("manual scan of all candidates checks the selection again", async () => {
+  const origin = mail(19810), mails = Array.from({length:4},(_,i)=>({...origin,id:19811+i}));
+  const record = {key:"copies",source:"automatic",status:"incomplete",unscannedReason:"ambiguousMessage",locator:locator(origin)};
+  const h = await harness({mails,saved:{records:[record],settings:{enabled:true,accountIds:["one"]}}});
+  await settle(h,s=>s.records[0].copyLookupDone);
+  assert.deepEqual(h.rawReads,[]);
+  const lookup = await h.send("locateHistory",{key:record.key});
+  const options = {key:record.key,session:lookup.session,positions:lookup.candidates.map(c=>c.position)};
+  assert.equal((await h.send("scanCopies",{...options,positions:options.positions.slice(1)})).ok,false);
+  assert.equal((await h.send("scanCopies",options)).ok,true);
+  await settle(h,s=>s.records[0].candidateChecks.length===4 && s.records[0].candidateChecks.every(item=>item.scanned));
+  assert.equal(h.rawReads.length,4);
+});
+
+test("a proved move with two waiting receipts is inspected once after idle", async () => {
+  const old = mail(19900), moved = {...old,id:19901,folder:{accountId:"one",path:"/Filed"}};
+  const idle = idleFixture();
+  const h = await harness({mails:[old,moved],configureIdle:idle.api,saved:{
+    settings:{enabled:true,accountIds:["one"],idleAutomatic:true}}});
+  for (const message of [old,moved]) await h.events.newMail.listeners[0](message.folder,{messages:[message]});
+  await h.events.moved.listeners[0]({messages:[old]},{messages:[moved]});
+  assert.equal((await h.send("state")).incomingCount,1);
+  idle.change("idle");
+  const state = await settle(h,s=>s.records[0]?.status==="clean" && !s.incomingCount);
+  assert.equal(state.records.length,1);
+  assert.deepEqual(h.rawReads,[moved.id]);
+});
+
+test("a queued candidate resumes in its selected folder after restart", async () => {
+  const message = mail(19950), copy = {...message,id:19951,folder:{accountId:"one",path:"/Filed"}};
+  const child = {key:"child",source:"automatic",status:"queued",candidateScan:true,copyCandidate:true,
+    attempts:0,locator:locator(copy),session:"previous",messageId:9};
+  const origin = {key:"parent",source:"automatic",status:"incomplete",unscannedReason:"ambiguousMessage",
+    copyLookupDone:true,locator:locator(message),candidateChecks:[{key:child.key,folder:copy.folder,status:"queued"}]};
+  const h = await harness({mails:[message,copy],saved:{records:[origin,child],settings:{enabled:true,accountIds:["one"]}}});
+  const result = await settle(h,s=>s.records[0].candidateChecks[0].scanned);
+  assert.deepEqual(h.rawReads,[copy.id]);
+  assert.equal(result.records[1].status,"clean");
+  assert.equal((await h.send("prepareDelete",{key:origin.key})).ok,false);
 });

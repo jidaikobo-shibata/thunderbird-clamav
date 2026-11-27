@@ -14,7 +14,7 @@ import { t } from "./i18n.mjs";
 import { toolbarNotice } from "./installation.mjs";
 import {
   MAX_TRANSFER_BYTES, SCAN_INPUT_TIMEOUT_MS, REVIEW_FINGERPRINT_TIMEOUT_MS, DEFAULTS, LABELS, NativeClient, accountOf, locator, sameEnvelope,
-  validateSettings, messagePages, sha256, needsAttention, pausedAutomatic, normalizeAutomaticSettings
+  validateSettings, messagePages, sha256, encryptedZipOnly, needsAttention, pausedAutomatic, normalizeAutomaticSettings
 } from "./core.mjs";
 import { canDelete, canForget, canRetry } from "./results.mjs";
 import { FolderScan, FOLDER_STATES, realFolder, checkpointHint, refreshScanFolders } from "./folder-scan.mjs";
@@ -46,6 +46,7 @@ async function finishOverflow(record) {
   else {
     overflowReport ||= { total: 0, counts: {}, recent: [] };
     overflowReport.total++;
+    if (encryptedZipOnly(record)) overflowReport.encryptedZipCount = (overflowReport.encryptedZipCount || 0) + 1;
     overflowReport.counts[record.status] = (overflowReport.counts[record.status] || 0) + 1;
     overflowReport.updatedAt = new Date().toISOString();
     if (needsAttention(record)) overflowReport.recent = [record, ...overflowReport.recent].slice(0, 20);
@@ -245,6 +246,8 @@ async function verified(record, expectedFingerprint = null, check = () => {}, re
   check();
   if ((record.candidateOrigin || record.candidateAttempt) && !record.sha256)
     throw Object.assign(new Error(t("candidateNoProof", "検査した候補の内容を照合できません。")), {unscannedReason:"unverifiedLocation"});
+  if ((record.copyCandidate || record.candidateChecks?.length) && !record.sha256)
+    throw Object.assign(new Error(t("ambiguousOrigin", "受付時の原本との一致は未確認です。")), {unscannedReason:"ambiguousMessage"});
   const message = await resolveRecord(record, check, beforeRead, read);
   check();
   if (message.external || !message.folder) throw new Error(t("mail010", "保存されているメールを特定できません。"));
@@ -343,9 +346,9 @@ async function quarantineRecord(record, config, automatic = false) {
 }
 
 // Bound optional background I/O, and invalidate every continuation after expiry.
-async function quarantineDeadline(operation, ms) {
+async function quarantineDeadline(operation, ms, timeoutMessage) {
   let active = true, timer;
-  const expired = () => new Error(t("qDeadline", "隔離の確認が時間切れになりました。Thunderbirdで元のフォルダーと隔離先を確認してください。自動で再移動はしません。"));
+  const expired = () => new Error(timeoutMessage || t("qDeadline", "隔離の確認が時間切れになりました。Thunderbirdで元のフォルダーと隔離先を確認してください。自動で再移動はしません。"));
   const check = () => { if (!active) throw expired(); };
   try {
     const deadline = new Promise((resolve, reject) => {
@@ -737,7 +740,7 @@ function forgetRecords(token) {
 }
 
 function toolbarState() {
-  return toolbarNotice(installation, api.runtime.getManifest().version, issue || (receiptRecovery ? receiptRecoveryMessage() : ""), records.filter(needsAttention).length + (overflowReport?.recent || []).filter(needsAttention).length);
+  return toolbarNotice(installation, api.runtime.getManifest().version, issue || (receiptRecovery ? receiptRecoveryMessage() : ""), records.filter(record => needsAttention(record, settings)).length + (overflowReport?.recent || []).filter(record => needsAttention(record, settings)).length);
 }
 async function updateBadge() {
   toolbar.update(toolbarState());
@@ -748,7 +751,7 @@ function moveResultStamp(record) {
 }
 
 function notify(record, coalescedMove = false) {
-  if (!settings.notifications || !needsAttention(record)) return;
+  if (!settings.notifications || !needsAttention(record, settings)) return;
   // A transient failure is actionable only after its scheduled retry fails.
   if (scanFailed(record) && record.nextRetry) return;
   if (record.status === "advisory" && !advisoryNotifies(record)) return;
@@ -774,7 +777,7 @@ function notify(record, coalescedMove = false) {
       await api.notifications.create(record.key, options);
       if (current()) notifiedMoveResults.set(record, stamp);
     } catch {
-      if (current() && settings.notifications && needsAttention(record)) {
+      if (current() && settings.notifications && needsAttention(record, settings)) {
         report(t("mail031", "デスクトップ通知を表示できません。結果画面を確認してください。"));
       }
     } finally { work.pending.delete(stamp); }
@@ -846,7 +849,7 @@ async function locateHistory(key, messageId, expectedPosition, bulk = false) {
       throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
   };
   current();
-  if (bulk && !needsAttention(record)) throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
+  if (bulk && !needsAttention(record, settings)) throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
   if (messageId !== undefined) {
     if (bulk && candidates.length !== 1) throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
     const candidate = candidates.find(item => item.id === messageId && position(item) === expectedPosition);
@@ -897,7 +900,7 @@ async function locateHistory(key, messageId, expectedPosition, bulk = false) {
       if (sameCandidate && records.includes(previous)) return {ok:true, candidateKey:previous.key, folder:candidate.folder};
     }
   }
-  return {ok:true, session, candidates:candidates.map(message => ({id:message.id, position:position(message), folder:message.folder}))};
+  return {ok:true, session, candidates:candidates.map(message => ({id:message.id, position:position(message), folder:message.folder, size:message.size, date:message.date}))};
 }
 
 function receiptDifferences(record, message) {
@@ -913,7 +916,7 @@ function candidateLocation(record, message) {
     record.messageId === message.id : record.locator.folder?.path === message.folder?.path);
 }
 
-async function resolveRecord(record, check = () => {}, beforeRead, read = rawBytes, searchAgain = false) {
+async function resolveRecord(record, check = () => {}, beforeRead, read = rawBytes, searchAgain = false, scanning = false) {
   // A persisted Thunderbird numeric ID must never be reused after restart.
   if (!(searchAgain && record.locator.headerMessageId) && record.session === session && Number.isInteger(record.messageId)) {
     try {
@@ -926,6 +929,19 @@ async function resolveRecord(record, check = () => {}, beforeRead, read = rawByt
     } catch { check(); /* Moved/deleted messages are resolved below. */ }
   }
   const unresolved = (reason, detail) => Object.assign(new Error(detail), { unscannedReason: reason });
+  if (scanning && record.copyCandidate && record.session !== session && !record.sha256 && !record.lastResult) {
+    // Recover only the outstanding inspection, within its selected folder.
+    // A same-folder pair without a digest still cannot be distinguished.
+    const matches = (await envelopeCandidates(record, check)).filter(item =>
+      !item.external && realFolder(item.folder) && item.folder.path === record.locator.folder?.path &&
+      (!record.locator.size || !item.size || item.size === record.locator.size));
+    if (matches.length === 1) {
+      record.messageId = matches[0].id;
+      record.session = session;
+      record.locator = locator(matches[0]);
+      return matches[0];
+    }
+  }
   if ((record.candidateScan || record.candidateOrigin) && !record.sha256) throw unresolved("unverifiedLocation", t("incomingTargetMoved", "候補のメールと受付時の位置が異なり、同じメールであることを確認できません。"));
   if (record.ambiguousAfterRestart || incomingQueue.entries.get(record.key)?.ambiguousAfterRestart) {
     throw unresolved("ambiguousMessage", t("incomingKnownCopies", "同じアカウントで同じ識別情報を持つメールを複数受け付けたため、再起動後に元のメールを区別できません。"));
@@ -1047,7 +1063,7 @@ async function readScanInput(record, maxBytes, check, beforeRead) {
     try {
       // resolveRecord may reconstruct IDs after restart. Its late completion
       // must never modify the live history belonging to another attempt.
-      const message = await resolveRecord(lookup, check, beforeRead, rawBytes, Boolean(record.nextRetry));
+      const message = await resolveRecord(lookup, check, beforeRead, rawBytes, Boolean(record.nextRetry), true);
       check();
       if (before === moveLocationStamp(record) && revision === (moveRevisions.get(record) || 0)) {
         record.messageId = lookup.messageId; record.session = lookup.session; record.locator = lookup.locator;
@@ -1504,6 +1520,79 @@ function promoteIncoming(beforeSequence = Infinity) {
   return recordChanges;
 }
 
+// Candidates are independent work items. Persist the entire set with the parent
+// so a restart cannot turn a partial handoff into a completed inspection.
+function canFindCopies(record) {
+  return record.source === "automatic" && record.status === "incomplete" &&
+    record.unscannedReason === "ambiguousMessage" && !record.copyLookupDone &&
+    !record.candidateScan && !record.review && !record.sha256 && !record.lastResult &&
+    !record.lastAttempt && !deleting.has(record.key) && settings.accountIds.includes(record.locator.accountId) &&
+    (record.receiptGeneration || null) === (settings.receiptGenerations?.[record.locator.accountId] || null);
+}
+
+async function scanCopies(record, expected = null) {
+  const automatic = expected === null;
+  const changed = () => new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
+  const timeout = t("scanInputTimeout", "メールの特定・本文の取得または照合が60秒以内に完了しませんでした。時間をおいて再検査してください。");
+  const limit = automatic ? 3 : 20;
+  const previousChecks = record.candidateChecks;
+  const candidates = await quarantineDeadline(async check => {
+    const found = await envelopeCandidates(record, check);
+    if (!automatic && (found.length !== expected.length || !found.every(item => expected.includes(position(item))))) throw changed();
+    if (found.length <= limit) {
+      for (const item of found) {
+        if (item.external || !realFolder(item.folder) || automatic && isDraftFolder(item.folder)) throw changed();
+        const current = await api.messages.get(item.id);
+        check();
+        if (!sameEnvelope(current, record.locator) || position(current) !== position(item)) throw changed();
+      }
+    }
+    return found;
+  }, SCAN_INPUT_TIMEOUT_MS, timeout);
+  const work = async () => {
+    if (!records.includes(record) || deleting.has(record.key) || record.status !== "incomplete" ||
+        record.unscannedReason !== "ambiguousMessage" || record.candidateChecks !== previousChecks ||
+        record.review || maintenanceActive() || helperRemoved || batchProgress?.active ||
+        (automatic && (!canFindCopies(record) || !automaticIdle.canStart(settings)))) return false;
+    const children = [], links = [];
+    if (candidates.length <= limit) {
+      for (const candidate of candidates) {
+        const existing = records.find(item => item.candidateScan && item.session === session &&
+          item.messageId === candidate.id && item.status === "queued" && !deleting.has(item.key) &&
+          sameEnvelope(candidate, item.locator) && item.locator.folder?.path === candidate.folder.path);
+        const child = existing || {key:crypto.randomUUID(), createdAt:new Date().toISOString(),
+          updatedAt:new Date().toISOString(), source:automatic ? "automatic" : "manual",
+          receiptGeneration:settings.receiptGenerations?.[record.locator.accountId] || null,
+          candidateScan:true, copyCandidate:true, session, messageId:candidate.id, locator:locator(candidate),
+          status:"queued", attempts:0, nextRetry:null, signatures:[], sha256:null,
+          detail:t("mail038", "検査を待っています。")};
+        if (!existing) children.push(child);
+        links.push({key:child.key, folder:candidate.folder, status:"queued"});
+      }
+    }
+    const required = Math.max(0, records.length + children.length - MAX_RECORDS);
+    const evicted = records.filter(item => ["clean", "deleted"].includes(item.status) && !deleting.has(item.key)).slice(0, required);
+    if (evicted.length !== required) throw new Error(t("locateFull", "候補の検査結果を保存する空きがありません。不要な履歴を消去してください。"));
+    const patch = {copyLookupDone:true, candidateChecks:links};
+    if (!candidates.length) Object.assign(patch, {unscannedReason:"messageMissing",
+      detail:t("incomingTargetMissing", "受付したメールを見つけられません。移動または削除された可能性があります。")});
+    const parents = automatic ? records.filter(item => item === record || canFindCopies(item) &&
+      sameEnvelope(record.locator, item.locator)) : [record];
+    const parentSet = new Set(parents);
+    await reserveRecords([...parents, ...evicted], async () => {
+      const kept = records.filter(item => !evicted.includes(item));
+      await persistState([...kept.map(item => parentSet.has(item) ? {...item,...patch} : item), ...children]);
+      for (const parent of parents) Object.assign(parent, structuredClone(patch));
+      records = [...records.filter(item => !evicted.includes(item)), ...children];
+    });
+    if (automatic && !links.length) notify(record);
+    await updateBadge().catch(report);
+    return true;
+  };
+  recordChanges = recordChanges.catch(() => {}).then(work);
+  return recordChanges;
+}
+
 function legacyCandidatePending(item) {
   return item.source === "automatic" && item.status === "incomplete" && item.unscannedReason === "unverifiedLocation" &&
     !item.sha256 && !item.review && !item.reviewBeforeScan && !item.quarantine && !item.lastResult && !item.lastAttempt &&
@@ -1572,6 +1661,22 @@ async function drain() {
           record.retryLegacyCandidate = true;
           record.quarantineIntent = null;
           record.attempts = 0;
+        }
+      }
+      if (!record && idle && settings.enabled && !batchProgress?.active) {
+        const parent = records.find(canFindCopies);
+        if (parent) {
+          try {
+            if (await scanCopies(parent)) continue;
+          } catch (error) {
+            if (records.includes(parent)) parent.detail = error.message;
+          }
+          if (records.includes(parent) && canFindCopies(parent) && automaticIdle.canStart(settings)) {
+            parent.copyLookupDone = true;
+            await save();
+            notify(parent);
+            continue;
+          }
         }
       }
       if (!record) break;
@@ -1699,9 +1804,16 @@ async function drain() {
         record.nextRetry = Date.now() + 60000;
       }
       finishRetry(record);
+      if (record.candidateScan) {
+        for (const parent of records) {
+          const link = parent.candidateChecks?.find(check => check.key === record.key);
+          if (link) Object.assign(link, {status:record.status, scanned:Boolean(record.sha256) &&
+            ["clean","detected","advisory","incomplete"].includes(record.status)});
+        }
+      }
       if (fromFolder) {
         const flag = record.status === "detected" ? "notifiedDetection" :
-          record.status === "advisory" ? (advisoryNotifies(record) ? "notifiedAdvisory" : null) : needsAttention(record) ? "notifiedProblem" : null;
+          record.status === "advisory" ? (advisoryNotifies(record) ? "notifiedAdvisory" : null) : needsAttention(record, settings) ? "notifiedProblem" : null;
         if (flag && !folderScan.job[flag]) {
           folderScan.job[flag] = true;
           notify(record);
@@ -1714,7 +1826,7 @@ async function drain() {
       if (autoQuarantine) startAutomaticQuarantine(record, quarantineConfig);
       await save();
       if (incomingKey) await incomingQueue.finish(incomingKey);
-      if (!fromFolder) notify(record, coalescedMove);
+      if (!fromFolder && (record === overflowPending || !canFindCopies(record))) notify(record, coalescedMove);
       if (record === overflowPending && record.status !== "queued") await finishOverflow(record);
       await updateBadge();
     }
@@ -1788,6 +1900,7 @@ async function initialize() {
   records = Array.isArray(data.records) ? data.records : [];
   overflowPending = data.overflowPending || null;
   overflowReport = data.overflowReport || null;
+  if (overflowReport) overflowReport.encryptedZipCount ??= (overflowReport.recent || []).filter(encryptedZipOnly).length;
   if (overflowReport) overflowReport.recent = (overflowReport.recent || []).slice(0, 20);
   issue = typeof data.issue === "string" ? data.issue : "";
   receiptRecovery = typeof data.receiptRecovery?.token === "string" ? {
@@ -2238,6 +2351,17 @@ async function scheduleMove(oldMessages, newMessages, allowed = null) {
         if (sourceCounts.get(key) !== 1 || targets?.length !== 1) continue;
         const target = targets[0];
         const targetReceipt = incomingQueue.find(session, target.id);
+        if (targetReceipt && targetReceipt !== entry && !entry.ambiguousAfterRestart && !targetReceipt.ambiguousAfterRestart &&
+            !target.external && realFolder(target.folder) && sameEnvelope(target, entry.locator) &&
+            sameEnvelope(target, targetReceipt.locator) && position(target) === position({id:targetReceipt.messageId,folder:targetReceipt.locator.folder}) &&
+            (!target.size || !entry.locator.size || target.size === entry.locator.size) &&
+            entry.receiptGeneration === targetReceipt.receiptGeneration &&
+            JSON.stringify(entry.quarantineIntent) === JSON.stringify(targetReceipt.quarantineIntent) &&
+            entry.quarantineCheckPending === targetReceipt.quarantineCheckPending &&
+            ![...records, overflowPending].some(item => item && (item.key === entry.key || item.key === targetReceipt.key))) {
+          await incomingQueue.finish(entry.key);
+          continue;
+        }
         if (targetReceipt && running && targetReceipt !== entry &&
             records.some(record => record.key === entry.key) &&
             !records.some(record => record.key === targetReceipt.key) &&
@@ -2349,7 +2473,7 @@ api.menus.onClicked.addListener((info, tab) => {
 api.browserAction.onClicked.addListener(() => {
   void ready.then(async () => {
     if (toolbarState().setup) setupRequest = crypto.randomUUID();
-    else if (records.some(needsAttention) || overflowReport?.total || issue) { resultsFilter = "attention"; resultsRequest = crypto.randomUUID(); }
+    else if (records.some(record => needsAttention(record, settings)) || overflowReport?.total || issue) { resultsFilter = "attention"; resultsRequest = crypto.randomUUID(); }
     await openDashboard();
   }).catch(report);
 });
@@ -2532,6 +2656,13 @@ api.runtime.onMessage.addListener(async (request, sender) => {
         return { ok: true };
       case "locateHistory":
         return await locateHistory(request.key, undefined, undefined, request.bulk === true);
+      case "scanCopies": {
+        if (request.session !== session || !Array.isArray(request.positions) || !request.positions.length ||
+            request.positions.length > 20 || !await scanCopies(deletable(request.key), request.positions))
+          throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
+        void drain().catch(report);
+        return {ok:true};
+      }
       case "scanHistoryCandidate":
         if (request.bulk && (deletable(request.key).candidateScanKey || null) !== request.previousKey)
           throw new Error(t("mail080", "検査結果が変わりました。操作をやり直してください。"));
@@ -2695,6 +2826,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
           if (!overflowReport) overflowReport = before;
           else if (before) {
             overflowReport.total += before.total;
+            overflowReport.encryptedZipCount = (overflowReport.encryptedZipCount || 0) + (before.encryptedZipCount || 0);
             for (const [status, count] of Object.entries(before.counts)) overflowReport.counts[status] = (overflowReport.counts[status] || 0) + count;
             overflowReport.recent = [...overflowReport.recent, ...before.recent].slice(0, 20);
           }

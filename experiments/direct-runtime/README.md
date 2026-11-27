@@ -1,4 +1,4 @@
-# 内蔵検査方式（0.20.0a59 試用版）
+# 内蔵検査方式（0.20.0a60 試用版）
 
 このブランチの実験版は、現行の画面・受信検査・フォルダー検査・履歴・確認メモ・通知・隔離・完全削除を、アドオン内蔵の検査処理へ接続します。合成メール専用の0.1.0試作とは別の成果物です。
 
@@ -42,7 +42,7 @@ python3 -B scripts/smoke_direct_mail_check.py --scenario recovery
 node scripts/smoke_mail_ui.mjs --direct
 ```
 
-ビルド結果は `dist/clam-mail-check-direct-0.20.0a59.xpi` です。テスト用のメール取り込み・自動更新・診断APIはこの配布物へ含めません。Ubuntuの実機検証は独立Wayland・D-Bus・XDG設定、macOSは独立したThunderbirdインスタンスと使い捨てプロファイルを使用し、オフラインで起動します。実画面の操作・Xwayland・リモート操作用の権限変更は使いません。
+ビルド結果は `dist/clam-mail-check-direct-0.20.0a60.xpi` です。テスト用のメール取り込み・自動更新・診断APIはこの配布物へ含めません。Ubuntuの実機検証は独立Wayland・D-Bus・XDG設定、macOSは独立したThunderbirdインスタンスと使い捨てプロファイルを使用し、オフラインで起動します。実画面の操作・Xwayland・リモート操作用の権限変更は使いません。
 
 詳細な診断結果はGit除外の出力先へ、監視処理の詳細は非公開の作業メモへ保存しています。公式アドオンサイトへの公開・申請は行っていません。独自Experiment APIの公開条件については引き続き確認が必要です。
 

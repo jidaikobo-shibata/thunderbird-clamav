@@ -10,7 +10,7 @@ import { syncQuarantineSettings, readQuarantineSettings, requireMovePermission, 
 import { createFolderIndex, folderLabel } from "./folder-labels.mjs";
 import { t, uiLanguage, localizeDocument, localizeDetail } from "./i18n.mjs";
 import { installationUI, helperNotice } from "./installation.mjs";
-import { LABELS, needsAttention, normalizeAutomaticSettings } from "./core.mjs";
+import { LABELS, encryptedZipOnly, needsAttention, normalizeAutomaticSettings } from "./core.mjs";
 import { selectable, canDelete, canRetry, canForget, filterRecords, resultPage } from "./results.mjs";
 import { FOLDER_STATES } from "./folder-scan.mjs";
 
@@ -128,6 +128,7 @@ function updateControls() {
     entry.checkbox.disabled = locked || !selectable(record);
     entry.checkbox.checked = selected.has(record.key);
     entry.row.dataset.selected = String(entry.checkbox.checked);
+    entry.candidates.disabled = locked;
     entry.open.disabled = locked || ["queued", "scanning", "deleted"].includes(record.status);
     entry.retry.disabled = locked || !canRetry(record);
     entry.remove.disabled = locked || !canDelete(record);
@@ -389,7 +390,7 @@ function renderDeletePreparation(progress) {
 }
 // Preserve the dashboard selection. Only the keys explicitly retained here
 // go through the original operation's preparation and confirmation again.
-function recoverTargets(keys, failures, verb) {
+function recoverTargets(keys, failures, verb, searchImmediately = false) {
   const dialog = $("locate-dialog"), rows = $("locate-rows"), proceed = $("locate-continue");
   const unresolved = new Set(failures.map(item => item.key)), retained = new Set(keys);
   rows.replaceChildren();
@@ -418,6 +419,7 @@ function recoverTargets(keys, failures, verb) {
             (controls.querySelector("button") || (!proceed.disabled && proceed) || dialog.querySelector('[value="cancel"]')).focus();
         }
       };
+      return element;
     }
     function done(text, keep) {
       if (!dialog.open || !row.isConnected) return;
@@ -426,7 +428,7 @@ function recoverTargets(keys, failures, verb) {
       update();
     }
     const exclude = () => button(t("locateExclude", "この操作から外す"), () => done(t("locateExcluded", "今回の対象から外しました。"), false));
-    button(t("locateSearch", "対象メールを探し直す"), async () => {
+    const search = button(t("locateSearch", "対象メールを探し直す"), async () => {
       status.textContent = t("locateSearching", "候補を探しています。");
       const result = await request("locateHistory", {key});
       if (!dialog.open || !row.isConnected) return;
@@ -436,9 +438,17 @@ function recoverTargets(keys, failures, verb) {
       }
       controls.replaceChildren();
       status.textContent = result.candidates.length ? t("locateUnverified", "元のメールと同じか確認できません。候補を新しい検査として受け付けます。") : t("locateMissing", "現在のメールを特定できません。");
+      if (result.candidates.length && record?.unscannedReason === "ambiguousMessage") {
+        button(t("scanAllCandidates", "候補をすべて検査"), async () => {
+          await request("scanCopies", {key, session:result.session, positions:result.candidates.map(candidate => candidate.position)});
+          done(t("locateQueued", "候補の検査を受け付けました。結果は別の行に表示します。"), false);
+        });
+      }
       for (const candidate of result.candidates) {
         const folder = folderLabel(candidate.folder, folderNames, candidate.folder.accountId);
-        button(t("locateScan", "$1 の候補を検査", [folder]), async () => {
+        const description = [folder, candidate.date && new Date(candidate.date).toLocaleString(uiLanguage()),
+          Number.isFinite(candidate.size) && (candidate.size.toLocaleString(uiLanguage()) + " B")].filter(Boolean).join(" / ");
+        button(t("locateScan", "$1 の候補を検査", [description]), async () => {
           await request("scanHistoryCandidate", {key, messageId:candidate.id, position:candidate.position, session:result.session});
           done(t("locateQueued", "候補の検査を受け付けました。結果は別の行に表示します。"), false);
         });
@@ -446,6 +456,7 @@ function recoverTargets(keys, failures, verb) {
       exclude();
     });
     exclude();
+    if (searchImmediately) queueMicrotask(() => search.click());
   }
   update(); dialog.returnValue = "cancel";
   return new Promise(resolve => {
@@ -588,7 +599,21 @@ function makeRow(record) {
   });
   const retry = actions.appendChild(document.createElement("button"));
   retry.textContent = t("mail134", "再検査");
-  retry.addEventListener("click", () => { void action(() => retryTargets([record.key], true)); });
+  retry.addEventListener("click", () => { void action(async () => {
+    const current = latest.records.find(item => item.key === record.key);
+    if (current?.unscannedReason === "ambiguousMessage") {
+      await recoverTargets([record.key], [{key:record.key, detail:current.detail}], t("mail134", "再検査"), true);
+      return t("locateFinished", "対象の確認を終了しました。");
+    }
+    return retryTargets([record.key], true);
+  }); });
+  const candidates = actions.appendChild(document.createElement("button"));
+  candidates.textContent = t("findResultsView", "別途検査した候補の結果");
+  candidates.addEventListener("click", () => {
+    const checks = latest.records.find(item => item.key === record.key)?.candidateChecks || [];
+    showCandidateResults(checks.map(item => item.key));
+    $("find-back").focus();
+  });
   const review = actions.appendChild(document.createElement("button"));
   review.className = "review-action";
   review.addEventListener("click", () => {
@@ -603,7 +628,7 @@ function makeRow(record) {
   remove.textContent = t("mail136", "完全削除");
   remove.className = "danger";
   remove.addEventListener("click", () => { void action(() => deleteOne(record.key)); });
-  return { row, parts, checkbox, open, retry, review, forget, remove };
+  return { row, parts, checkbox, open, retry, candidates, review, forget, remove };
 }
 
 $("overflow-clear").addEventListener("click", () => {
@@ -614,7 +639,7 @@ let overflowRendered = "";
 function renderOverflow() {
   const report = latest.overflowReport;
   $("overflow-report").hidden = !report?.total && !latest.overflowPending;
-  setText($("overflow-summary"), t("overflowSummary", "保存枠不足の結果$1件 ／ 要確認$2件 ／ 検査中$3件", [report?.total || 0, Object.entries(report?.counts || {}).filter(([status]) => ["detected", "incomplete", "error", "advisory"].includes(status)).reduce((sum, [, count]) => sum + count, 0), latest.overflowPending ? 1 : 0]));
+  setText($("overflow-summary"), t("overflowSummary", "保存枠不足の結果$1件 ／ 要確認$2件 ／ 検査中$3件", [report?.total || 0, Object.entries(report?.counts || {}).filter(([status]) => ["detected", "incomplete", "error", "advisory"].includes(status)).reduce((sum, [, count]) => sum + count, 0) - (latest.settings.quietEncryptedZip ? report?.encryptedZipCount || 0 : 0), latest.overflowPending ? 1 : 0]));
   const signature = JSON.stringify(report?.recent || []);
   if (signature === overflowRendered) return;
   overflowRendered = signature;
@@ -652,6 +677,7 @@ function resultStateLabel(record) {
   else if (record.status === "incomplete") {
     if (record.unscannedReason === "automaticExcluded") label = t("automaticExcludedFilter", "未検査：自動検査の対象から除外");
     if (record.unscannedReason === "messageMissing") return t("findMissing", "候補なし");
+    if (record.candidateChecks?.length) return t("candidateChecks", "現存する候補の検査");
     if (record.unscannedReason === "ambiguousMessage") return t("candidateAmbiguous", "元のメールを区別できません");
   }
   return record.candidateOrigin || record.candidateAttempt ? t("autoCandidateState", "候補：$1", [label]) : label;
@@ -665,7 +691,7 @@ function renderRecords() {
   renderOverflow();
   $("candidate-results-view").hidden = !candidateResultKeys;
   const scope = candidateResultKeys ? latest.records.filter(record => candidateResultKeys.has(record.key)) : latest.records;
-  const filtered = filterRecords(scope, { status: $("filter").value, account: $("account-filter").value, search: $("search").value, folderJobId: folderFilterId, folders: folderNames });
+  const filtered = filterRecords(scope, { settings: latest.settings, status: $("filter").value, account: $("account-filter").value, search: $("search").value, folderJobId: folderFilterId, folders: folderNames });
   filteredRecords = filtered;
   const result = resultPage(filtered, page);
   page = result.page;
@@ -682,7 +708,7 @@ function renderRecords() {
     const entry = rows.get(record.key) || makeRow(record);
     rows.set(record.key, entry);
     entry.row.dataset.status = record.status;
-    entry.row.dataset.attention = String(needsAttention(record));
+    entry.row.dataset.attention = String(needsAttention(record, latest.settings));
     const origin = record.candidateOrigin || record.candidateAttempt;
     setText(entry.parts.state, resultStateLabel(record));
     entry.parts.time.dateTime = record.updatedAt;
@@ -692,13 +718,18 @@ function renderRecords() {
     const account = latest.accounts.find(account => account.id === record.locator.accountId)?.name || record.locator.accountId || "";
     setText(entry.parts.location, [account, folderLabel(record.locator.folder, folderNames, record.locator.accountId)].filter(Boolean).join(t("listSeparator", " ／ ")));
     const candidate = byKey.get(record.candidateScanKey);
-    const candidateDetail = candidate ? t("findVerdict", "別途検査した候補：$1", [LABELS[candidate.status]]) :
+    const checks = record.candidateChecks || [];
+    entry.candidates.hidden = !checks.some(check => byKey.has(check.key));
+    const candidateDetail = checks.length ? checks.map(check => {
+      const status = byKey.get(check.key)?.status || check.status;
+      return folderLabel(check.folder, folderNames, record.locator.accountId) + " — " + LABELS[status];
+    }).join(" / ") : candidate ? t("findVerdict", "別途検査した候補：$1", [LABELS[candidate.status]]) :
       record.candidateScanKey ? t("findPrevious", "候補の検査を受け付けた履歴があります。") : "";
     const originDetail = origin ? t("candidateOriginDetail", "受付時の原本との一致は未確認です。受付フォルダー：$1。照合時の相違：$2。",
       [folderLabel(origin.locator.folder, folderNames), origin.differences.map(reason => candidateDifferences[reason]).join(" / ")]) : "";
     setText(entry.parts.originProof, originDetail);
     entry.parts.originProof.hidden = !originDetail;
-    setText(entry.parts.detail, [candidateDetail, scanHistoryDescription(record) || localizeDetail(record), advisoryDescription(record), quarantineSummary(record, folderNames), isReviewed(record) && record.review.note ? t("reviewMemo", "判断メモ：$1", [record.review.note]) : ""].filter(Boolean).join(" "));
+    setText(entry.parts.detail, [candidateDetail, checks.length ? t("ambiguousOrigin", "受付時の原本との一致は未確認です。") : encryptedZipOnly(record) ? t("zipUnscanned", "暗号化ZIPの中身は未検査です。") : scanHistoryDescription(record) || localizeDetail(record), advisoryDescription(record), quarantineSummary(record, folderNames), isReviewed(record) && record.review.note ? t("reviewMemo", "判断メモ：$1", [record.review.note]) : ""].filter(Boolean).join(" "));
     setText(entry.parts.signatures, (record.signatures || []).join(" / "));
     setText(entry.parts.engine, record.engine || "");
     setText(entry.parts.scanPolicy, record.scanSettings ? policyDescription(record.scanSettings) : "");
@@ -708,14 +739,16 @@ function renderRecords() {
     const reviewLabel = isReviewed(record) ? t("unreviewRowAction", "未確認に") : t("reviewRowAction", "確認済み");
     setText(entry.review, reviewLabel);
     entry.review.setAttribute("aria-label", t("namedDetail", "$1：$2", [record.locator.subject || t("mail022", "件名なし"), reviewLabel]));
-    for (const [button, label] of [[entry.checkbox, t("mail138", "一括操作の対象に選択")], [entry.remove, t("mail139", "ごみ箱を経由せず完全削除")], [entry.forget, t("forgetTitle", "履歴だけ消去")], [entry.open, t("mail131", "開く")], [entry.retry, t("mail134", "再検査")]]) {
+    const retryLabel = record.unscannedReason === "ambiguousMessage" ? t("findRowCandidates", "候補を探して検査") : t("mail134", "再検査");
+    setText(entry.retry, retryLabel);
+    for (const [button, label] of [[entry.checkbox, t("mail138", "一括操作の対象に選択")], [entry.remove, t("mail139", "ごみ箱を経由せず完全削除")], [entry.forget, t("forgetTitle", "履歴だけ消去")], [entry.open, t("mail131", "開く")], [entry.retry, retryLabel]]) {
       button.setAttribute("aria-label", t("namedDetail", "$1：$2", [record.locator.subject || t("mail022", "件名なし"), label]));
     }
     const at = $("results").children[index];
     if (at !== entry.row) $("results").insertBefore(entry.row, at || null);
   }
   const waiting = latest.waitingCount ?? latest.records.filter(record => record.status === "queued").length;
-  const attention = latest.records.filter(needsAttention).length + (latest.overflowReport?.recent || []).filter(needsAttention).length;
+  const attention = latest.records.filter(record => needsAttention(record, latest.settings)).length + (latest.overflowReport?.recent || []).filter(record => needsAttention(record, latest.settings)).length;
   setText($("tab-results"), attention ? t("mail140", "検査結果（$1）", [attention]) : t("mail141", "検査結果"));
   $("tab-results").setAttribute("aria-label", t("mail142", "検査結果、確認が必要$1件", [attention]));
   $("tab-results").title = t("mail143", "確認が必要$1件", [attention]);
@@ -815,6 +848,13 @@ async function refresh() {
   } finally { refreshing = false; }
 }
 
+function showCandidateResults(keys) {
+  candidateResultKeys = new Set(keys);
+  $("filter").value = "all"; $("account-filter").value = "all"; $("search").value = "";
+  folderFilterId = null; $("folder-only").checked = false;
+  resetSelection();
+}
+
 function resetSelection() { selected.clear(); page = 0; renderRecords(); }
 for (const id of ["filter", "account-filter"]) $(id).addEventListener("change", resetSelection);
 $("search").addEventListener("input", resetSelection);
@@ -847,14 +887,11 @@ $("find-back").addEventListener("click", () => {
   resetSelection();
 });
 $("find-attention").addEventListener("click", () => {
-  const targets = filteredRecords.filter(needsAttention);
+  const targets = filteredRecords.filter(record => needsAttention(record, latest.settings));
   void action(async () => {
     const result = await findAttention(targets, request, folder => folderLabel(folder, folderNames));
     if (result.candidates) {
-      candidateResultKeys = new Set(result.candidates);
-      $("filter").value = "all"; $("account-filter").value = "all"; $("search").value = "";
-      folderFilterId = null; $("folder-only").checked = false;
-      resetSelection();
+      showCandidateResults(result.candidates);
       return t("findResultsView", "別途検査した候補の結果");
     }
     const keys = result.originals || [];
@@ -917,6 +954,7 @@ function syncSettings(settings) {
   savedSettingsVersion = JSON.stringify(settings);
   settings = normalizeAutomaticSettings(settings);
   $("notifications").checked = settings.notifications;
+  $("quiet-encrypted-zip").checked = Boolean(settings.quietEncryptedZip);
   $("definition-source").value = settings.definitionSource || "addon";
   $("idle-automatic").checked = settings.idleAutomatic === true;
   syncScanPolicy(settings.scanSettings, true);
@@ -1154,6 +1192,7 @@ $("settings-form").addEventListener("submit", async event => {
   }
   clearScanErrors();
   const settings = { enabled: accountIds.length > 0, notifications: $("notifications").checked,
+    ...($("quiet-encrypted-zip").checked ? { quietEncryptedZip:true } : {}),
     idleAutomatic: $("idle-automatic").checked, accountIds, quarantine, scanSettings };
   if (!$("windows-definitions").hidden && $("definition-source").value === "gui") settings.definitionSource = "gui";
   const changedSource = latest.settings.definitionSource !== settings.definitionSource;

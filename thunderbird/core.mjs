@@ -17,6 +17,7 @@ export function normalizeAutomaticSettings(value = {}) {
   const ids = Array.isArray(settings.accountIds) ? [...new Set(settings.accountIds.filter(id => typeof id === "string"))] : [];
   const accountIds = settings.enabled === true ? ids : [];
   return { enabled: accountIds.length > 0, notifications: settings.notifications, accountIds,
+    ...(value.quietEncryptedZip === true ? { quietEncryptedZip: true } : {}),
     ...(value.idleAutomatic === true ? { idleAutomatic: true } : {}),
     ...(value.definitionSource === "gui" ? { definitionSource: "gui" } : {}),
     ...(value.quarantine ? { quarantine: structuredClone(value.quarantine) } : {}),
@@ -29,7 +30,12 @@ export const LABELS = Object.freeze({
 });
 export const pausedAutomatic = (record, settings) => record.source === "automatic" && record.status === "queued" &&
   (!settings.enabled || !settings.accountIds.includes(record.locator.accountId));
-export const needsAttention = record => ["detected", "incomplete", "error", "advisory"].includes(record.status) && !isReviewed(record);
+export const encryptedZipOnly = record => record.status === "incomplete" && !record.lastAttempt &&
+  !record.unscannedReason && !record.advisories?.length && record.signatures?.length > 0 &&
+  record.signatures.every(signature => signature === "Heuristics.Encrypted.Zip");
+export const needsAttention = (record, settings) => !(settings?.quietEncryptedZip && encryptedZipOnly(record)) &&
+  !(record.status === "incomplete" && record.unscannedReason === "ambiguousMessage" &&
+    record.candidateChecks?.length && record.candidateChecks.every(check => check.scanned)) && ["detected", "incomplete", "error", "advisory"].includes(record.status) && !isReviewed(record);
 
 export function accountOf(message) {
   return message.folder?.accountId || "";
@@ -56,6 +62,7 @@ export function sameEnvelope(message, saved) {
 export function validateSettings(value, knownIds) {
   if (!value || typeof value.enabled !== "boolean" ||
       typeof value.notifications !== "boolean" ||
+      (value.quietEncryptedZip !== undefined && typeof value.quietEncryptedZip !== "boolean") ||
       (value.idleAutomatic !== undefined && typeof value.idleAutomatic !== "boolean") || !Array.isArray(value.accountIds) ||
       value.accountIds.some(id => typeof id !== "string" || !knownIds.includes(id))) {
     throw new Error(t("mail091", "設定値が不正です。画面を開き直してください。"));

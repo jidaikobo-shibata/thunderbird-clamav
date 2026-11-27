@@ -86,3 +86,13 @@ test("repeated history searches reuse the supplied folder index without scanning
   assert.equal(filterRecords(many, { folders, search: "parent" }).length, 1000);
   assert.equal(pathReads, readsAfterBuild + 5000); // Array callers build once per search, never per record.
 });
+
+test("quiet encrypted ZIP affects attention only and never hides mixed findings", () => {
+  const single = {...records[2], signatures:["Heuristics.Encrypted.Zip"]};
+  const mixed = {...single, signatures:[...single.signatures,"Heuristics.Limits.Exceeded.MaxScanSize"]};
+  const threat = {...single, status:"detected"};
+  const options = {settings:{quietEncryptedZip:true}};
+  assert.equal(filterRecords([single], {status:"attention"}).length, 1);
+  assert.deepEqual(filterRecords([single,mixed,threat], {...options,status:"attention"}), [mixed,threat]);
+  assert.equal(filterRecords([single], {...options,status:"incomplete"}).length, 1);
+});
