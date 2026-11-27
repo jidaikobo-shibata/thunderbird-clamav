@@ -7,7 +7,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 SUPPORTED_MAJORS = (153, 160, 161)
-VERSION = "0.20.0a45"
+VERSION = "0.20.0a46"
 
 
 def build(major=153):

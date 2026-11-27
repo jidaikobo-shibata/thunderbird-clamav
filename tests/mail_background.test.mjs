@@ -1982,6 +1982,122 @@ async function moveDuringScan(rawPhase, {sameId = false, changed = false} = {}) 
 }
 
 test("a move during raw retrieval redirects pending work without stale-location overwrite",async()=>{await moveDuringScan(true);});
+
+function filteredMail() {
+  const old = mail(31);
+  const destination = { ...old, id: 32, folder: { accountId: "one", path: "/Filtered" } };
+  const settings = { enabled: true, accountIds: ["one"], notifications: true };
+  return { old, destination, settings };
+}
+
+for (const destinationFirst of [false, true]) {
+  test(`late filter move uses one scan (destination already scanned: ${destinationFirst})`, async () => {
+    const { old, destination, settings } = filteredMail();
+    const other = mail(33);
+    const h = await harness({ mails: [destination, other], saved: { settings } });
+    const receive = msg => h.events.newMail.listeners[0](msg.folder, { messages: [msg] });
+    receive(old);
+    const pending = await settle(h, s => s.records[0]?.moveDeadline);
+    assert.equal(pending.records[0].status, "queued");
+    assert.equal(pending.records[0].attempts, 0);
+    receive(other);
+    await settle(h, s => s.records.some(r => r.messageId === other.id && r.status === "clean"));
+    if (destinationFirst) {
+      receive(destination);
+      await settle(h, s => s.records.some(r => r.messageId === destination.id && r.status === "clean"));
+    }
+    h.events.moved.listeners[0]({ messages: [old] }, { messages: [destination] });
+    const state = await settle(h, s => s.records.length === 2 && s.records.every(r => r.status === "clean"));
+    if (!destinationFirst) assert.equal(state.records.find(r => r.messageId === destination.id).key, pending.records[0].key);
+    receive(destination);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(h.rawReads, [other.id, destination.id]);
+    assert.equal(h.notifications.length, 0);
+  });
+}
+
+test("an early filter move redirects a delayed incoming notification through consecutive moves", async () => {
+  const { old, destination, settings } = filteredMail();
+  const final = { ...destination, id: 34, folder: { accountId: "one", path: "/Final" } };
+  const h = await harness({ mails: [final], saved: { settings } });
+  h.events.moved.listeners[0]({ messages: [old] }, { messages: [destination] });
+  h.events.moved.listeners[0]({ messages: [destination] }, { messages: [final] });
+  await new Promise(resolve => setImmediate(resolve));
+  h.events.newMail.listeners[0](old.folder, { messages: [old] });
+  const state = await settle(h, s => s.records[0]?.status === "clean");
+  assert.equal(state.records[0].messageId, final.id);
+  assert.deepEqual(h.rawReads, [final.id]);
+});
+
+test("a missing source during raw retrieval waits for the filter move", async () => {
+  const { old, destination, settings } = filteredMail();
+  const h = await harness({ mails: [old, destination], saved: { settings } });
+  const get = h.api.messages.get, raw = h.api.messages.getRaw;
+  h.api.messages.getRaw = async (id, options) => {
+    if (id !== old.id) return raw(id, options);
+    h.api.messages.get = async id => { if (id === old.id) throw new Error("moved"); return get(id); };
+    throw new Error("old ID unavailable");
+  };
+  h.events.newMail.listeners[0](old.folder, { messages: [old] });
+  await settle(h, s => s.records[0]?.moveDeadline);
+  h.events.moved.listeners[0]({ messages: [old] }, { messages: [destination] });
+  const state = await settle(h, s => s.records[0]?.status === "clean");
+  assert.equal(state.records[0].attempts, 1);
+  assert.deepEqual(h.rawReads, [destination.id]);
+});
+
+test("a filter move wakes the pending overflow scan and its repeated new-mail event is harmless", async () => {
+  const { old, destination, settings } = filteredMail();
+  const records = Array.from({ length: 1000 }, (_, i) => ({
+    key: String(i), status: "incomplete", locator: { accountId: "one", subject: String(i) }
+  }));
+  const h = await harness({ mails: [destination], saved: { settings, records } });
+  h.events.newMail.listeners[0](old.folder, { messages: [old] });
+  await settle(h, s => s.overflowPending?.moveDeadline);
+  h.events.moved.listeners[0]({ messages: [old] }, { messages: [destination] });
+  await settle(h, s => s.overflowReport?.counts.clean === 1);
+  h.events.newMail.listeners[0](destination.folder, { messages: [destination] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await h.send("state")).overflowReport.total, 1);
+  assert.deepEqual(h.rawReads, [destination.id]);
+});
+
+test("a bulk move with two indistinguishable sources cannot assign one destination to both", async () => {
+  const { old, destination, settings } = filteredMail();
+  const second = { ...old, id: 39 };
+  const h = await harness({ mails: [destination], saved: { settings } });
+  h.events.newMail.listeners[0](old.folder, { messages: [old, second] });
+  await settle(h, s => s.records.length === 2 && s.records.every(r => r.moveDeadline));
+  h.events.moved.listeners[0]({ messages: [old, second] }, { messages: [destination] });
+  await settle(h, s => s.records.every(r => r.moveConflict));
+  const now = Date.now;
+  try {
+    Date.now = () => now() + 6000;
+    h.timers[0]();
+    const state = await settle(h, s => s.records.every(r => r.status === "error"));
+    assert.ok(state.records.every(r => r.detail.includes("複数")));
+  } finally { Date.now = now; }
+  assert.deepEqual(h.rawReads, []);
+});
+
+test("restart honors the original move deadline and reports missing or ambiguous destinations", async () => {
+  const { old, destination, settings } = filteredMail();
+  for (const mails of [[], [destination, { ...destination, id: 35 }], [destination]]) {
+    const h = await harness({ mails, saved: { settings, records: [{
+      key: "waiting", session: "old", messageId: old.id, locator: locator(old), status: "queued",
+      source: "automatic", attempts: 0, moveDeadline: Date.now() + 50
+    }] } });
+    const state = await settle(h, s => ["error", "clean"].includes(s.records[0]?.status));
+    const [record] = state.records;
+    assert.equal(record.moveDeadline, undefined);
+    assert.equal(record.attempts, 1);
+    if (mails.length === 1) assert.deepEqual(h.rawReads, [destination.id]);
+    else {
+      assert.match(record.detail, mails.length ? /複数/ : /見つかりません/);
+      assert.equal(h.rawReads.length, 0);
+    }
+  }
+});
 test("a move during engine scanning keeps the in-flight record and avoids a duplicate",async()=>{await moveDuringScan(false);});
 
 

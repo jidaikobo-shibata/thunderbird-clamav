@@ -33,6 +33,11 @@ async function finishOverflow(record) {
   if (overflowPending !== record) return;
   if (reserveHistory()) records.push(record);
   else {
+    if (record.source === "automatic" && record.session === session && record.status === "clean") {
+      // Clean overflow results have no individual history. Keep their identity
+      // briefly so a second incoming/move event cannot start another scan.
+      rememberRecent(recentOverflow, position({ id: record.messageId, folder: record.locator.folder }), { record });
+    }
     overflowReport ||= { total: 0, counts: {}, recent: [] };
     overflowReport.total++;
     overflowReport.counts[record.status] = (overflowReport.counts[record.status] || 0) + 1;
@@ -204,6 +209,57 @@ function deletable(key) {
 
 function position(message) {
   return JSON.stringify([message.id, message.folder?.accountId, message.folder?.path, message.folder?.id]);
+}
+
+const MOVE_WAIT_MS = 5000;
+const recentMoves = new Map();
+const recentOverflow = new Map();
+const movedWhileWaiting = new WeakSet();
+let moveEvents = Promise.resolve();
+class MissingScanTarget extends Error {}
+
+function rememberRecent(cache, key, value) {
+  const now = Date.now();
+  for (const [key, entry] of cache) {
+    if (entry.expires > now) break;
+    cache.delete(key);
+  }
+  cache.delete(key);
+  cache.set(key, { ...value, expires: now + MOVE_WAIT_MS });
+  if (cache.size > MAX_RECORDS) cache.delete(cache.keys().next().value);
+}
+
+function waitingForMove(record) {
+  return record.moveDeadline > Date.now() && !movedWhileWaiting.has(record);
+}
+
+function recentDestination(message) {
+  const seen = new Set();
+  for (;;) {
+    const key = position(message);
+    const move = recentMoves.get(key);
+    if (!move?.destination || move.expires <= Date.now() || seen.has(key) || !sameEnvelope(message, move.original)) return message;
+    seen.add(key);
+    message = move.destination;
+  }
+}
+
+function currentRecord(message, except) {
+  const recent = recentOverflow.get(position(message));
+  return [overflowPending, ...records, ...(overflowReport?.recent || []), recent?.expires > Date.now() ? recent.record : null].find(record =>
+    record && record !== except && record.session === session && record.messageId === message.id &&
+    record.locator.folder?.path === message.folder?.path && sameEnvelope(message, record.locator));
+}
+
+// Only redundant incoming work can be dropped. Keep completed verdicts and user-initiated work.
+function discardIncoming(record) {
+  if (record === overflowPending) {
+    overflowPending = null;
+    wakeOverflow();
+  } else {
+    const index = records.indexOf(record);
+    if (index >= 0) records.splice(index, 1);
+  }
 }
 
 async function verified(record, expectedFingerprint = null) {
@@ -449,14 +505,22 @@ async function rawBytes(messageId, maxBytes = MAX_TRANSFER_BYTES) {
   return new Uint8Array(await raw.arrayBuffer());
 }
 
-async function resolveRecord(record) {
+async function resolveRecord(record, waitForMove = false) {
   // A persisted Thunderbird numeric ID must never be reused after restart.
+  const initialLocator = record.locator;
   if (record.session === session && Number.isInteger(record.messageId)) {
     try {
       const message = await api.messages.get(record.messageId);
-      if (sameEnvelope(message, record.locator)) return message;
+      if (sameEnvelope(message, record.locator)) {
+        if (waitForMove && record.locator === initialLocator && position(message) !== position({ id: record.messageId, folder: initialLocator.folder })) {
+          refreshQuarantineLocation(record, message);
+        }
+        return message;
+      }
     } catch { /* Moved/deleted messages are resolved below. */ }
+    if (waitForMove) throw new MissingScanTarget();
   }
+  if (record.moveConflict) throw new Error(t("incomingAmbiguous", "対象メールの候補が複数あります。選択して再検査してください。"));
   if (!record.locator.headerMessageId) {
     throw new Error(t("mail034", "対象を再特定できません。Thunderbirdで選択して再検査してください。"));
   }
@@ -472,7 +536,14 @@ async function resolveRecord(record) {
       matches.push(candidate);
     }
   }
+  if (record.locator !== initialLocator && record.source === "automatic" && record.status === "scanning") {
+    // A verified move won the race with the paginated fallback query.
+    throw new MissingScanTarget();
+  }
   if (matches.length !== 1) {
+    if (record.moveDeadline) throw new Error(matches.length ?
+      t("incomingAmbiguous", "対象メールの候補が複数あります。選択して再検査してください。") :
+      t("incomingMissing", "振り分け先でも対象メールが見つかりません。"));
     throw new Error(t("mail036", "対象メールが存在しないか、複数候補があり特定できません。選択して再検査してください。"));
   }
   record.messageId = matches[0].id;
@@ -483,10 +554,18 @@ async function resolveRecord(record) {
 
 function enqueue(first, source) {
   const work = async () => {
-    for await (const message of messagePages(api.messages, first)) {
+    for await (const received of messagePages(api.messages, first)) {
+      let message = received;
       if (source === "manual" && helperRemoved) throw new Error(t("mail037", "補助プログラムの導入を確認してから検査してください。"));
       if (message.external || !message.folder) continue;
-      if (source === "automatic" && await inQuarantine(message, settings, [...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : [])], { session, digestOf: async message => sha256(await rawBytes(message.id)) })) continue;
+      if (source === "automatic") {
+        await moveEvents;
+        if (!settings.accountIds.includes(accountOf(received))) continue;
+        message = recentDestination(received);
+        if (await inQuarantine(message, settings, [...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : [])], { session, digestOf: async message => sha256(await rawBytes(message.id)) })) continue;
+        message = recentDestination(received);
+        if (currentRecord(message)) continue;
+      }
       if (source === "automatic" && (!settings.enabled ||
           !settings.accountIds.includes(accountOf(message)))) continue;
       if (source === "automatic" && (overflowReport?.recent || []).some(record => record.session === session && record.messageId === message.id)) continue;
@@ -499,6 +578,10 @@ function enqueue(first, source) {
       const keep = Boolean(existing) || reserveHistory();
       const record = existing || { key: crypto.randomUUID(), createdAt: new Date().toISOString() };
       rememberResult(record);
+      delete record.moveConflict;
+      delete record.moveDeadline;
+      const move = recentMoves.get(position(message));
+      if (source === "automatic" && move && !move.destination && move.expires > Date.now() && sameEnvelope(message, move.original)) record.moveConflict = true;
       Object.assign(record, {
         messageId: message.id, session, locator: locator(message), source,
         quarantineIntent: source === "automatic" && settings.quarantine?.[accountOf(message)]?.auto ? {
@@ -532,10 +615,10 @@ async function drain() {
         await finishOverflow(overflowPending);
       }
       // Folder work is fed one at a time, after fresh mail and manual work.
-      let record = records.find(item => item.status === "queued" && item.source === "automatic" &&
+      let record = records.find(item => item.status === "queued" && !waitingForMove(item) && item.source === "automatic" &&
         settings.enabled && settings.accountIds.includes(item.locator.accountId)) ||
         records.find(item => item.status === "queued" && item.source === "manual") ||
-        (overflowPending?.status === "queued" && (overflowPending.source === "manual" || settings.enabled && settings.accountIds.includes(overflowPending.locator.accountId)) ? overflowPending : null);
+        (overflowPending?.status === "queued" && !waitingForMove(overflowPending) && (overflowPending.source === "manual" || settings.enabled && settings.accountIds.includes(overflowPending.locator.accountId)) ? overflowPending : null);
       if (!record && folderScan.available()) {
         if (records.length >= MAX_RECORDS) {
           const index = records.findIndex(item => ["clean", "deleted"].includes(item.status));
@@ -573,12 +656,30 @@ async function drain() {
       record.updatedAt = new Date().toISOString();
       await save();
       let currentDigest = null;
+      const incoming = record.source === "automatic" && !record.lastResult && !record.sha256;
+      movedWhileWaiting.delete(record);
+      const waitForMove = incoming && record.attempts === 1 && (!record.moveDeadline || record.moveDeadline > Date.now());
+      const startPosition = position({ id: record.messageId, folder: record.locator.folder });
       try {
-        const message = await resolveRecord(record);
+        const message = await resolveRecord(record, waitForMove);
+        if (incoming && currentRecord(message, record)) {
+          discardIncoming(record);
+          await save();
+          continue;
+        }
         if (message.headersOnly) {
           throw new Error(t("mail043", "ヘッダーのみ取得されたメールです。本文をダウンロードして再検査してください。"));
         }
-        const bytes = await rawBytes(message.id, policy.mailMiB * 1024 * 1024);
+        let bytes;
+        try {
+          bytes = await rawBytes(message.id, policy.mailMiB * 1024 * 1024);
+        } catch (error) {
+          if (waitForMove && !error.incomplete) {
+            const current = await api.messages.get(message.id).catch(() => null);
+            if (!current || position(current) !== position(message)) throw new MissingScanTarget();
+          }
+          throw error;
+        }
         record.sha256 = await sha256(bytes);
         currentDigest = record.sha256;
         // A move event may have redirected this record while the original raw
@@ -591,6 +692,17 @@ async function drain() {
           if (!sameEnvelope(current, record.locator) || await sha256(await rawBytes(current.id, policy.mailMiB * 1024 * 1024)) !== currentDigest) {
             throw new Error(t("mail036", "対象メールが存在しないか、複数候補があり特定できません。選択して再検査してください。"));
           }
+        }
+        if (incoming && currentRecord(current, record)) {
+          discardIncoming(record);
+          await save();
+          continue;
+        }
+        if (incoming && !settings.accountIds.includes(accountOf(current))) {
+          record.status = "queued";
+          excludePausedAutomatic();
+          await save();
+          continue;
         }
         refreshQuarantineLocation(record, current);
         if (!client || client.closed || client.definitionSource !== settings.definitionSource) {
@@ -618,11 +730,30 @@ async function drain() {
           engine: record.engine, status: result.status };
         record.nextRetry = null;
       } catch (error) {
+        if (incoming && currentRecord({ ...record.locator, id: record.messageId }, record) && !currentDigest) {
+          discardIncoming(record);
+          await save();
+          continue;
+        }
+        if (error instanceof MissingScanTarget) {
+          record.status = "queued";
+          record.attempts--;
+          if (!record.moveDeadline) {
+            record.moveDeadline = Date.now() + MOVE_WAIT_MS;
+            setTimeout(() => { void drain().catch(report); }, MOVE_WAIT_MS);
+          }
+          record.detail = t("waitingForMove", "振り分け先を確認しています。");
+          if (position({ id: record.messageId, folder: record.locator.folder }) !== startPosition) movedWhileWaiting.add(record);
+          excludePausedAutomatic();
+          await save();
+          continue;
+        }
         record.sha256 = currentDigest;
         record.status = error.incomplete ? "incomplete" : "error";
         delete record.detailMessages;
         record.detail = error.message || t("mail045", "検査に失敗しました。");
       }
+      delete record.moveDeadline;
       finishScanAttempt(record, currentDigest);
       let reviewFingerprint = record.sha256 ? "sha256:" + record.sha256 : null;
       if (previousReview?.fingerprint && !record.sha256 && record.status === "incomplete") {
@@ -760,6 +891,9 @@ async function initialize() {
       record.detail = record.source === "folder" ? t("mail049", "フォルダー検査中に終了したため、このメールの結果は未確認です。") : t("mail050", "前回中断された検査を再開します。");
       if (record.source === "folder") record.nextRetry = null;
     }
+    if (record.status === "queued" && record.moveDeadline > Date.now()) {
+      setTimeout(() => { void ready.then(drain).catch(report); }, record.moveDeadline - Date.now());
+    }
   }
   if (retryInterrupted) issue = [issue, t("bulkRetryRestart", "一括再検査が中断されました。検査結果を確認してください。未着手の履歴は保持しています。")].filter(Boolean).join(" ");
   excludePausedAutomatic();
@@ -787,9 +921,31 @@ api.messages.onMoved?.addListener((originals, moved) => {
     const oldMessages = [], newMessages = [];
     for await (const message of messagePages(api.messages, originals)) oldMessages.push(message);
     for await (const message of messagePages(api.messages, moved)) newMessages.push(message);
+    // Cross-account moves can change the account but preserve the envelope.
+    const envelopeKey = saved => JSON.stringify([saved.headerMessageId, saved.author, saved.subject, saved.date]);
+    const originalsByEnvelope = new Map(), destinationsByEnvelope = new Map();
+    for (const message of oldMessages) {
+      const key = envelopeKey(locator(message));
+      originalsByEnvelope.set(key, (originalsByEnvelope.get(key) || 0) + 1);
+    }
+    for (const message of newMessages) {
+      if (!realFolder(message.folder) || message.external) continue;
+      const key = envelopeKey(locator(message));
+      if (!destinationsByEnvelope.has(key)) destinationsByEnvelope.set(key, []);
+      destinationsByEnvelope.get(key).push(message);
+    }
     let changed = false;
     for (const old of oldMessages) {
-      const tracked = [...new Set([...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : [])])];
+      const saved = locator(old);
+      const key = envelopeKey(saved);
+      const candidates = destinationsByEnvelope.get(key) || [];
+      const uniqueMove = candidates.length === 1 && originalsByEnvelope.get(key) === 1;
+      if (candidates.length) rememberRecent(recentMoves, position(old), { original: saved, destination: uniqueMove ? candidates[0] : null });
+      else recentMoves.delete(position(old));
+      const overflow = recentOverflow.get(position(old));
+      const previousOverflow = overflow?.expires > Date.now() ? overflow.record : null;
+      const tracked = [...new Set([...records, ...(overflowReport?.recent || []), ...(overflowPending ? [overflowPending] : []),
+        ...(previousOverflow ? [previousOverflow] : [])])];
       const eligible = tracked.filter(record => sameEnvelope(old, record.locator) &&
         old.folder?.path === record.locator.folder?.path &&
         (record.session !== session || !Number.isInteger(record.messageId) || record.messageId === old.id));
@@ -797,26 +953,52 @@ api.messages.onMoved?.addListener((originals, moved) => {
       const record = eligible[0];
       if (deleting.has(record.key) || record.status === "deleted") continue;
       const hash = record.sha256 || record.lastResult?.sha256;
-      if (!hash && !["queued", "scanning"].includes(record.status)) continue;
+      if (!hash && (record.session !== session || record.messageId !== old.id ||
+          !["queued", "scanning"].includes(record.status))) continue;
+      if (!hash && record.source === "automatic" && candidates.length && !uniqueMove) {
+        record.moveConflict = true;
+        changed = true;
+        continue;
+      }
       const before = JSON.stringify([record.locator, record.messageId, record.session, record.quarantine?.status]);
-      const candidates = newMessages.filter(message => realFolder(message.folder) && !message.external && sameEnvelope(message, { ...record.locator, accountId: accountOf(message) }));
       if (candidates.length > 20) continue;
       // Pending work with no prior digest has no verdict to transfer. A unique
       // move-event target can redirect it; drain still reads/verifies its bytes.
-      const matches = !hash && candidates.length === 1 ? [...candidates] : [];
+      const matches = !hash && uniqueMove ? [...candidates] : [];
       if (hash) for (const candidate of candidates) {
         try { if (await sha256(await rawBytes(candidate.id)) === hash) matches.push(candidate); }
         catch { /* An unreadable move cannot transfer a prior verdict. */ }
       }
       if (matches.length !== 1 || (record.sha256 || record.lastResult?.sha256) !== hash || deleting.has(record.key) || record.status === "deleted" ||
           JSON.stringify([record.locator, record.messageId, record.session, record.quarantine?.status]) !== before) continue;
+      const destination = currentRecord(matches[0], record);
+      if (destination && record.source === "automatic" && !record.lastResult) {
+        if (record.status === "queued") {
+          discardIncoming(record);
+          changed = true;
+          continue;
+        }
+        if (destination.source === "automatic" && destination.status === "queued" && !destination.lastResult) discardIncoming(destination);
+      }
       refreshQuarantineLocation(record, matches[0]);
+      if (record === previousOverflow) {
+        recentOverflow.delete(position(old));
+        rememberRecent(recentOverflow, position(matches[0]), { record });
+      }
+      delete record.moveConflict;
       record.session = session;
+      if (record.moveDeadline) movedWhileWaiting.add(record);
       changed = true;
     }
-    if (changed) await save();
+    if (changed) {
+      excludePausedAutomatic();
+      await save();
+      void drain().catch(report);
+    }
   };
-  mutations = mutations.catch(() => {}).then(work).catch(report);
+  // Incoming overflow work can hold the enqueue queue until its scan finishes.
+  // Movement must be able to wake that scan independently.
+  moveEvents = moveEvents.then(work).catch(report);
 });
 api.mailTabs.onSelectedMessagesChanged.addListener(tab => { lastMailTab = tab.id; });
 api.menus.onClicked.addListener((info, tab) => {

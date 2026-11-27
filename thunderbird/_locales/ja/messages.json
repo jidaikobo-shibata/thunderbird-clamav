@@ -1,4 +1,7 @@
 {
+  "waitingForMove": { "message": "振り分け先を確認しています。" },
+  "incomingMissing": { "message": "振り分け先でも対象メールが見つかりません。" },
+  "incomingAmbiguous": { "message": "対象メールの候補が複数あります。選択して再検査してください。" },
   "mail001": {
     "message": "連携用の更新が必要です。",
     "description": "連携用の更新が必要です。"

@@ -1,4 +1,7 @@
 {
+  "waitingForMove": { "message": "Waiting for the message's destination folder." },
+  "incomingMissing": { "message": "The incoming message could not be found after checking for a move." },
+  "incomingAmbiguous": { "message": "Multiple messages match. Select the message and scan it again." },
   "mail001": {
     "message": "An update is required for integration.",
     "description": "連携用の更新が必要です。"
