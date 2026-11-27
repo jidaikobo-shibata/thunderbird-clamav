@@ -25,7 +25,7 @@ export const LABELS = Object.freeze({
   advisory: t("scanAdvisory", "注意情報"), deleted: t("mail090", "完全削除済み")
 });
 export const pausedAutomatic = (record, settings) => record.source === "automatic" && record.status === "queued" &&
-  (!settings.enabled || !settings.accountIds.includes(record.locator.accountId));
+  (!settings.enabled || !settings.accountIds.includes(record.receivedAccountId || record.locator.accountId));
 export const needsAttention = record => ["detected", "incomplete", "error", "advisory"].includes(record.status) && !isReviewed(record);
 
 export function accountOf(message) {

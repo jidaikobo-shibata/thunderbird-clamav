@@ -1990,6 +1990,46 @@ function filteredMail() {
   return { old, destination, settings };
 }
 
+test("local destination notifications retain their monitored origin across event orders", async () => {
+  for (const order of ["receive-first", "move-first", "source-folder", "move-only"]) {
+    const { old, destination, settings } = filteredMail();
+    destination.folder.accountId = "local";
+    const h = await harness({ mails: [destination], saved: { settings } });
+    const receive = folder => h.events.newMail.listeners[0](folder, { messages: [destination] });
+    h.api.accounts.list = async () => [{ id: "one", type: "imap" }, { id: "local", type: "none" }];
+    const move = () => h.events.moved.listeners[0]({ messages: [old] }, { messages: [destination] });
+    if (order === "source-folder") receive(old.folder);
+    else if (order === "move-only") { old.new = true; move(); }
+    else {
+      if (order === "receive-first") receive(destination.folder); else move();
+      await new Promise(resolve => setImmediate(resolve));
+      if (order === "receive-first") move(); else receive(destination.folder);
+    }
+    const state = await settle(h, s => s.records[0]?.status === "clean");
+    assert.equal(state.records[0].receivedAccountId, "one");
+    assert.deepEqual(h.rawReads, [destination.id]);
+  }
+});
+
+test("an incoming scan follows mail into unmonitored Local Folders with or without a move event", async () => {
+  for (const notified of [true, false]) {
+    const { old, destination, settings } = filteredMail();
+    destination.folder.accountId = "local";
+    const h = await harness({ mails: [destination], saved: { settings } });
+    h.api.accounts.list = async () => [{ id: "one", type: "imap" }, { id: "local", type: "none" }];
+    h.events.newMail.listeners[0](old.folder, { messages: [old] });
+    await settle(h, s => s.records[0]?.moveDeadline);
+    const now = Date.now;
+    try {
+      if (notified) h.events.moved.listeners[0]({ messages: [old] }, { messages: [destination] });
+      else { Date.now = () => now() + 6000; h.timers[0](); }
+      const state = await settle(h, s => s.records[0]?.status === "clean");
+      assert.equal(state.records[0].locator.accountId, "local");
+      assert.deepEqual(h.rawReads, [destination.id]);
+    } finally { Date.now = now; }
+  }
+});
+
 for (const destinationFirst of [false, true]) {
   test(`late filter move uses one scan (destination already scanned: ${destinationFirst})`, async () => {
     const { old, destination, settings } = filteredMail();
