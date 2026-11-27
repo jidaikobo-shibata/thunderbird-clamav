@@ -11,17 +11,14 @@ class DirectPackageTests(unittest.TestCase):
     def setUp(self):
         self.output_dir = Path(self.enterContext(tempfile.TemporaryDirectory()))
 
-    def test_160_package_only_changes_compatibility(self):
-        with zipfile.ZipFile(build(output_dir=self.output_dir)) as esr, zipfile.ZipFile(build(160, output_dir=self.output_dir)) as release:
-            self.assertEqual(esr.namelist(), release.namelist())
-            for name in esr.namelist():
-                if name == "manifest.json":
-                    manifest = json.loads(esr.read(name))
-                    manifest["browser_specific_settings"]["gecko"].update(
-                        strict_min_version="160.0", strict_max_version="160.*")
-                    self.assertEqual(manifest, json.loads(release.read(name)))
-                else:
-                    self.assertEqual(esr.read(name), release.read(name), name)
+    def test_shared_package_filename_and_compatibility(self):
+        path = build(output_dir=self.output_dir)
+        self.assertEqual(path.name, "clam-mail-check-direct-0.30.0.xpi")
+        self.assertEqual(list(self.output_dir.glob("*.xpi")), [path])
+        with zipfile.ZipFile(path) as archive:
+            manifest = json.loads(archive.read("manifest.json"))
+        gecko = manifest["browser_specific_settings"]["gecko"]
+        self.assertEqual((gecko["strict_min_version"], gecko["strict_max_version"]), ("153.0", "161.*"))
 
     def test_real_mail_experiment_keeps_id_and_does_not_ship_installers_or_test_apis(self):
         root = Path(__file__).resolve().parents[1]
@@ -29,8 +26,7 @@ class DirectPackageTests(unittest.TestCase):
         with zipfile.ZipFile(build(output_dir=self.output_dir)) as archive:
             manifest = json.loads(archive.read('manifest.json'))
             self.assertEqual(manifest['browser_specific_settings']['gecko']['id'], stable['browser_specific_settings']['gecko']['id'])
-            self.assertEqual(manifest['browser_specific_settings']['gecko']['strict_max_version'], '153.*')
-            self.assertEqual(manifest['version'], '0.20.0a62')
+            self.assertEqual(manifest['version'], '0.30.0')
             self.assertEqual(archive.read('direct/windows.py'), (root / 'experiments/direct-runtime/windows.py').read_bytes())
             self.assertEqual(manifest['name'], 'ClamAV Mail Check')
             self.assertEqual(manifest['options_ui'], {'page': 'options.html', 'open_in_tab': True})

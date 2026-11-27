@@ -1,4 +1,4 @@
-# 内蔵検査方式（0.20.0a62 試用版）
+# 内蔵検査方式（0.30.0）
 
 このブランチの実験版は、現行の画面・受信検査・フォルダー検査・履歴・確認メモ・通知・隔離・完全削除を、アドオン内蔵の検査処理へ接続します。合成メール専用の0.1.0試作とは別の成果物です。
 
@@ -42,7 +42,7 @@ python3 -B scripts/smoke_direct_mail_check.py --scenario recovery
 node scripts/smoke_mail_ui.mjs --direct
 ```
 
-ビルド結果は `dist/clam-mail-check-direct-0.20.0a62.xpi` です。テスト用のメール取り込み・自動更新・診断APIはこの配布物へ含めません。Ubuntuの実機検証は独立Wayland・D-Bus・XDG設定、macOSは独立したThunderbirdインスタンスと使い捨てプロファイルを使用し、オフラインで起動します。実画面の操作・Xwayland・リモート操作用の権限変更は使いません。
+ビルド結果は `dist/clam-mail-check-direct-0.30.0.xpi` です。テスト用のメール取り込み・自動更新・診断APIはこの配布物へ含めません。Ubuntuの実機検証は独立Wayland・D-Bus・XDG設定、macOSは独立したThunderbirdインスタンスと使い捨てプロファイルを使用し、オフラインで起動します。実画面の操作・Xwayland・リモート操作用の権限変更は使いません。
 
 詳細な診断結果はGit除外の出力先へ、監視処理の詳細は非公開の作業メモへ保存しています。公式アドオンサイトへの公開・申請は行っていません。独自Experiment APIの公開条件については引き続き確認が必要です。
 
@@ -383,7 +383,7 @@ ThunderbirdのbrowserAction更新はウィンドウのrequestAnimationFrameを�
 
 Windows 11 x64、Mozilla Thunderbird 153.7.0 ESR、PSF Python 3.15.2、Cisco ClamAV 1.5.5 で確認しました。153 系用の配布 XPI を独立プロファイルのアドオンマネージャーが 153 で有効、160.0 で互換性対象外と判定しました。内蔵 Experiment が使う内部 API はメジャーバージョンに依存します。[Thunderbird の Experiment API](https://developer.thunderbird.net/add-ons/mailextensions/experiments)
 
-### Thunderbird 160 系
+### Thunderbird 160 系（共通XPI導入前の検証記録）
 
 Windows 11 x64 の Thunderbird 160.0 で、160 系専用 XPI が使い捨てプロファイルで有効になることを確認しました。ビルドは `python scripts/build_direct_mail_check.py --thunderbird-major 160`。153 系用と同じアドオン ID・検査コードを使用し、マニフェストの互換バージョン指定だけが異なります。
 

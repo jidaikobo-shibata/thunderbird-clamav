@@ -1,6 +1,6 @@
 # ClamAV Mail Check
 
-This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.20.0a62**, a prerelease of the integrated Ubuntu/macOS/Windows scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; a62 has not been published.
+This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.30.0** of the integrated Ubuntu/macOS/Windows scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; 0.30.0 has not been published.
 
 The optional encrypted ZIP preference excludes an incomplete scan from attention counts and alerts when its only finding is an encrypted ZIP. It applies to existing history. The ZIP contents remain marked as unscanned.
 
@@ -9,13 +9,13 @@ When an automatic receipt cannot distinguish the original copy, the scanner can 
 
 ## Requirements
 
-- Thunderbird 153.x, or 160.x on Windows. Earlier Ubuntu validation used 153.7.0esr; this macOS work uses 153.5.1esr on macOS 15.6.1, Apple Silicon. See [validation results and limitations](experiments/direct-runtime/README.md).
+- The common XPI targets Thunderbird 153.0 through 161.*. Validate the same file on 153 ESR, 160 and 161 before distribution. Earlier Ubuntu validation used 153.7.0esr; this macOS work uses 153.5.1esr on macOS 15.6.1, Apple Silicon. See [validation results and limitations](experiments/direct-runtime/README.md).
 - Install ClamAV and current definitions separately. Ubuntu and macOS require Python 3.10+.
 - Windows 11 x64 was tested with Thunderbird 153.7.0 ESR and 160.0, ClamAV 1.5.5 and Python 3.15.2. See the Windows setup below.
 - macOS: standard Homebrew ClamAV, with either Homebrew Python or Python from python.org. Intel Mac paths are implemented but hardware validation remains outstanding.
 - Ubuntu: `/usr/bin/python3`, `/usr/bin/clamscan`, and optionally `/usr/sbin/clamd` for repeated scans. Snap/Flatpak is not validated.
 
-Version 0.20.0a7 was reported working well by users on Ubuntu and Apple Silicon Mac. Intel Mac hardware validation is planned and remains outstanding. The app name no longer includes “Experimental”; distribution remains a prerelease.
+Version 0.20.0a7 was reported working well by users on Ubuntu and Apple Silicon Mac. Intel Mac hardware validation is planned and remains outstanding.
 
 ## Install prerequisites
 
@@ -53,7 +53,7 @@ Executable discovery uses fixed installation locations, validates symlink target
 
 ### Windows x64
 
-Use Thunderbird 153.x or 160.x, the official x64 ClamAV MSI in its default Program Files location, and a per-user installation of 64-bit python.org CPython 3.13, 3.14 or 3.15. The extension checks the default Python install manager and classic installer directories under `%LOCALAPPDATA%` (`Python\pythoncore-3.XX-64` or `Programs\Python\Python3XX`). Reparse points are rejected. Keep the default installation directory permissions. [ClamAV downloads](https://www.clamav.net/downloads) and [Python for Windows](https://www.python.org/downloads/windows/).
+Use Thunderbird 153.0 through 161.*, the official x64 ClamAV MSI in its default Program Files location, and a per-user installation of 64-bit python.org CPython 3.13, 3.14 or 3.15. The extension checks the default Python install manager and classic installer directories under `%LOCALAPPDATA%` (`Python\pythoncore-3.XX-64` or `Programs\Python\Python3XX`). Reparse points are rejected. Keep the default installation directory permissions. [ClamAV downloads](https://www.clamav.net/downloads) and [Python for Windows](https://www.python.org/downloads/windows/).
 
 Under the same Windows account, both apps default to `%LOCALAPPDATA%\ClamAV\database`. Upgrade the add-on first, stop any scheduled tasks that invoke FreshClam directly, then enable updates in clamav-gui. Existing legacy GUI selections follow the shared folder after the GUI completes its first update and verifies the definitions. Retry mail scans interrupted by an update.
 
@@ -87,7 +87,7 @@ No additional Python or npm packages are needed:
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-For Thunderbird 160 on Windows, build with `python scripts/build_direct_mail_check.py --thunderbird-major 160`. Install `dist/clam-mail-check-direct-0.20.0a62-tb160.xpi` for 160.x or `dist/clam-mail-check-direct-0.20.0a62.xpi` for 153.x through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
+Install the shared `dist/clam-mail-check-direct-0.30.0.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
 
 Open Settings and choose Check connection again. Start with a small manual folder scan. Automatic scanning is disabled for a new installation; select accounts only after checking results.
 

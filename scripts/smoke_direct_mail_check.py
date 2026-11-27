@@ -568,7 +568,7 @@ class DisposableProfile(tempfile.TemporaryDirectory):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--windows-thunderbird", type=Path, help="Thunderbird 153 or 160 executable")
+    parser.add_argument("--windows-thunderbird", type=Path, help="Thunderbird 153, 160 or 161 executable")
     parser.add_argument("--windows-database", type=Path, help="FreshClam database for the disposable fixture only")
     parser.add_argument("--scenario", choices=["full", "missing", "no-python", "quit", "uninstall", "intake", "latency", "invalid-storage", "disable", "guardian", "worker", "recovery"], default="full")
     parser.add_argument("--shared-definitions", action="store_true", help="Exercise the Windows GUI definition selector with a disposable copy")
@@ -583,12 +583,12 @@ def main():
         if not options.windows_thunderbird or not options.windows_database:
             parser.error("Windows requires explicit disposable executable and database paths")
         ini = options.windows_thunderbird.with_name("application.ini").read_text(encoding="utf-8")
-        major = next((v for v in (153, 160) if any(line.startswith(f"Version={v}.") for line in ini.splitlines())), None)
+        major = next((v for v in (153, 160, 161) if any(line.startswith(f"Version={v}.") for line in ini.splitlines())), None)
         if major is None:
-            parser.error("Thunderbird 153.x or 160.x required")
+            parser.error("Thunderbird 153.x, 160.x or 161.x required")
     if options.scenario in ("guardian", "worker", "no-python") and sys.platform != "win32":
         parser.error("This lifecycle fixture requires the Windows guardian")
-    output = ROOT / (".codex-private/test-output/direct-mail-integration" + ("-tb160" if major == 160 else "") + ("-" + options.scenario if options.scenario != "full" else ""))
+    output = ROOT / (".codex-private/test-output/direct-mail-integration" + (f"-tb{major}" if major != 153 else "") + ("-" + options.scenario if options.scenario != "full" else ""))
     if options.shared_definitions:
         output = output.with_name(output.name + "-shared")
     if options.comparison_xpi:
@@ -597,7 +597,7 @@ def main():
     (output / "result.json").write_text('{"status":"running"}\n')
     with DisposableProfile(prefix="clam-direct-mail-") as temporary:
         directory = Path(temporary)
-        xpi = options.comparison_xpi or build(major, output_dir=directory)
+        xpi = options.comparison_xpi or build(output_dir=directory)
         runtime = directory / "runtime"; runtime.mkdir(mode=0o700)
         profile = directory / "profile"; (profile / "extensions").mkdir(parents=True)
         shared_root = directory / "shared" if options.shared_definitions else None
