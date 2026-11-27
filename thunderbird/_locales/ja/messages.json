@@ -1,4 +1,26 @@
 {
+  "locateDeleteRemaining": {
+    "message": "$ARG1$通の削除確認へ",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "locateRetryRemaining": {
+    "message": "$ARG1$通を再検査",
+    "placeholders": {
+      "arg1": {
+        "content": "$1"
+      }
+    }
+  },
+  "locateKeepMail": {
+    "message": "このメールは削除せずに残す"
+  },
+  "locateSkipRetry": {
+    "message": "このメールの再検査をスキップ"
+  },
   "quietZip": {
     "message": "暗号化ZIPだけが未検査の場合は、要確認件数と通知から除く"
   },

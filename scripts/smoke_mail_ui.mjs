@@ -374,6 +374,19 @@ try {
       await until("document.getElementById('receipt-recovery').hidden");
       assert.equal(await evaluate("testCalls.filter(call=>['deletePermanently','deleteBatch','clearAll'].includes(call.type)).length"), 0);
       await change("filter","attention");
+      await evaluate("window.ambiguousFixture=testState.records.find(r=>r.status==='incomplete');ambiguousFixture.unscannedReason='ambiguousMessage'");
+      const rowSearch = language === "ja" ? "候補を探して検査" : catalogs.en.findRowCandidates.message;
+      const searchButton = "[...document.querySelectorAll('#results button')].find(b=>b.textContent===" + JSON.stringify(rowSearch) + ")";
+      await until(searchButton);
+      await evaluate(searchButton + ".click()");
+      await until("document.getElementById('locate-dialog').open && document.querySelector('#locate-rows button')?.textContent===" +
+        JSON.stringify(language === "ja" ? "候補をすべて検査" : catalogs.en.scanAllCandidates.message));
+      assert.equal(await evaluate("document.querySelectorAll('#locate-rows button').length"),2);
+      assert.equal(await evaluate("document.getElementById('locate-continue').hidden"),true);
+      await evaluate("document.querySelector('#locate-rows button').click()");
+      await until("!document.getElementById('locate-dialog').open && !document.getElementById('find-attention').disabled");
+      assert.equal(await evaluate("testCalls.some(c=>c.type==='scanCopies')"),true);
+      await evaluate("delete ambiguousFixture.unscannedReason");
       await evaluate("window.bulkStart=testCalls.length;document.getElementById('find-attention').click()");
       await until("document.getElementById('find-attention-dialog').open && !document.getElementById('find-unique').hidden");
       const searches = await evaluate("testCalls.slice(bulkStart).filter(c=>c.type==='locateHistory'&&c.bulk).length");

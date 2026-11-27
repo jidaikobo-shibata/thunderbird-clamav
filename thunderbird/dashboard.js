@@ -390,14 +390,25 @@ function renderDeletePreparation(progress) {
 }
 // Preserve the dashboard selection. Only the keys explicitly retained here
 // go through the original operation's preparation and confirmation again.
-function recoverTargets(keys, failures, verb, searchImmediately = false) {
+function recoverTargets(keys, failures, operation, searchImmediately = false) {
   const dialog = $("locate-dialog"), rows = $("locate-rows"), proceed = $("locate-continue");
   const unresolved = new Set(failures.map(item => item.key)), retained = new Set(keys);
+  const bulk = keys.length > 1;
+  const cancel = dialog.querySelector('[value="cancel"]');
+  const closeLabel = t("locateFinish", "閉じる");
+  setText(cancel, bulk ? t("mail348", "キャンセル") : closeLabel);
+  setText($("locate-title"), searchImmediately ? t("findRowCandidates", "候補を探して検査") : t("locateHeading", "操作対象のメールを確認"));
   rows.replaceChildren();
+  $("locate-summary").hidden = searchImmediately;
   setText($("locate-summary"), t("locateSummary", "$1通のうち$2通を特定できませんでした。", [keys.length, failures.length]));
   function update() {
     proceed.disabled = unresolved.size > 0;
-    setText(proceed, retained.size ? t("locateContinue", "$1に進む（$2通）", [verb, retained.size]) : t("locateFinish", "閉じる"));
+    proceed.hidden = !retained.size || !bulk && proceed.disabled;
+    if (!retained.size) setText(cancel, closeLabel);
+    const count = retained.size;
+    if (operation === "delete") setText(proceed, t("locateDeleteRemaining", "$1通の削除確認へ", [count]));
+    else if (operation === "retry") setText(proceed, t("locateRetryRemaining", "$1通を再検査", [count]));
+    else setText(proceed, t("mail131", "開く"));
   }
   for (const {key, detail} of failures) {
     const record = latest.records.find(item => item.key === key);
@@ -427,7 +438,17 @@ function recoverTargets(keys, failures, verb, searchImmediately = false) {
       unresolved.delete(key); if (!keep) retained.delete(key);
       update();
     }
-    const exclude = () => button(t("locateExclude", "この操作から外す"), () => done(t("locateExcluded", "今回の対象から外しました。"), false));
+    function exclude() {
+      if (!bulk) return;
+      const label = operation === "delete" ? t("locateKeepMail", "このメールは削除せずに残す") :
+        t("locateSkipRetry", "このメールの再検査をスキップ");
+      button(label, () => done(t("locateExcluded", "今回の対象から外しました。"), false));
+    }
+    function accepted() {
+      if (!dialog.open || !row.isConnected) return;
+      done(t("locateQueued", "候補の検査を受け付けました。結果は別の行に表示します。"), false);
+      if (!retained.size) dialog.close("accepted");
+    }
     const search = button(t("locateSearch", "対象メールを探し直す"), async () => {
       status.textContent = t("locateSearching", "候補を探しています。");
       const result = await request("locateHistory", {key});
@@ -441,7 +462,7 @@ function recoverTargets(keys, failures, verb, searchImmediately = false) {
       if (result.candidates.length && record?.unscannedReason === "ambiguousMessage") {
         button(t("scanAllCandidates", "候補をすべて検査"), async () => {
           await request("scanCopies", {key, session:result.session, positions:result.candidates.map(candidate => candidate.position)});
-          done(t("locateQueued", "候補の検査を受け付けました。結果は別の行に表示します。"), false);
+          accepted();
         });
       }
       for (const candidate of result.candidates) {
@@ -450,7 +471,7 @@ function recoverTargets(keys, failures, verb, searchImmediately = false) {
           Number.isFinite(candidate.size) && (candidate.size.toLocaleString(uiLanguage()) + " B")].filter(Boolean).join(" / ");
         button(t("locateScan", "$1 の候補を検査", [description]), async () => {
           await request("scanHistoryCandidate", {key, messageId:candidate.id, position:candidate.position, session:result.session});
-          done(t("locateQueued", "候補の検査を受け付けました。結果は別の行に表示します。"), false);
+          accepted();
         });
       }
       exclude();
@@ -467,7 +488,7 @@ function recoverTargets(keys, failures, verb, searchImmediately = false) {
 
 async function retryTargets(keys, single = false) {
   const {failures} = await request("checkRetryTargets", {keys});
-  if (failures?.length) keys = await recoverTargets(keys, failures, t("mail134", "再検査"));
+  if (failures?.length) keys = await recoverTargets(keys, failures, "retry");
   if (!keys.length) return t("locateFinished", "対象の確認を終了しました。");
   if (single) {
     await request("retry", {key:keys[0], checkedLocation:true});
@@ -507,7 +528,7 @@ async function prepareDeleteConfirmation(keys) {
       for (;;) {
         prepared = await request("prepareDeleteBatch", { keys, preparationId: context.id, recover:true });
         if (context.cancelled || !dialog.open || !prepared.failures?.length) break;
-        keys = await recoverTargets(keys, prepared.failures, t("mail357", "メールの完全削除"));
+        keys = await recoverTargets(keys, prepared.failures, "delete");
         if (!keys.length) return null;
         context.id = crypto.randomUUID(); context.total = keys.length;
         renderDeletePreparation();
@@ -541,7 +562,7 @@ async function deleteOne(key) {
   try { target = await request("prepareDelete", { key }); }
   catch (error) {
     if (!error.lookupFailed) throw error;
-    const keys = await recoverTargets([key], [{key, detail:error.message}], t("mail357", "メールの完全削除"));
+    const keys = await recoverTargets([key], [{key, detail:error.message}], "delete");
     if (!keys.length) return t("locateFinished", "対象の確認を終了しました。");
     target = await request("prepareDelete", {key});
   }
@@ -590,7 +611,7 @@ function makeRow(record) {
       try { await request("open", {key}); }
       catch (error) {
         if (!error.lookupFailed) throw error;
-        const keys = await recoverTargets([key], [{key, detail:error.message}], t("mail131", "開く"));
+        const keys = await recoverTargets([key], [{key, detail:error.message}], "open");
         if (!keys.length) return t("locateFinished", "対象の確認を終了しました。");
         await request("open", {key});
       }
@@ -602,7 +623,9 @@ function makeRow(record) {
   retry.addEventListener("click", () => { void action(async () => {
     const current = latest.records.find(item => item.key === record.key);
     if (current?.unscannedReason === "ambiguousMessage") {
-      await recoverTargets([record.key], [{key:record.key, detail:current.detail}], t("mail134", "再検査"), true);
+      const keys = await recoverTargets([record.key], [{key:record.key, detail:current.detail}], "retry", true);
+      if (keys.length) return retryTargets(keys, true);
+      if ($("locate-dialog").returnValue === "accepted") return t("locateQueued", "候補の検査を受け付けました。結果は別の行に表示します。");
       return t("locateFinished", "対象の確認を終了しました。");
     }
     return retryTargets([record.key], true);
