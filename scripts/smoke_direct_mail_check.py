@@ -57,7 +57,8 @@ def fixture_xpi(target, original, version, scenario="full", database=None, share
               "finish": [{"name": "action", "type": "string"}], "idle": [], "coverMain": [{"name":"pauseFallback","type":"boolean","optional":True}], "restoreFrames": [], "composeFrames": []}
     payload["fixture/schema.json"] = json.dumps([{"namespace": "testFixture", "functions": [{"name": name, "type": "function", "async": True, "parameters": values} for name, values in params.items()]}]).encode()
     payload["fixture/mail.json"] = json.dumps(mails()).encode()
-    payload["fixture/options.json"] = json.dumps({"scenario": scenario, "shared": bool(shared_root)}).encode()
+    payload["fixture/options.json"] = json.dumps({"scenario": scenario, "shared": bool(shared_root),
+        "composeAware": b"automaticIdle.waitingState" in payload["background.js"]}).encode()
     if shared_root:
         payload["direct/host.py"] += f"\nos.environ['LOCALAPPDATA'] = {str(shared_root.resolve())!r}\n".encode()
     if database:
@@ -87,6 +88,26 @@ def crash_fixture():
         os._exit(91)
 threading.Thread(target=crash_fixture, daemon=True).start()
 """
+    if scenario in ("full", "quit", "uninstall", "intake"):
+        # These queue/lifecycle scenarios model active composition across restarts.
+        # The latency scenario below observes the real window types.
+        payload["background.js"] = payload["background.js"].replace(
+            b"}, api.windows);", b"}, { onFocusChanged:{addListener(){}}, "
+            b"getLastFocused:async()=>({focused:true,type:'messageCompose'}) });", 1)
+    if scenario == "latency":
+        # The headless Weston backend has no keyboard seat. Drive just the
+        # focus transition; use Thunderbird itself for IDs, types and mail.
+        payload["background.js"] = payload["background.js"].replace(
+            b"}, api.windows);", b"""}, {
+              WINDOW_ID_NONE:api.windows.WINDOW_ID_NONE,
+              getLastFocused:()=>api.windows.getLastFocused(),
+              get:async id=>({...await api.windows.get(id),focused:true}),
+              onFocusChanged:{addListener(listener) {
+                api.storage.onChanged.addListener((changes, area)=>{
+                  if (area==='local' && changes.fixtureFocus) listener(changes.fixtureFocus.newValue);
+                });
+              }}
+            });""", 1)
     if scenario == "missing":
         payload["direct/host.py"] += b'\nCLAMSCAN = "/nonexistent-clam-mail-test/clamscan"\nCLAMD = "/nonexistent-clam-mail-test/clamd"\nCLAMAV_TRUST_ERROR = False\n'
     for name in ["api.js", "seed.js", "driver.js"]:
@@ -349,7 +370,7 @@ threading.Thread(target=crash_fixture, daemon=True).start()
         };
         const intakeRaw = api.messages.getRaw.bind(api.messages);
         api.messages.getRaw = async (...args) => {
-          if (settings.idleAutomatic) throw new Error('Automatic body read while active');
+          if (settings.idleAutomatic && (typeof automaticIdle === "undefined" || !automaticIdle.canStart(settings))) throw new Error('Automatic body read while active');
           return intakeRaw(...args);
         };
         """)

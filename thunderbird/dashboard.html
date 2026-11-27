@@ -123,8 +123,8 @@
     <h2><span data-i18n="mail255">設定</span></h2>
     <form id="settings-form" novalidate>
       <fieldset><legend data-i18n="autoAccountsHeading">新着メールを自動検査するアカウント</legend><div id="accounts"></div>
-        <label><input id="idle-automatic" type="checkbox"> <span data-i18n="idleAutomaticLabel">PCを30秒間操作していないときに自動検査を開始する</span></label>
-        <p class="hint" data-i18n="idleAutomaticHint">操作中は検査待ちとして保存します。開始済みの検査は完了させ、次のメールから待機します。手動検査は待機しません。</p>
+        <label><input id="idle-automatic" type="checkbox"> <span data-i18n="idleAutomaticLabel">メール作成中の入力を優先する</span></label>
+        <p class="hint" data-i18n="idleAutomaticHint">作成画面ではPCが30秒間無操作になるまで新着の検査を待ちます。メール一覧や別のアプリに移ると検査を進めます。</p>
       </fieldset>
       <fieldset><legend data-i18n="notificationHeading">通知</legend><label><input id="notifications" type="checkbox"> <span data-i18n="mail296">デスクトップ通知を有効にする</span></label><label><input id="quiet-encrypted-zip" type="checkbox"> <span data-i18n="quietZip">暗号化ZIPだけが未検査の場合は、要確認件数と通知から除く</span></label></fieldset>
       <fieldset><legend data-i18n="qHeading">検出したメールの隔離</legend>

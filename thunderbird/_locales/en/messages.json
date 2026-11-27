@@ -3183,10 +3183,10 @@
     "message": "More messages require reinspection. Review the notice again."
   },
   "idleAutomaticLabel": {
-    "message": "Start automatic inspection after 30 seconds without computer input"
+    "message": "Prioritize typing while composing mail"
   },
   "idleAutomaticHint": {
-    "message": "While you are active, incoming messages are saved as pending. An inspection already started will finish; subsequent automatic inspections wait. Manual inspections do not wait."
+    "message": "In the compose window, new mail waits until the computer is idle for 30 seconds. Scanning can proceed while you read mail or use another application."
   },
   "idleAutomaticWaiting": {
     "message": "Automatic inspection is waiting for 30 seconds without computer input. Pending messages have not been inspected."
@@ -3554,7 +3554,7 @@
     "message": "Apply"
   },
   "summaryIdleWaiting": {
-    "message": "History: $ARG1$ / Requiring attention: $ARG2$ / Queued: $ARG3$ (waiting for idle time) / Matching filters: $ARG4$",
+    "message": "History: $ARG1$ / Requiring attention: $ARG2$ / Queued: $ARG3$ (waiting while composing) / Matching filters: $ARG4$",
     "placeholders": {
       "arg1": {
         "content": "$1"
@@ -3571,7 +3571,7 @@
     }
   },
   "summaryIdleUnknown": {
-    "message": "History: $ARG1$ / Requiring attention: $ARG2$ / Queued: $ARG3$ (checking idle state) / Matching filters: $ARG4$",
+    "message": "History: $ARG1$ / Requiring attention: $ARG2$ / Queued: $ARG3$ (checking activity state) / Matching filters: $ARG4$",
     "placeholders": {
       "arg1": {
         "content": "$1"

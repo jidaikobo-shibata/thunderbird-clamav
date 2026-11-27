@@ -357,11 +357,11 @@ try {
       assert.equal(await evaluate("document.getElementById('idle-automatic').checked && document.getElementById('settings-save').disabled"),true);
       await evaluate("failSettings=false;document.getElementById('idle-automatic').click();document.getElementById('settings-save').click()");
       await until("testState.settings.idleAutomatic===false && !document.getElementById('idle-automatic').disabled");
-      await evaluate("testState.idleWaiting=true;testState.incomingCount=7;testState.waitingCount=8;testState.oldestIncoming='2026-11-25T01:00:00Z'");
-      const idleLabel = language === "ja" ? "検査待ち8件（無操作時間待機中）" : "Queued: 8 (waiting for idle time)";
+      await evaluate("testState.idleWaiting=true;testState.idleState='compose';testState.incomingCount=7;testState.waitingCount=8;testState.oldestIncoming='2026-11-25T01:00:00Z'");
+      const idleLabel = language === "ja" ? "検査待ち8件（メール作成中のため待機）" : "Queued: 8 (waiting while composing)";
       await until("document.getElementById('summary').textContent.includes(" + JSON.stringify(idleLabel) + ")");
       await evaluate("testState.idleState='unknown'");
-      const unknownLabel = language === "ja" ? "無操作状態の確認待ち" : "checking idle state";
+      const unknownLabel = language === "ja" ? "操作状態の確認待ち" : "checking activity state";
       await until("document.getElementById('summary').textContent.includes(" + JSON.stringify(unknownLabel) + ")");
       await evaluate("testState.idleWaiting=false;testState.idleState='idle'");
       await until("!document.getElementById('summary').textContent.includes(" + JSON.stringify(idleLabel) + ") && document.getElementById('summary').textContent.includes('8')");

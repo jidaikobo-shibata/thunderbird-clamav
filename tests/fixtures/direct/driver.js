@@ -71,9 +71,15 @@ async function invalidStorageScenario() {
   await messenger.testFixture.report(JSON.stringify(report));
 }
 
-async function latencyScenario() {
+async function latencyScenario(composeAware) {
   const fixture = await messenger.testFixture.prepare(), ids = [];
   report.compose = await messenger.testFixture.coverMain();
+  const focus = await messenger.windows.getAll();
+  report.composeFocus = focus.map(({type,focused}) => ({type,focused}));
+  if (composeAware) {
+    await messenger.storage.local.set({fixtureFocus:focus.find(win => win.type === "messageCompose").id});
+    await settled(value => value.idleState === "compose", 15);
+  }
   for (let i = 0; i < 32; i++) {
     const raw = fixture.mails.plain.replace(/Subject: [^\r\n]+/, "Subject: Synthetic latency " + i)
       .replace(/Message-ID: [^\r\n]+/i, "Message-ID: <latency-" + i + "@example.invalid>");
@@ -86,7 +92,16 @@ async function latencyScenario() {
   await messenger.storage.local.set({fixtureReplayMissing:ids});
   report.receiving = await frames;
   const state = await request("state");
+  report.composeGate = {enabled:state.settings.idleAutomatic, waiting:state.idleWaiting, state:state.idleState};
   report.durableReceipts = state.incomingCount ?? state.records.filter(r => r.status==="queued").length + Number(Boolean(state.overflowPending));
+  if (composeAware) {
+    await settled(value => value.incomingCount === ids.length && value.idleWaiting, 20);
+    check(report.durableReceipts === ids.length, "Active composition retains every receipt");
+    await messenger.storage.local.set({fixtureFocus:focus.find(win => win.type === "normal").id});
+    const resumed = await settled(value => value.overflowReport?.total === ids.length && !value.incomingCount, 120);
+    check(resumed.overflowReport.counts.clean === ids.length, "Reading mail resumes every inspection while input remains active");
+    report.scannedWhileReading = resumed.overflowReport.counts.clean;
+  }
   check(report.quiet.frames > 0 && report.receiving.frames > 0, "Compose window is drawing real frames");
   const client = new NativeClient(messenger.runtime);
   const sample = new TextEncoder().encode("Subject: synthetic cleanup\r\n\r\nfixture");
@@ -180,7 +195,7 @@ try {
   report.systemIdleState = await messenger.idle.queryState(30);
   check(["active", "idle"].includes(report.systemIdleState), "System idle API is available");
   const options = await (await fetch(messenger.runtime.getURL("fixture/options.json"))).json();
-  if (options.scenario === "latency") { await latencyScenario(); }
+  if (options.scenario === "latency") { await latencyScenario(options.composeAware); }
   else if (options.scenario === "intake") { await intakeScenario(); }
   else if (options.scenario === "invalid-storage") { await invalidStorageScenario(); }
   else if (options.scenario === "recovery") { await recoveryScenario(); } else {

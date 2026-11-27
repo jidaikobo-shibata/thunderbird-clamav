@@ -53,3 +53,36 @@ test("a stalled backend expires and its late response cannot start inspection", 
   release("idle"); await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.gate.canStart({idleAutomatic:true}), false);
 });
+
+test("compose gates body reads while reading and stable background wake the queue", async () => {
+  let focus, activity, resolveReading, wakes = 0;
+  const windows = {
+    WINDOW_ID_NONE: -1,
+    onFocusChanged: { addListener(fn) { focus = fn; } },
+    getLastFocused: async () => ({focused:true,type:"messageCompose"}),
+    get: async id => id === 3 ? new Promise(resolve => { resolveReading = resolve; }) :
+      {focused:true,type:id === 1 ? "messageCompose" : "normal"}
+  };
+  const gate = new AutomaticIdle({
+    onStateChanged:{addListener(fn) { activity = fn; }},
+    setDetectionInterval() {}, queryState:async () => "active"
+  }, () => { wakes++; }, windows);
+  const settings = {idleAutomatic:true};
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  await gate.refresh(true); await tick();
+  assert.equal(gate.waitingState, "compose");
+  assert.equal(gate.canStart(settings), false);
+  activity("idle"); assert.equal(gate.canStart(settings), true);
+  activity("active"); assert.equal(gate.canStart(settings), false);
+  focus(2); await tick(); assert.equal(gate.canStart(settings), true);
+  focus(-1); assert.equal(gate.canStart(settings), false);
+  focus(3); focus(1); resolveReading({focused:true,type:"normal"}); await tick();
+  assert.equal(gate.canStart(settings), false);
+  const before = wakes;
+  focus(-1); await new Promise(resolve => setTimeout(resolve, 550));
+  assert.equal(gate.canStart(settings), true); assert.ok(wakes > before);
+  focus(1); assert.equal(gate.canStart(settings), false);
+  await tick(); assert.equal(gate.canStart(settings), false);
+  focus(-1); await gate.refresh(false); await gate.refresh(true); await tick();
+  assert.equal(gate.canStart(settings), false);
+});

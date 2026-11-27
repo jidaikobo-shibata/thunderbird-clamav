@@ -30,7 +30,7 @@ class DirectPackageTests(unittest.TestCase):
             manifest = json.loads(archive.read('manifest.json'))
             self.assertEqual(manifest['browser_specific_settings']['gecko']['id'], stable['browser_specific_settings']['gecko']['id'])
             self.assertEqual(manifest['browser_specific_settings']['gecko']['strict_max_version'], '153.*')
-            self.assertEqual(manifest['version'], '0.20.0a61')
+            self.assertEqual(manifest['version'], '0.20.0a62')
             self.assertEqual(archive.read('direct/windows.py'), (root / 'experiments/direct-runtime/windows.py').read_bytes())
             self.assertEqual(manifest['name'], 'ClamAV Mail Check')
             self.assertEqual(manifest['options_ui'], {'page': 'options.html', 'open_in_tab': True})

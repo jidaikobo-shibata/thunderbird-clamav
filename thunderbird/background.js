@@ -63,7 +63,7 @@ let recordChanges = Promise.resolve(), recordStaging = null;
 let manualMutations = Promise.resolve();
 let automaticReceipts = 0;
 const pendingReceipts = new Set();
-const automaticIdle = new AutomaticIdle(api.idle, () => { void ready.then(drain).catch(report); });
+const automaticIdle = new AutomaticIdle(api.idle, () => { void ready.then(drain).catch(report); }, api.windows);
 const receiptBudget = new ReceiptBudget();
 let receiptRecovery = null, recoveringReceipts = false;
 let savingReceiptRecovery = false, receiptRecoveryDirty = false;
@@ -2503,7 +2503,7 @@ api.runtime.onMessage.addListener(async (request, sender) => {
           else waiting.delete(record.key);
         }
         return { ok: true, directMigrationBackup, settings, records, waitingCount: waiting.size, incomingCount: incomingQueue.entries.size, oldestIncoming: incomingQueue.entries.values().next().value?.createdAt || null, overflowPending, overflowReport, issue, receiptRecovery, lastHealth, lastScan, resultsRequest, resultsFilter, setupRequest, installation, helperRemoved, maintenance: maintenanceActive(), batch: batchProgress, folderRequest,
-          idleState: automaticIdle.state,
+          idleState: automaticIdle.waitingState,
           idleWaiting: !automaticIdle.canStart(settings) && settings.enabled &&
             ([...incomingQueue.entries.values()].some(entry => waiting.has(entry.key) && settings.accountIds.includes(entry.locator.accountId) &&
               (entry.receiptGeneration || null) === (settings.receiptGenerations?.[entry.locator.accountId] || null)) ||

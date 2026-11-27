@@ -778,8 +778,8 @@ function renderRecords() {
   const summaryValues = [latest.records.length, attention, waiting, filtered.length];
   setText($("summary"), waiting > 0 && latest.idleWaiting
     ? latest.idleState === "unknown"
-      ? t("summaryIdleUnknown", "履歴$1件 ／ 確認が必要$2件 ／ 検査待ち$3件（無操作状態の確認待ち） ／ 絞り込み結果$4件", summaryValues)
-      : t("summaryIdleWaiting", "履歴$1件 ／ 確認が必要$2件 ／ 検査待ち$3件（無操作時間待機中） ／ 絞り込み結果$4件", summaryValues)
+      ? t("summaryIdleUnknown", "履歴$1件 ／ 確認が必要$2件 ／ 検査待ち$3件（操作状態の確認待ち） ／ 絞り込み結果$4件", summaryValues)
+      : t("summaryIdleWaiting", "履歴$1件 ／ 確認が必要$2件 ／ 検査待ち$3件（メール作成中のため待機） ／ 絞り込み結果$4件", summaryValues)
     : t("mail144", "履歴$1件 ／ 確認が必要$2件 ／ 検査待ち$3件 ／ 絞り込み結果$4件", summaryValues));
   setText($("page-label"), t("mail145", "$1 / $2ページ（1ページ50件）", [page + 1, result.pages]));
   $("page-label").dataset.pages = String(result.pages);

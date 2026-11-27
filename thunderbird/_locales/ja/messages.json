@@ -3183,10 +3183,10 @@
     "message": "新しい未受付があります。案内を確認してください。"
   },
   "idleAutomaticLabel": {
-    "message": "PCを30秒間操作していないときに自動検査を開始する"
+    "message": "メール作成中の入力を優先する"
   },
   "idleAutomaticHint": {
-    "message": "操作中は検査待ちとして保存します。開始済みの検査は完了させ、次のメールから待機します。手動検査は待機しません。"
+    "message": "作成画面ではPCが30秒間無操作になるまで新着の検査を待ちます。メール一覧や別のアプリに移ると検査を進めます。"
   },
   "idleAutomaticWaiting": {
     "message": "自動検査は無操作待ちです。PCを30秒間操作しないと開始します。待機中のメールは未検査です。"
@@ -3554,7 +3554,7 @@
     "message": "実行"
   },
   "summaryIdleWaiting": {
-    "message": "履歴$ARG1$件 ／ 確認が必要$ARG2$件 ／ 検査待ち$ARG3$件（無操作時間待機中） ／ 絞り込み結果$ARG4$件",
+    "message": "履歴$ARG1$件 ／ 確認が必要$ARG2$件 ／ 検査待ち$ARG3$件（メール作成中のため待機） ／ 絞り込み結果$ARG4$件",
     "placeholders": {
       "arg1": {
         "content": "$1"
@@ -3571,7 +3571,7 @@
     }
   },
   "summaryIdleUnknown": {
-    "message": "履歴$ARG1$件 ／ 確認が必要$ARG2$件 ／ 検査待ち$ARG3$件（無操作状態の確認待ち） ／ 絞り込み結果$ARG4$件",
+    "message": "履歴$ARG1$件 ／ 確認が必要$ARG2$件 ／ 検査待ち$ARG3$件（操作状態の確認待ち） ／ 絞り込み結果$ARG4$件",
     "placeholders": {
       "arg1": {
         "content": "$1"
