@@ -1731,7 +1731,8 @@ async function drain() {
         record.signatures = result.signatures || [];
         record.advisories = result.advisories || [];
         if (result.status !== "error") lastScan = { checkedAt: new Date().toISOString(),
-          engine: record.engine, status: result.status };
+          engine: record.engine, status: result.status, definitionSource: client.definitionSource || "addon",
+          definitionTimestamp: result.definitionTimestamp ?? connection.health?.definitionTimestamp ?? null };
         record.nextRetry = null;
         if (result.status === "error") {
           scanConnection.discard(connection);

@@ -35,7 +35,7 @@ class ScanOptionsTests(unittest.TestCase):
             session.handle({"op": "chunk", "seq": 0, "data": base64.b64encode(b"a").decode()})
             with tempfile.TemporaryDirectory() as tmp, \
                  patch.object(host, "DATABASE", str(Path(tmp).resolve() / "database")), \
-                 patch.object(host, "health", return_value={"status": "ready", "engine": "test"}), \
+                 patch.object(host, "health", return_value={"status": "ready", "engine": "test", "definitionTimestamp": 1000}), \
                  patch.object(host, "scan", return_value={"status": "clean"}) as scan:
                 session.handle({"op": "end", "sha256": hashlib.sha256(b"a").hexdigest()})
                 if sys.platform == "win32":

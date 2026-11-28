@@ -1005,6 +1005,13 @@ function renderConnection() {
   setText($("health-result"), health ?
     t("mail153", "最終接続確認：$1 ／ $2。$3 $4", [health.status === "ready" ? t("mail154", "応答あり") : t("mail155", "確認失敗"), new Date(health.checkedAt).toLocaleString(uiLanguage()), health.engine || "", localizeDetail(health)]) :
     t("mail156", "接続はまだ確認していません。「接続を再確認」で確認できます。"));
+  const lastScan = latest.lastScan;
+  const mostRecent = lastScan?.definitionTimestamp && lastScan.definitionSource === (latest.settings.definitionSource || "addon") &&
+    (!health || lastScan.checkedAt > health.checkedAt) ? lastScan : health;
+  const stamp = mostRecent?.definitionTimestamp;
+  const warning = $("definition-age-warning");
+  warning.hidden = health?.status === "error" || !Number.isFinite(stamp) || Date.now() - stamp * 1000 <= 3 * 86400000;
+  if (!warning.hidden) setText(warning, t("definitionAgeWarning", "ウイルス定義の作成から3日を超えています（$1）。現在の定義で検査を続けます。FreshClamの更新状況を確認してください。", [new Date(stamp * 1000).toLocaleString(uiLanguage())]));
   const guide = $("clamav-install-guide");
   if (!$("windows-definitions").hidden) {
     const shared = latest.settings.definitionSource === "gui";

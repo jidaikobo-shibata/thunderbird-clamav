@@ -3,6 +3,7 @@
 
 import base64
 import binascii
+import email.utils
 from contextlib import contextmanager
 import hashlib
 import io
@@ -47,7 +48,7 @@ _EN_MESSAGES = {'メールが空か、検査上限の25MiBを超えています�
  '検査できない部分もあります。': 'Some content could not be scanned.',
  'clamdの応答が途中で終了しました。': 'clamd stopped responding before the response was complete.',
  'メール検査用clamdが終了しました。': 'The mail-scanning clamd exited.',
- 'clamdの使用中の定義が古いか、更新日時を確認できません。': "clamd's loaded definitions are outdated, or their age could not be "
+ 'clamdが使用中の定義の作成日時を確認できません。': "The build date of the definitions loaded by clamd could not be "
                                    'determined.',
  'clamdが警告を返しました。検査範囲を確認できません。': 'clamd returned a warning. Scan coverage could not be confirmed.',
  'メール転送中は管理操作を実行できません。': 'Maintenance cannot run during message transfer.',
@@ -110,7 +111,7 @@ _MESSAGE_KEYS = {'メールが空か、検査上限の25MiBを超えています
  '検査できない部分もあります。': 'mail381',
  'clamdの応答が途中で終了しました。': 'mail382',
  'メール検査用clamdが終了しました。': 'mail383',
- 'clamdの使用中の定義が古いか、更新日時を確認できません。': 'mail384',
+ 'clamdが使用中の定義の作成日時を確認できません。': 'mail384',
  'clamdが警告を返しました。検査範囲を確認できません。': 'mail385',
  'メール転送中は管理操作を実行できません。': 'mail386',
  '検査データの受信中です。': 'mail387',
@@ -141,10 +142,10 @@ _MESSAGE_KEYS["検査が制限時間内に完了しませんでした。"] = "sc
 _EN_MESSAGES.update({"MIME解析の上限に達したため、検査範囲を確認できない部分があります。": "MIME analysis reached its resource limit; some scan coverage could not be verified.", " MIME解析の上限に達した部分があります。脅威の検出結果は保持しています。": " MIME analysis reached its resource limit. The malware detection is preserved."})
 _MESSAGE_KEYS.update({"MIME解析の上限に達したため、検査範囲を確認できない部分があります。": "mimeLimited", " MIME解析の上限に達した部分があります。脅威の検出結果は保持しています。": "mimeLimitedThreat"})
 
-_EN_MESSAGES["定義が不足しているか古くなっています。FreshClamで更新してください。"] = "Definitions are missing or outdated. Update them with FreshClam."
+_EN_MESSAGES["定義が不足しているか、定義情報を確認できません。FreshClamの更新状況を確認してください。"] = "Definitions are missing or their metadata could not be verified. Check the FreshClam update status."
 _EN_MESSAGES["定義を読み込めません。更新完了後に再試行してください。"] = (
     "Cannot read the definitions. Retry after the update finishes.")
-_MESSAGE_KEYS["定義が不足しているか古くなっています。FreshClamで更新してください。"] = "directMissingDefinitions"
+_MESSAGE_KEYS["定義が不足しているか、定義情報を確認できません。FreshClamの更新状況を確認してください。"] = "directMissingDefinitions"
 _MESSAGE_KEYS["定義を読み込めません。更新完了後に再試行してください。"] = "guiDefinitionsUnavailable"
 
 
@@ -314,6 +315,15 @@ def write_frame(stream, value):
     stream.write(struct.pack("=I", len(data)))
     stream.write(data)
     stream.flush()
+
+
+# ClamAV also emits this four-line age notice after seven days. Only this
+# complete banner is informational; preserve every other scanner diagnostic.
+_AGE_BANNER = re.compile(
+    rb"^(?:LibClamAV Warning: )?\*{50}\r?\n"
+    rb"(?:LibClamAV Warning: )?\*{3}  The virus database is older than 7 days!  \*{3}\r?\n"
+    rb"(?:LibClamAV Warning: )?\*{3}   Please update it as soon as possible\.    \*{3}\r?\n"
+    rb"(?:LibClamAV Warning: )?\*{50}\r?$", re.MULTILINE)
 
 
 def classify(returncode, output):
@@ -571,7 +581,7 @@ class MailDaemon:
             config.write_text("\n".join([
                 "Foreground yes", "LocalSocket " + self.address, "LocalSocketMode 600",
                 "TemporaryDirectory " + str(directory), "DatabaseDirectory " + DATABASE,
-                "FailIfCvdOlderThan 3", "SelfCheck 60", "ConcurrentDatabaseReload no",
+                "SelfCheck 60", "ConcurrentDatabaseReload no",
                 "ScanMail yes", "ScanArchive yes", "AlertEncrypted yes", "AlertExceedsMax yes",
                 "PhishingSignatures " + ("yes" if self.options["phishing"] != "off" else "no"),
                 "PhishingScanURLs " + ("yes" if self.options["phishing"] != "off" else "no"),
@@ -615,15 +625,10 @@ class MailDaemon:
         self.start()
         # Check the loaded database, not just the possibly newer on-disk files.
         version = self.exchange(b"VERSION", timeout=2)
-        try:
-            from datetime import datetime
-            stamp = version.split("/", 2)[2]
-            age = time.time() - datetime.strptime(stamp, "%a %b %d %H:%M:%S %Y").timestamp()
-            if not -86400 <= age <= 3 * 86400:
-                raise ValueError("stale database")
-        except (ValueError, IndexError):
+        stamp = definition_timestamp(version)
+        if stamp is None or stamp > time.time() + 86400:
             return {"status": "error", "signatures": [],
-                    "detail": tr('clamdの使用中の定義が古いか、更新日時を確認できません。')}
+                    "detail": tr('clamdが使用中の定義の作成日時を確認できません。')}
         if any(self.options[key] != "off" for key in ("phishing", "macros", "pua")):
             # ALLMATCHSCAN is file-based: private, short-lived input, removed even on errors.
             with tempfile.NamedTemporaryFile(prefix="mail-", dir=self.temp.name) as mail:
@@ -643,11 +648,13 @@ class MailDaemon:
         found = any(line.endswith(" FOUND") for line in lines)
         value = classify((1 if found else 0) if valid else 2, normalized)
         value["engine"] = version + " (clamd)"
+        value["definitionTimestamp"] = stamp
         if self.diagnostics is not None:
             size = os.fstat(self.diagnostics.fileno()).st_size
             offset = min(self.diagnostic_offset, size)
             length = size - offset
-            diagnostic = os.pread(self.diagnostics.fileno(), min(length, MAX_FRAME), offset).upper()
+            diagnostic = os.pread(self.diagnostics.fileno(), min(length, MAX_FRAME), offset)
+            diagnostic = _AGE_BANNER.sub(b"", diagnostic).upper()
             self.diagnostic_offset = size
             if length > MAX_FRAME or b"WARNING" in diagnostic or b"ERROR" in diagnostic:
                 if value["status"] in ("clean", "advisory"):
@@ -726,7 +733,7 @@ def gui_definitions_error():
 
 def definitions_error():
     return {"status": "error", "code": "definitions_unavailable", "signatures": [],
-            "detail": tr("定義が不足しているか古くなっています。FreshClamで更新してください。")}
+            "detail": tr("定義が不足しているか、定義情報を確認できません。FreshClamの更新状況を確認してください。")}
 
 
 def scan_clamscan(data, options=None, database=None):
@@ -740,7 +747,7 @@ def scan_clamscan(data, options=None, database=None):
     args = [CLAMSCAN, "--stdout", "--no-summary", "--scan-mail=yes",
             "--allmatch=yes", "--alert-encrypted=yes", "--alert-exceeds-max=yes",
             "--max-filesize=25M", "--max-scansize=100M", "--max-files=10000",
-            "--max-recursion=16", "--max-scantime=60000", "--fail-if-cvd-older-than=3",
+            "--max-recursion=16", "--max-scantime=60000",
             "--phishing-sigs=no", "--phishing-scan-urls=no", "-"]
     args = [arg for arg in args if not arg.startswith(("--max-filesize=", "--max-scansize=", "--max-scantime=", "--phishing-sigs=", "--phishing-scan-urls="))]
     args[-1:-1] = ["--max-filesize=%sM" % options["mailMiB"], "--max-scansize=%sM" % options["expandedMiB"],
@@ -765,9 +772,10 @@ def scan_clamscan(data, options=None, database=None):
     except OSError:
         return {"status": "error", "signatures": [],
                 "detail": tr('ClamAVを起動できません。インストール状態を確認してください。')}
-    value = classify(result.returncode, result.stdout.decode("utf-8", "replace"))
+    output = _AGE_BANNER.sub(b"", result.stdout).decode("utf-8", "replace")
+    value = classify(result.returncode, output)
     if value["status"] in ("clean", "advisory") and (
-        result.stderr.strip() or "Warning:" in result.stdout.decode("utf-8", "replace")
+        _AGE_BANNER.sub(b"", result.stderr).strip() or "Warning:" in output
     ):
         value["status"] = "incomplete"
         value["detail"] = tr('ClamAVが警告を返しました。検査範囲を確認できません。')
@@ -817,6 +825,20 @@ def scan(data, scanner=None, options=None, database=None):
     return value
 
 
+def definition_timestamp(version):
+    fields = version.split("/", 2)
+    if len(fields) != 3 or not fields[1].isdigit():
+        return None
+    # ClamAV reports local ctime, with English weekday/month names.
+    parsed = email.utils.parsedate(fields[2])
+    if not parsed:
+        return None
+    try:
+        return time.mktime((*parsed[:8], -1))
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
 def health(database=None):
     if CLAMAV_TRUST_ERROR:
         return {"status": "error", "code": "clamav_unusable", "detail": tr('ClamAVを起動・確認できません。導入状態と実行権限を確認してください。')}
@@ -833,19 +855,14 @@ def health(database=None):
         version = result.stdout.decode("utf-8", "replace").strip()[:300]
         if not version.startswith("ClamAV "):
             raise OSError("invalid version")
-        if sys.platform == "win32":
-            if not windows_definitions_present(database):
-                return definitions_error()
-            fields = version.split("/")
-            if len(fields) != 3 or not fields[1].isdigit():
-                return definitions_error()
-            import email.utils
-            stamp = email.utils.parsedate(fields[2])
-            if not stamp or not 0 <= time.time() - time.mktime(stamp) <= 3 * 86400:
-                return {**definitions_error(), "engine": version}
+        if sys.platform == "win32" and not windows_definitions_present(database):
+            return definitions_error()
+        stamp = definition_timestamp(version)
+        if stamp is None or stamp > time.time() + (0 if sys.platform == "win32" else 86400):
+            return {**definitions_error(), "engine": version}
     except (OSError, subprocess.TimeoutExpired):
         return {"status": "error", "code": "clamav_unusable", "detail": tr('ClamAVを起動・確認できません。導入状態と実行権限を確認してください。')}
-    return {"status": "ready", "protocol": PROTOCOL, "engine": version,
+    return {"status": "ready", "protocol": PROTOCOL, "engine": version, "definitionTimestamp": stamp,
             "maxBytes": MAX_TRANSFER, "chunkBytes": CHUNK_SIZE, "scanSettingsVersion": 1,
             "detail": (tr('連続検査では専用clamdを利用します。初回は定義を読み込みます。起動できない場合はclamscanを利用します。')
                        if CLAMD and os.access(CLAMD, os.X_OK) else tr('検査はclamscanで1通ずつ実行します。') )}
@@ -969,7 +986,7 @@ class Session:
                         current = health(database)
                         if current["status"] != "ready":
                             return {**current, "signatures": [], "scanSettings": options}
-                        return {**scan(data, None, options, database), "engine": current["engine"]}
+                        return {**scan(data, None, options, database), "engine": current["engine"], "definitionTimestamp": current["definitionTimestamp"]}
                 except OSError:
                     return {**gui_definitions_error(), "scanSettings": options}
             return scan(data, self.scanner) if options is None else scan(data, self.scanner, options)

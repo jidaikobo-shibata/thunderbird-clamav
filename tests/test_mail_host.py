@@ -46,7 +46,7 @@ class ProtocolTests(unittest.TestCase):
                             "data": base64.b64encode(data[start:start + host.CHUNK_SIZE]).decode()})
         with tempfile.TemporaryDirectory() as tmp, \
              patch.object(host, "DATABASE", str(Path(tmp).resolve() / "database")), \
-             patch.object(host, "health", return_value={"status": "ready", "engine": "test"}), \
+             patch.object(host, "health", return_value={"status": "ready", "engine": "test", "definitionTimestamp": 1000}), \
              patch.object(host, "scan", return_value={"status": "clean"}) as scan:
             self.assertEqual(session.handle({"op": "end", "sha256": hashlib.sha256(data).hexdigest()})["status"], "clean")
             if sys.platform == "win32":
@@ -113,7 +113,7 @@ class ScannerTests(unittest.TestCase):
             self.assertNotIn("shell", kwargs)
             self.assertIn("--alert-exceeds-max=yes", args)
             self.assertIn("--alert-encrypted=yes", args)
-            self.assertIn("--fail-if-cvd-older-than=3", args)
+            self.assertFalse(any(arg.startswith("--fail-if-cvd-older-than") for arg in args))
             self.assertFalse(any(arg.startswith(("--move", "--remove", "--log")) for arg in args))
             self.temp = Path(next(arg.split("=", 1)[1] for arg in args if arg.startswith("--tempdir=")))
             self.assertEqual(self.temp.stat().st_mode & 0o777, 0o700)
@@ -137,6 +137,17 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(host.scan(b"hello")["status"], "error")
         with patch.object(host.subprocess, "run", side_effect=FileNotFoundError):
             self.assertEqual(host.scan(b"hello")["status"], "error")
+
+    def test_only_definition_age_banner_is_informational(self):
+        banner = b"\n".join(b"LibClamAV Warning: " + line for line in (
+            b"*" * 50, b"***  The virus database is older than 7 days!  ***",
+            b"***   Please update it as soon as possible.    ***", b"*" * 50)) + b"\n"
+        for extra, status in [(b"", "clean"), (b"LibClamAV Warning: stream truncated", "incomplete")]:
+            reply = subprocess.CompletedProcess([], 0, b"stdin: OK\n", banner + extra)
+            with patch.object(host, "CLAMAV_TRUST_ERROR", False), patch.object(host, "CLAMSCAN", sys.executable), \
+                    patch.object(host, "DATABASE", "fixture"), patch.object(host, "windows_definitions_present", return_value=True), \
+                    patch.object(host.subprocess, "run", return_value=reply):
+                self.assertEqual(host.scan_clamscan(b"hello")["status"], status)
 
     def test_inline_pgp_and_smime_are_incomplete_but_signed_mail_is_not(self):
         self.assertTrue(host.encrypted_mail(b"Content-Type: text/plain\r\n\r\n-----BEGIN PGP MESSAGE-----\r\nexample"))
@@ -165,8 +176,14 @@ class DaemonTests(unittest.TestCase):
                 self.assertEqual(result["sha256"], hashlib.sha256(b"hello").hexdigest())
                 self.assertIn("clamd", result["engine"])
 
-    def test_loaded_stale_or_unparseable_database_never_clean(self):
-        for version in ["ClamAV 1/1/Sat Jan 01 00:00:00 2000", "invalid"]:
+    def test_old_definitions_scan_and_unparseable_definitions_fail(self):
+        version = "ClamAV 1/1/Sat Jan 01 00:00:00 2000"
+        daemon = host.MailDaemon()
+        with patch.object(daemon, "start"), patch.object(daemon, "exchange", side_effect=[version, "stream: OK"]):
+            result = host.scan(b"hello", daemon)
+            self.assertEqual(result["status"], "clean")
+            self.assertLess(result["definitionTimestamp"], host.time.time() - 3 * 86400)
+        for version in ["invalid", "ClamAV 1/1/unknown"]:
             daemon = host.MailDaemon()
             with patch.object(daemon, "start"), patch.object(daemon, "exchange", return_value=version) as exchange:
                 self.assertEqual(host.scan(b"hello", daemon)["status"], "error")
@@ -202,8 +219,9 @@ class DaemonTests(unittest.TestCase):
             config = (directory / "clamd.conf").read_text()
             self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
             self.assertEqual((directory / "clamd.conf").stat().st_mode & 0o777, 0o600)
-            for flag in ["LocalSocketMode 600", "FailIfCvdOlderThan 3", "AlertEncrypted yes", "AlertExceedsMax yes", "PhishingSignatures no", "PhishingScanURLs no", "MaxFileSize 25M", "MaxScanSize 100M", "MaxRecursion 16", "MaxScanTime 60000"]:
+            for flag in ["LocalSocketMode 600", "AlertEncrypted yes", "AlertExceedsMax yes", "PhishingSignatures no", "PhishingScanURLs no", "MaxFileSize 25M", "MaxScanSize 100M", "MaxRecursion 16", "MaxScanTime 60000"]:
                 self.assertIn(flag, config)
+            self.assertNotIn("FailIfCvdOlderThan", config)
             self.assertNotIn("TCPSocket", config)
             self.assertNotIn("/etc/clamav", config)
             daemon.start()

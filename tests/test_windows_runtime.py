@@ -118,7 +118,7 @@ exit 1
                     with patch.object(host, "scan") as scan:
                         self.assertEqual(session.handle(end)["status"], "error")
                         scan.assert_not_called()
-                health.return_value = {"status": "ready", "engine": "ClamAV test"}
+                health.return_value = {"status": "ready", "engine": "ClamAV test", "definitionTimestamp": 1000}
                 self.assertEqual(session.handle({"op": "health", **shared})["definitionSource"], "gui")
                 health.assert_called_once_with(str(root / "database"))
                 session.handle({"op": "begin", "size": 1, **shared})
@@ -160,14 +160,17 @@ exit 1
                     self.assertEqual(host.scan_clamscan(b"synthetic")["code"], "definitions_unavailable")
                 run.assert_not_called()
 
-    def test_unparseable_and_old_versions_never_report_ready(self):
+    def test_unparseable_version_fails_and_old_readable_version_is_ready(self):
         with patch.object(host, "CLAMSCAN", sys.executable), patch.object(host, "CLAMAV_TRUST_ERROR", False), \
                 patch.object(host, "windows_definitions_present", return_value=True):
-            for version in (b"ClamAV 1.5.5", b"ClamAV 1.5.5/123/unknown",
-                            b"ClamAV 1.5.5/123/Mon Nov 20 00:00:00 2000"):
+            for version in (b"ClamAV 1.5.5", b"ClamAV 1.5.5/123/unknown"):
                 result = subprocess.CompletedProcess([], 0, version, b"")
                 with self.subTest(version=version), patch.object(host.subprocess, "run", return_value=result):
                     self.assertEqual(host.health()["code"], "definitions_unavailable")
+
+            version = b"ClamAV 1.5.5/123/Mon Nov 20 00:00:00 2000"
+            with patch.object(host.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, version, b"")):
+                self.assertEqual(host.health()["status"], "ready")
 
     def test_timeout_and_failed_launch_remove_temporary_input(self):
         with tempfile.TemporaryDirectory(prefix="メール test ") as directory:

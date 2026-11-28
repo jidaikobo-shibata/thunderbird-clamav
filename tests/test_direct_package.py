@@ -13,7 +13,7 @@ class DirectPackageTests(unittest.TestCase):
 
     def test_shared_package_filename_and_compatibility(self):
         path = build(output_dir=self.output_dir)
-        self.assertEqual(path.name, "clam-mail-check-direct-0.30.0.xpi")
+        self.assertEqual(path.name, "clam-mail-check-direct-0.30.1.xpi")
         self.assertEqual(list(self.output_dir.glob("*.xpi")), [path])
         with zipfile.ZipFile(path) as archive:
             manifest = json.loads(archive.read("manifest.json"))
@@ -26,7 +26,7 @@ class DirectPackageTests(unittest.TestCase):
         with zipfile.ZipFile(build(output_dir=self.output_dir)) as archive:
             manifest = json.loads(archive.read('manifest.json'))
             self.assertEqual(manifest['browser_specific_settings']['gecko']['id'], stable['browser_specific_settings']['gecko']['id'])
-            self.assertEqual(manifest['version'], '0.30.0')
+            self.assertEqual(manifest['version'], '0.30.1')
             self.assertEqual(archive.read('direct/windows.py'), (root / 'experiments/direct-runtime/windows.py').read_bytes())
             self.assertEqual(manifest['name'], 'ClamAV Mail Check')
             self.assertEqual(manifest['options_ui'], {'page': 'options.html', 'open_in_tab': True})

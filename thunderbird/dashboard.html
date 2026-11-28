@@ -178,6 +178,7 @@
     </section>
     <section class="connection-status" aria-labelledby="connection-title">
       <h3 id="connection-title" tabindex="-1"><span data-i18n="mail303">ClamAVの状態</span></h3>
+      <p id="definition-age-warning" role="status" hidden></p>
       <p id="health-result"><span data-i18n="mail304">接続はまだ確認していません。</span></p>
       <details id="clamav-install-guide">
         <summary data-i18n="clamavInstallHeading">ClamAVの導入方法（Ubuntu / Debian）</summary>
@@ -251,7 +252,7 @@
     <p data-i18n="incomingCoverage">受信通知が届かず、受付記録もないメールは自動で特定できません。確認するには「検査」で受信先・振り分け先を選び、フォルダーに残っているメールを検査してください。</p>
     <p data-i18n="draftAutoScanHelp">下書きは新着の自動検査から除外します。メールの選択やフォルダー単位の手動検査では検査できます。</p>
     <p><span data-i18n="mail340">受信後にメール全体を検査します。検査完了前の閲覧や添付操作は止めません。メール本文・添付は外部サービスに送信しません。暗号化メールは復号せず、未検査として扱います。</span></p>
-    <p><span data-i18n="mail341">上限は1通25MiB、展開後の合計100MiB、検査時間は最大120秒です。専用clamdの初回起動には、別に最大60秒かかります。ClamAVの定義が3日超古い場合は検査失敗として扱います。URLの評判によるフィッシング判定は無効です。</span></p>
+    <p><span data-i18n="mail341">上限は1通25MiB、展開後の合計100MiB、検査時間は最大120秒です。専用clamdの初回起動には、別に最大60秒かかります。定義が3日を超えた場合も検査を続け、「設定」に警告を表示します。URLの評判によるフィッシング判定は無効です。</span></p>
     <h3><span data-i18n="mail342">状態の意味</span></h3>
     <p><span data-i18n="mail343">未検出は脅威を検出しなかった状態で、安全の保証ではありません。「確認が必要」には検出・未検査・失敗が含まれます。</span></p>
     <h3><span data-i18n="mail344">検査と結果への対処</span></h3>

@@ -1,7 +1,7 @@
 # ClamAV Mail Check / ClamAV メール検査
 
 Thunderbirdのメールを、コンピューターにインストールしたClamAVで検査する拡張機能です。
-このブランチは **0.30.0** です。補助プログラムの別途インストールは不要です。
+このブランチは **0.30.1** です。補助プログラムの別途インストールは不要です。
 
 設定の「暗号化ZIPだけが未検査の場合は、要確認件数と通知から除く」は、保存済みの履歴にも適用します。検査結果には暗号化ZIPの中身が未検査であることが残ります。
 
@@ -12,7 +12,7 @@ Thunderbirdのメールを、コンピューターにインストールしたCla
 
 ## インストール
 
-1. Ubuntu・macOS・Windows ともに、共通XPI `dist/clam-mail-check-direct-0.30.0.xpi` を用意します。
+1. Ubuntu・macOS・Windows ともに、共通XPI `dist/clam-mail-check-direct-0.30.1.xpi` を用意します。
 2. Thunderbirdのアドオンマネージャーで、歯車メニューの「ファイルからアドオンをインストール」を選び、XPIを指定します。
 3. 表示される権限を確認してインストールします。Experiment APIを使用するため、Thunderbirdとコンピューターへの全面アクセス権限が必要です。
 4. ツールバーのアイコンから画面を開き、「設定」末尾の「ClamAVの状態」で「接続を再確認」を押します。ClamAVが未導入なら、表示される導入手順に従います。ウイルス定義の初回更新も完了させてください。
@@ -27,7 +27,7 @@ Thunderbirdのメールを、コンピューターにインストールしたCla
 - ClamAVと更新済みの定義。Ubuntuは`/usr/bin/clamscan`・`/usr/sbin/clamd`、macOSはHomebrew版を使用します。
 - 0.20.0a7は利用者からUbuntu・Apple Silicon Mac双方で動作良好との報告がありました。
 - Intel Macは実機未検証で、今後確認予定です。
-- Snap・Flatpak版、Thunderbirdの他のメジャーバージョンは未検証です。0.30.0の共通XPIは153.0〜161.*をインストール対象とし、153 ESR・160・161で同じファイルを検証してから配布します。
+- Snap・Flatpak版、Thunderbirdの他のメジャーバージョンは未検証です。0.30.1の共通XPIは153.0〜161.*をインストール対象とし、153 ESR・160・161で同じファイルを検証してから配布します。
 
 ClamAVは別途必要です。Ubuntu / Debian向けの導入例は次のとおりです。OSのパッケージを変更する操作です。
 
@@ -61,7 +61,7 @@ try {
 }
 ~~~
 
-更新時も同じコマンドを実行します。3日より古い定義では検査できません。XPI をファイルから導入し、「設定」で接続を再確認してください。Windows 版は1通ごとに定義を読み込むため、連続検査には時間がかかります。サービスや別途登録する補助プログラムは不要です。
+更新時も同じコマンドを実行します。3日を超えた定義でも検査を続け、「設定」に警告を表示します。XPI をファイルから導入し、「設定」で接続を再確認してください。Windows 版は1通ごとに定義を読み込むため、連続検査には時間がかかります。サービスや別途登録する補助プログラムは不要です。
 
 アドオン更新時は旧版に上書きして設定・履歴を引き継ぎます。削除はアドオンマネージャーから行います。Python、ClamAV、ユーザー別の定義と設定ファイルは残ります。
 
@@ -87,7 +87,7 @@ mkdir -p /opt/homebrew/var/lib/clamav
 freshclam --config-file="$HOME/clam-mail-freshclam.conf"
 ```
 
-FreshClamは公式ミラーから定義を取得します。初回更新が成功してから「接続を再確認」を押し、少量のメールで試します。定義は同じFreshClamコマンドで定期的に更新してください。3日より古い定義では検査を完了しません。この拡張は定義の自動更新を設定しません。
+FreshClamは公式ミラーから定義を取得します。初回更新が成功してから「接続を再確認」を押し、少量のメールで試します。定義は同じFreshClamコマンドで定期的に更新してください。3日を超えた定義でも検査を続け、「設定」に警告を表示します。この拡張は定義の自動更新を設定しません。
 
 `brew services`による常駐サービスの登録やNative Messagingの登録は不要です。必要時だけアドオン専用の検査プロセスを起動します。署名検証やGatekeeper等の無効化、フルディスクアクセスの追加は導入手順に含めません。
 
@@ -200,7 +200,7 @@ python3 -B scripts/check_source.py
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-ビルド結果は `dist/clam-mail-check-direct-0.30.0.xpi` です。JavaScriptのテストにはNode.js 22以降を使います。
+ビルド結果は `dist/clam-mail-check-direct-0.30.1.xpi` です。JavaScriptのテストにはNode.js 22以降を使います。
 
 ```bash
 for test_file in tests/*.test.mjs; do

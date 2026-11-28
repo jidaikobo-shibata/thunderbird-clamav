@@ -71,6 +71,6 @@ export async function configureDirectView() {
       "mkdir -p " + prefix + "/var/lib/clamav\n" +
       "(\n  set -C\n  printf '%s\\n' \\\n  'DatabaseDirectory " + prefix + "/var/lib/clamav' \\\n  'DatabaseMirror database.clamav.net' \\\n  > \"$HOME/clam-mail-freshclam.conf\"\n)\n" +
       "freshclam --config-file=\"$HOME/clam-mail-freshclam.conf\"";
-    replace("clamavDefinitions", "directMacDefinitions", "上の設定ファイルが既にある場合は上書きせず内容を確認してください。FreshClamの初回更新を完了させてから、接続を再確認します。定義は定期的に更新してください。3日より古い定義では検査が失敗します。python.org版のPythonも利用できます。macOS付属のPythonは使用しません。");
+    replace("clamavDefinitions", "directMacDefinitions", "上の設定ファイルが既にある場合は上書きせず内容を確認してください。FreshClamの初回更新を完了させてから、接続を再確認します。定義は定期的に更新してください。3日を超えた定義でも検査を続け、「設定」に警告を表示します。python.org版のPythonも利用できます。macOS付属のPythonは使用しません。");
   }
 }

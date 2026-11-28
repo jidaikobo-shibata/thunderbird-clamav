@@ -1,4 +1,8 @@
 {
+  "definitionAgeWarning": {
+    "message": "The virus definitions were built more than three days ago ($ARG1$). Scanning continues with these definitions. Check the FreshClam update status.",
+    "placeholders": {"arg1": {"content": "$1"}}
+  },
   "locateDeleteRemaining": {
     "message": "Review deletion of $ARG1$ message(s)",
     "placeholders": {
@@ -1747,8 +1751,8 @@
     "description": "受信後にメール全体を検査します。検査完了前の閲覧や添付操作は止めません。メール本文・添付は外部サービスに送信しません。暗号化メールは復号せず、未検査として扱います。"
   },
   "mail341": {
-    "message": "Limits: 25 MiB per message, 100 MiB after extraction, and 120 seconds per scan. Starting the dedicated clamd for the first time may take up to 60 additional seconds. Scans fail if ClamAV definitions are more than three days old. URL reputation-based phishing detection is disabled.",
-    "description": "上限は1通25MiB、展開後の合計100MiB、検査時間は最大120秒です。専用clamdの初回起動には、別に最大60秒かかります。ClamAVの定義が3日超古い場合は検査失敗として扱います。URLの評判によるフィッシング判定は無効です。"
+    "message": "Limits: 25 MiB per message, 100 MiB after extraction, and 120 seconds per scan. Starting the dedicated clamd for the first time may take up to 60 additional seconds. Scanning continues with older definitions and Settings shows a warning after three days. URL reputation-based phishing detection is disabled.",
+    "description": "上限は1通25MiB、展開後の合計100MiB、検査時間は最大120秒です。専用clamdの初回起動には、別に最大60秒かかります。定義が3日を超えた場合も検査を続け、「設定」に警告を表示します。URLの評判によるフィッシング判定は無効です。"
   },
   "mail342": {
     "message": "What the statuses mean",
@@ -1919,8 +1923,8 @@
     "description": "メール検査用clamdが終了しました。"
   },
   "mail384": {
-    "message": "clamd's loaded definitions are outdated, or their age could not be determined.",
-    "description": "clamdの使用中の定義が古いか、更新日時を確認できません。"
+    "message": "The build date of the definitions loaded by clamd could not be determined.",
+    "description": "clamdが使用中の定義の作成日時を確認できません。"
   },
   "mail385": {
     "message": "clamd returned a warning. Scan coverage could not be confirmed.",
@@ -3056,7 +3060,7 @@
     "message": "This extension requests full access to Thunderbird and your computer. Confirmation dialogs before operations such as permanent deletion are retained."
   },
   "directLimitsHelp": {
-    "message": "Configure scan limits in Settings. Encrypted or oversized content that cannot be fully scanned is reported as incomplete. Definitions older than three days cause scanning to fail."
+    "message": "Configure scan limits in Settings. Encrypted or oversized content that cannot be fully scanned is reported as incomplete. Scanning continues with older definitions and Settings shows a warning after three days."
   },
   "directScanHelp": {
     "message": "In Settings, choose additional phishing, OLE2 macro and PUA detection: off, results only, or notify on detection. Disabling notifications globally also disables these notifications. Advisory findings are separate from malware and do not automatically trigger quarantine. Regular malware scanning, encryption alerts and limit alerts stay enabled. Limits are 5–100 MiB for whole messages, 25–500 MiB expanded (at least the message limit), and 10–120 seconds for internal scanning. Changes apply to subsequent scans. Applied settings are stored under Detection names and scan information. The integrated scanner is updated with the extension."
@@ -3111,7 +3115,7 @@
     "message": "Install ClamAV and Python 3.10+ with Homebrew. No separate helper or background service is needed. These commands add packages and download definitions from the official mirror."
   },
   "directMacDefinitions": {
-    "message": "The creation command refuses to overwrite an existing configuration file; inspect it if creation fails. Complete the first FreshClam update, then check the connection again. Update definitions regularly: definitions older than three days cause scans to fail. Python from python.org is also supported. The macOS-provided Python is not used."
+    "message": "The creation command refuses to overwrite an existing configuration file; inspect it if creation fails. Complete the first FreshClam update, then check the connection again. Update definitions regularly. Scanning continues with older definitions and Settings shows a warning after three days. Python from python.org is also supported. The macOS-provided Python is not used."
   },
   "startupRecovery": {
     "message": "Initialization failed. Check that storage is available, then click Check connection again to retry."
@@ -3237,7 +3241,7 @@
     "message": "Multiple messages in the same account shared these identifiers. The original cannot be distinguished after restart."
   },
   "directMissingDefinitions": {
-    "message": "Definitions are missing or outdated. Update them with FreshClam."
+    "message": "Definitions are missing or their metadata could not be verified. Check the FreshClam update status."
   },
   "definitionSourceHeading": { "message": "Virus definition folder" },
   "legacyDefinitionFolder": { "message": "Legacy GUI (uses the shared folder after migration)" },
@@ -3251,7 +3255,7 @@
     "message": "Install official 64-bit ClamAV under Program Files and python.org Python 3.13–3.15 (64-bit) in the default per-user location. Use clamav-gui to update shared definitions. For standalone use, run the PowerShell commands below."
   },
   "directWindowsDefinitions": {
-    "message": "After FreshClam finishes, choose Check connection again. Update the definitions regularly. Definitions older than three days prevent scanning."
+    "message": "After FreshClam finishes, choose Check connection again. Update the definitions regularly. Scanning continues with older definitions and Settings shows a warning after three days."
   },
   "locateFull": {
     "message": "There is no room for a separate result. Remove unneeded history first."

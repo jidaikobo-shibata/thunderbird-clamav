@@ -1,6 +1,6 @@
 # ClamAV Mail Check
 
-This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.30.0** of the integrated Ubuntu/macOS/Windows scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; 0.30.0 has not been published.
+This Thunderbird extension scans messages locally with ClamAV. This branch builds **0.30.1** of the integrated Ubuntu/macOS/Windows scanner. No separately installed helper or Native Messaging registration is required. The published 0.20.0a5 release targets Ubuntu; 0.30.1 has not been published.
 
 The optional encrypted ZIP preference excludes an incomplete scan from attention counts and alerts when its only finding is an encrypted ZIP. It applies to existing history. The ZIP contents remain marked as unscanned.
 
@@ -45,7 +45,7 @@ mkdir -p /opt/homebrew/var/lib/clamav
 freshclam --config-file="$HOME/clam-mail-freshclam.conf"
 ```
 
-Creation refuses to overwrite an existing configuration file; inspect it if this fails. On Intel, replace `/opt/homebrew` with `/usr/local`. FreshClam downloads from the official mirror. Repeat the FreshClam command regularly: definitions older than three days prevent a completed scan. The extension does not configure automatic definition updates. See the [official ClamAV installation guide](https://docs.clamav.net/manual/Installing/Packages.html).
+Creation refuses to overwrite an existing configuration file; inspect it if this fails. On Intel, replace `/opt/homebrew` with `/usr/local`. FreshClam downloads from the official mirror. Repeat the FreshClam command regularly. Scanning continues with older definitions and Settings shows a warning after three days. The extension does not configure automatic definition updates. See the [official ClamAV installation guide](https://docs.clamav.net/manual/Installing/Packages.html).
 
 No `brew services` registration is needed. The extension starts its own foreground scanner only when required. Do not disable signatures, Gatekeeper or other protections. Additional Full Disk Access is not part of this procedure.
 
@@ -75,7 +75,7 @@ try {
 }
 ~~~
 
-Repeat these commands to refresh definitions. Definitions older than three days prevent scanning. Install the XPI and check the connection in Settings. Windows starts clamscan for each message. Folder scans take longer because each process loads its own definitions. No daemon service or helper registration is required. The supported configuration uses the standard local installation directories and their default access controls. Windows ARM64, 32-bit Thunderbird and other Thunderbird major versions are outside this build’s scope.
+Repeat these commands to refresh definitions. Scanning continues with older definitions and Settings shows a warning after three days. Install the XPI and check the connection in Settings. Windows starts clamscan for each message. Folder scans take longer because each process loads its own definitions. No daemon service or helper registration is required. The supported configuration uses the standard local installation directories and their default access controls. Windows ARM64, 32-bit Thunderbird and other Thunderbird major versions are outside this build’s scope.
 
 Install an update over the existing XPI to retain settings and history. Remove the extension in Add-ons Manager. Python, ClamAV and the per-user FreshClam configuration and database remain installed.
 
@@ -87,7 +87,7 @@ No additional Python or npm packages are needed:
 python3 -B scripts/build_direct_mail_check.py
 ```
 
-Install the shared `dist/clam-mail-check-direct-0.30.0.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
+Install the shared `dist/clam-mail-check-direct-0.30.1.xpi` through Thunderbird's Add-ons Manager → gear menu → Install Add-on From File. The Experiment API requires full access to Thunderbird and the computer. Existing confirmations for quarantine and permanent deletion remain.
 
 Open Settings and choose Check connection again. Start with a small manual folder scan. Automatic scanning is disabled for a new installation; select accounts only after checking results.
 

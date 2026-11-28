@@ -330,6 +330,12 @@ try {
       assert.equal(await evaluate("!document.getElementById('panel-settings').hidden"), true);
       assert.equal(await evaluate("location.pathname"), "/dashboard.html");
       assert.equal(await evaluate("document.getElementById('settings-save').disabled"),true);
+      await until("testState.lastHealth?.status==='ready'");
+      await evaluate("testState.lastHealth.definitionTimestamp=Date.now()/1000-4*86400");
+      await until("!document.getElementById('definition-age-warning').hidden");
+      assert.match(await evaluate("document.getElementById('definition-age-warning').textContent"), /FreshClam/);
+      await evaluate("testState.lastHealth.definitionTimestamp=Date.now()/1000");
+      await until("document.getElementById('definition-age-warning').hidden");
       await evaluate("document.getElementById('quiet-encrypted-zip').click();document.getElementById('idle-automatic').click()");
       assert.equal(await evaluate("!testState.settings.idleAutomatic && !document.getElementById('settings-save').disabled"),true);
       assert.equal(await evaluate("!window.dispatchEvent(new Event('beforeunload',{cancelable:true}))"),true);
